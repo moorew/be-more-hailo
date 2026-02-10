@@ -1,8 +1,8 @@
 sounddevice
 numpy
+scipy
 openwakeword
 onnxruntime
 ollama
 duckduckgo-search
-scipy
-pillow
+Pillow
