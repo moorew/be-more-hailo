@@ -5,7 +5,7 @@
 
 This project turns a Raspberry Pi into a fully functional, conversational AI robot. Unlike cloud-based assistants (Alexa, Siri), this agent runs **100% locally** on your device. It listens for a wake word, processes speech, "thinks" using a local Large Language Model (LLM), and speaks back with a low-latency neural voice—all while displaying reactive face animations.
 
-**It is designed as a blank canvas:** You provide the "Character Pack" (images and sounds) to give it a personality (e.g., a retro computer, a happy robot, or a spooky ghost).
+**It is designed as a blank canvas:** You provide the "Character Pack" (images and sounds) to give it a personality.
 
 **Example**
 [![Watch the video](https://img.youtube.com/vi/l5ggH-YhuAw/maxresdefault.jpg)](https://youtu.be/l5ggH-YhuAw)
