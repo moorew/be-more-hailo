@@ -68,7 +68,7 @@ sudo apt install git -y
 ### 2. Install Ollama
 This agent relies on [Ollama](https://ollama.com) to run the brain.
 ```bash
-curl -fsSL [https://ollama.com/install.sh](https://ollama.com/install.sh) | sh
+curl -fsSL https://ollama.com/install.sh| sh
 ```
 *Pull the required models:*
 ```bash
