@@ -31,12 +31,13 @@ This project turns a Raspberry Pi into a fully functional, conversational AI age
 ## 📂 Project Structure
 
 ```text
-pi-local-assistant/
+be-more-agent/
 ├── agent.py                   # The main script
 ├── setup.sh                   # Auto-installer script
 ├── wakeword.onnx              # OpenWakeWord model file (Required)
 ├── config.json                # User configuration
 ├── requirements.txt           # Python dependencies
+├── whisper.cpp/               # Speech-to-Text engine (Manual or Auto install)
 ├── piper/                     # Piper TTS folder (Created by setup.sh - DO NOT COMMIT)
 │   ├── piper                  # Executable binary
 │   └── en_GB-semaine...onnx   # Voice model
@@ -73,7 +74,7 @@ pi-local-assistant/
     ```
 
 3.  **Run the setup script:**
-    This script installs system dependencies, downloads voice models, and sets up the Python environment.
+    This script installs system dependencies, downloads voice models, compiles Whisper, and sets up the Python environment.
     ```bash
     chmod +x setup.sh
     ./setup.sh
@@ -92,7 +93,7 @@ If you prefer to set it up yourself:
 
 1.  **Install System Deps:**
     ```bash
-    sudo apt install python3-tk libasound2-dev libportaudio2 libatlas-base-dev cmake build-essential espeak-ng
+    sudo apt install python3-tk libasound2-dev libportaudio2 libatlas-base-dev cmake build-essential espeak-ng git
     ```
 
 2.  **Create Venv & Install Python Deps:**
@@ -104,7 +105,16 @@ If you prefer to set it up yourself:
 
 3.  **Get Piper:** Download the [Piper aarch64 binary](https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_aarch64.tar.gz) and a [voice model](https://huggingface.co/rhasspy/piper-voices), extract them into a folder named `piper/`.
 
-4.  **Pull Ollama Models:**
+4.  **Get Whisper.cpp:** Clone and compile the hearing engine.
+    ```bash
+    git clone [https://github.com/ggerganov/whisper.cpp](https://github.com/ggerganov/whisper.cpp)
+    cd whisper.cpp
+    make -j4
+    ./models/download-ggml-model.sh base.en
+    cd ..
+    ```
+
+5.  **Pull Ollama Models:**
     ```bash
     ollama pull gemma3:1b
     ollama pull moondream
@@ -121,14 +131,7 @@ You can modify the hardware behavior and personality in `config.json`.
     "text_model": "gemma3:1b",
     "vision_model": "moondream",
     "voice_model": "piper/en_GB-semaine-medium.onnx",
-    "system_prompt": (
-        "You are a helpful robot assistant running on a Raspberry Pi. "
-        "You have access to the following tools. To use one, reply ONLY with the JSON format shown:\n\n"
-        "1. Check Time: {\"action\": \"get_time\"}\n"
-        "2. Take Photo: {\"action\": \"capture_image\"}\n"
-        "3. Search Web: {\"action\": \"search_web\", \"query\": \"your search term\"}\n\n"
-        "If no tool is needed, just reply normally. Keep responses short and friendly."
-    ),
+    "system_prompt": "You are a helpful robot assistant running on a Raspberry Pi. You have access to the following tools. To use one, reply ONLY with the JSON format shown:\n\n1. Check Time: {\"action\": \"get_time\"}\n2. Take Photo: {\"action\": \"capture_image\"}\n3. Search Web: {\"action\": \"search_web\", \"query\": \"your search term\"}\n\nIf no tool is needed, just reply normally. Keep responses short and friendly.",
     "chat_memory": true,
     "camera_rotation": 180
 }
