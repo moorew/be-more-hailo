@@ -135,7 +135,7 @@ You can modify the hardware behavior and personality in `config.json`.
     "chat_memory": true,
     "camera_rotation": 180
 }
-
+```
 ---
 
 ## 🎨 Customizing Your Character
