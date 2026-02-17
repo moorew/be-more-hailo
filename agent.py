@@ -57,7 +57,7 @@ WAKE_WORD_MODEL = "./wakeword.onnx"
 WAKE_WORD_THRESHOLD = 0.5
 
 # HARDWARE SETTINGS
-INPUT_DEVICE_NAME = None 
+INPUT_DEVICE_NAME = None
 
 DEFAULT_CONFIG = {
     "text_model": "gemma3:1b",
@@ -65,7 +65,8 @@ DEFAULT_CONFIG = {
     "voice_model": "piper/en_GB-semaine-medium.onnx",
     "chat_memory": True,
     "camera_rotation": 0,
-    "system_prompt_extras": ""
+    "system_prompt_extras": "",
+    "input_device": None
 }
 
 # LLM SETTINGS
@@ -91,6 +92,40 @@ def load_config():
 CURRENT_CONFIG = load_config()
 TEXT_MODEL = CURRENT_CONFIG["text_model"]
 VISION_MODEL = CURRENT_CONFIG["vision_model"]
+
+def resolve_input_device(config):
+    requested = config.get("input_device")
+    if requested in (None, "", "default"):
+        return None
+
+    try:
+        devices = sd.query_devices()
+    except Exception as e:
+        print(f"[AUDIO] Device query failed: {e}", flush=True)
+        return None
+
+    if isinstance(requested, int) or (isinstance(requested, str) and requested.isdigit()):
+        index = int(requested)
+        if 0 <= index < len(devices):
+            return index
+        print(f"[AUDIO] Input device index not found: {index}", flush=True)
+        return None
+
+    requested_lower = str(requested).lower()
+    for idx, dev in enumerate(devices):
+        if dev.get("max_input_channels", 0) > 0 and requested_lower in dev.get("name", "").lower():
+            return idx
+
+    print(f"[AUDIO] Input device name not found: {requested}", flush=True)
+    return None
+
+INPUT_DEVICE_NAME = resolve_input_device(CURRENT_CONFIG)
+if INPUT_DEVICE_NAME is not None:
+    try:
+        device_info = sd.query_devices(INPUT_DEVICE_NAME)
+        print(f"[AUDIO] Using input device: {device_info.get('name', INPUT_DEVICE_NAME)}", flush=True)
+    except Exception:
+        print(f"[AUDIO] Using input device index: {INPUT_DEVICE_NAME}", flush=True)
 
 class BotStates:
     IDLE = "idle"             
@@ -175,6 +210,7 @@ class BotGUI:
         self.tts_thread = None       
         self.tts_active = threading.Event()
         self.current_audio_process = None 
+        self.exiting = False
         
         # --- WAKE WORD INITIALIZATION ---
         print("[INIT] Loading Wake Word...", flush=True)
@@ -226,6 +262,9 @@ class BotGUI:
         except: return None
 
     def safe_exit(self):
+        if self.exiting:
+            return
+        self.exiting = True
         print("\n--- SHUTDOWN SEQUENCE ---", flush=True)
         if self.current_audio_process:
             try:
@@ -242,9 +281,14 @@ class BotGUI:
         try:
             ollama.generate(model=TEXT_MODEL, prompt="", keep_alive=0)
         except: pass
+        try:
+            sd.stop()
+        except: pass
 
-        self.master.quit()
-        sys.exit(0) 
+        try:
+            self.master.quit()
+        except Exception:
+            pass
         
     def exit_fullscreen(self, event=None):
         self.master.attributes('-fullscreen', False)
