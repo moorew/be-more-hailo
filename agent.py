@@ -578,20 +578,59 @@ class BotGUI:
         use_resampling = (input_rate != OWW_SAMPLE_RATE)
         input_chunk_size = int(CHUNK_SIZE * (input_rate / OWW_SAMPLE_RATE)) if use_resampling else CHUNK_SIZE
 
+        stream_args = {
+            "samplerate": input_rate, 
+            "channels": 1, 
+            "dtype": 'int16', 
+            "blocksize": input_chunk_size, 
+            "device": INPUT_DEVICE_NAME
+        }
+
+        # Try to find a compatible block size and sample rate
         try:
-            with sd.InputStream(samplerate=input_rate, channels=1, dtype='int16', 
-                                blocksize=input_chunk_size, device=INPUT_DEVICE_NAME) as stream:
+            # First attempt: standard settings
+            self._listen_loop(stream_args, input_chunk_size, CHUNK_SIZE, use_resampling)
+        except StopIteration as si:
+            return str(si)
+        except Exception as e:
+            print(f"[AUDIO] Stream failed with defaults: {e}. Retrying with loose settings...", flush=True)
+            try:
+                # Second attempt: Let PortAudio decide blocksize (0) and latency
+                stream_args["blocksize"] = 0 
+                stream_args["latency"] = "high"
+                # If blocksize is variable, we must read specific amounts manually or handle buffering.
+                # Simplest fallback: Just attempt small fixed block
+                stream_args["blocksize"] = 1024
+                use_resampling = True
+                
+                self._listen_loop(stream_args, 1024, CHUNK_SIZE, use_resampling)
+            except StopIteration as si:
+                return str(si)
+            except Exception as e2:
+                print(f"[CRITICAL] Wake Word Stream Error: {e2}")
+                self.ptt_event.wait()
+                return "PTT"
+        
+        return "WAKE"
+
+    def _listen_loop(self, stream_args, input_chunk_size, target_chunk_size, use_resampling):
+         with sd.InputStream(**stream_args) as stream:
+                print(f"[AUDIO] Listening with rate {stream_args['samplerate']} and block {stream_args['blocksize']}", flush=True)
                 while True:
                     if self.ptt_event.is_set():
                         self.ptt_event.clear()
-                        return "PTT"
-                    
+                        # raise to exit loop and return PTT
+                        raise StopIteration("PTT")
+
                     rlist, _, _ = select.select([sys.stdin], [], [], 0.001)
                     if rlist: 
                         sys.stdin.readline()
-                        return "CLI" 
+                        raise StopIteration("CLI")
 
-                    data, _ = stream.read(input_chunk_size)
+                    data, overflow = stream.read(input_chunk_size)
+                    if overflow:
+                        print("!", end="", flush=True) # Input overflow warning
+                        
                     audio_data = np.frombuffer(data, dtype=np.int16)
 
                     # Ensure flattening for openwakeword compatibility
@@ -600,18 +639,13 @@ class BotGUI:
 
                     if use_resampling:
                         # Convert to float for better resampling quality, then back to int16
-                        # This avoids integer overflow/underflow issues during interpolation
                         float_data = audio_data.astype(np.float32)
-                        resampled = scipy.signal.resample(float_data, CHUNK_SIZE)
-                        # Clip to int16 range to prevent overflow noise
+                        resampled = scipy.signal.resample(float_data, target_chunk_size)
                         audio_data = np.clip(resampled, -32768, 32767).astype(np.int16)
 
                     # Debug volume occasionally
                     current_max = np.max(np.abs(audio_data))
-                    if current_max < 100:
-                         # Very quiet, might need mic boost
-                         pass 
-
+                    
                     prediction = self.oww_model.predict(audio_data)
                     for mdl in self.oww_model.prediction_buffer.keys():
                         score = list(self.oww_model.prediction_buffer[mdl])[-1]
@@ -621,11 +655,13 @@ class BotGUI:
                         if score > WAKE_WORD_THRESHOLD:
                             print(f"\n[WAKE] Triggered on '{mdl}' with score: {score:.2f}", flush=True)
                             self.oww_model.reset() 
-                            return "WAKE"
-        except Exception as e:
-            print(f"Wake Word Stream Error: {e}")
-            self.ptt_event.wait()
-            return "PTT"
+                            # We found it, but we are inside a helper function
+                            # We need to signal success.
+                            # Since we can't easily return from inside the helper to the outer function 
+                            # without logic, we will raise a custom exception or just return?
+                            # _listen_loop is a helper. Let's make it return.
+                            return # Success
+
 
     def record_voice_adaptive(self, filename="input.wav"):
         print("Recording (Adaptive)...", flush=True)
