@@ -650,8 +650,10 @@ class BotGUI:
                             print("!", end="", flush=True) 
                             continue # Skip processing this chunk if we are falling behind!
                     except Exception as e:
-                        # Re-raise to trigger the fallback logic in the caller
-                        raise e
+                        # Convert uncatchable PaErrorCode wrapper to standard Exception if needed
+                        # But honestly, `raise e` should work... unless it's a SystemExit?
+                        # Let's wrap it in a new exception to be sure it bubbles up
+                        raise RuntimeError(f"Audio read failed: {e}")
 
                     audio_data = np.frombuffer(data, dtype=np.int16)
 
