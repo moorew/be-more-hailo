@@ -646,19 +646,24 @@ class BotGUI:
                         indices = np.arange(0, len(audio_data), step)[:target_chunk_size].astype(int)
                         audio_data = audio_data[indices]
                     
+                    # Convert to float for model prediction without needing heavy resampling logic
+                    # The wake word model needs 16000, which we just faked above.
+                    
                     # Debug volume occasionally
                     current_max = np.max(np.abs(audio_data))
                     
-                    prediction = self.oww_model.predict(audio_data)
-                    for mdl in self.oww_model.prediction_buffer.keys():
-                        score = list(self.oww_model.prediction_buffer[mdl])[-1]
-                        if score > 0.1: # Show potential triggers
-                            print(f"\r[Oww] Score: {score:.3f} | Vol: {current_max}   ", end="", flush=True)
+                    # Only predict if volume is significant to save CPU
+                    if current_max > 200: 
+                        prediction = self.oww_model.predict(audio_data)
+                        for mdl in self.oww_model.prediction_buffer.keys():
+                            score = list(self.oww_model.prediction_buffer[mdl])[-1]
+                            if score > 0.1: # Show potential triggers
+                                print(f"\r[Oww] Score: {score:.3f} | Vol: {current_max}   ", end="", flush=True)
 
-                        if score > WAKE_WORD_THRESHOLD:
-                            print(f"\n[WAKE] Triggered on '{mdl}' with score: {score:.2f}", flush=True)
-                            self.oww_model.reset() 
-                            return # Success
+                            if score > WAKE_WORD_THRESHOLD:
+                                print(f"\n[WAKE] Triggered on '{mdl}' with score: {score:.2f}", flush=True)
+                                self.oww_model.reset() 
+                                return # Success
 
 
     def record_voice_adaptive(self, filename="input.wav"):
