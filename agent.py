@@ -648,7 +648,9 @@ class BotGUI:
                         data, overflow = stream.read(read_size)
                         if overflow:
                             print("!", end="", flush=True) 
-                            continue # Skip processing this chunk if we are falling behind!
+                            # If we overflow repeatedly, we should fail so fallback logic can try safer settings
+                            # For now, just skip heavy processing
+                            continue 
                     except Exception as e:
                         # Convert uncatchable PaErrorCode wrapper to standard Exception if needed
                         # But honestly, `raise e` should work... unless it's a SystemExit?
