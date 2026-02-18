@@ -135,9 +135,11 @@ def choose_input_samplerate(device, preferred=None):
         candidates.append(preferred)
     try:
         device_info = sd.query_devices(device)
+        print(f"[AUDIO DEBUG] Device Info: {device_info}", flush=True) # DEBUG
         if "default_samplerate" in device_info:
             candidates.append(int(device_info["default_samplerate"]))
-    except Exception:
+    except Exception as e:
+        print(f"[AUDIO DEBUG] Query failed: {e}", flush=True)
         pass
 
     candidates.extend([48000, 44100, 32000, 16000])
