@@ -648,9 +648,10 @@ class BotGUI:
                         data, overflow = stream.read(read_size)
                         if overflow:
                             print("!", end="", flush=True) 
-                            # If we overflow repeatedly, we should fail so fallback logic can try safer settings
-                            # For now, just skip heavy processing
-                            continue 
+                            # If we overflow excessively, raise error to trigger fallback to SAFE MODE (PulseAudio/Software)
+                            # We can use a simple counter attached to the function or object, but here raising immediately 
+                            # after a few in a row is safest.
+                            raise RuntimeError("Audio Buffer Overflow - Triggering Safe Mode")
                     except Exception as e:
                         # Convert uncatchable PaErrorCode wrapper to standard Exception if needed
                         # But honestly, `raise e` should work... unless it's a SystemExit?
