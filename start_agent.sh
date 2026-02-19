@@ -15,7 +15,7 @@ fi
 # python3 ensure_model.py
 
 # Set display for GUI if not set (assuming user is logged in on :0)
-if [ -z "$DISPLAY" ]; then
+if [ -z "${DISPLAY:-}" ]; then
     export DISPLAY=:0
 fi
 
