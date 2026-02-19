@@ -44,7 +44,7 @@ from openwakeword.model import Model
 import ollama 
 
 # --- WEB SEARCH (Using your working import) ---
-from ddgs import DDGS 
+from duckduckgo_search import DDGS 
 
 # =========================================================================
 # 1. CONFIGURATION & CONSTANTS
