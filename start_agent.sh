@@ -9,5 +9,9 @@ if [ -d "venv" ]; then
     source venv/bin/activate
 fi
 
+# Ensure model is available
+python3 ensure_model.py
+
 # Run the agent using python3
 exec python3 agent.py "$@"
+
