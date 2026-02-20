@@ -13,12 +13,25 @@ REQUIRED_MODEL = "llama3.2:3b"
 def get_installed_models():
     try:
         url = f"{OLLAMA_HOST}/api/tags"
+        print(f"DEBUG: Querying {url}")
         with urllib.request.urlopen(url) as response:
             if response.status == 200:
-                data = json.loads(response.read().decode())
-                # structure: {"models": [{"name": "llama3.2:3b", ...}]}
-                return [m['name'] for m in data.get('models', [])]
-    except urllib.error.URLError:
+                raw_data = response.read().decode()
+                print(f"DEBUG: Raw server response: {raw_data}")
+                data = json.loads(raw_data)
+                
+                # Standard Ollama structure
+                if 'models' in data:
+                    return [m['name'] for m in data.get('models', [])]
+                
+                # Fallback: maybe it returns a simple list?
+                if isinstance(data, list):
+                    return [m.get('name', m) if isinstance(m, dict) else m for m in data]
+                    
+                print(f"DEBUG: Unexpected JSON structure: {data.keys()}")
+                return []
+    except urllib.error.URLError as e:
+        print(f"Connection error: {e}")
         return None
     except Exception as e:
         print(f"Error checking models: {e}")

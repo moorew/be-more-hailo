@@ -69,16 +69,12 @@ DEFAULT_CONFIG = {
 }
 
 # LLM SETTINGS (HAILO SERVER)
-OLLAMA_HOST = "http://localhost:8000"
+# Use 127.0.0.1 to avoid localhost resolution issues
+OLLAMA_HOST = "http://127.0.0.1:8000"
 OLLAMA_CLIENT = ollama.Client(host=OLLAMA_HOST)
 
-OLLAMA_OPTIONS = {
-    'keep_alive': '-1',     
-    'num_thread': 4,
-    'temperature': 0.7,     
-    'top_k': 40,
-    'top_p': 0.9
-}
+# OLLAMA_OPTIONS removed for Hailo compatibility
+OLLAMA_OPTIONS = {}
 
 def load_config():
     config = DEFAULT_CONFIG.copy()
