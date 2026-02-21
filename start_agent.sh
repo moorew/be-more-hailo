@@ -14,11 +14,22 @@ fi
 # Assuming model is present based on server logs to allow boot.
 # python3 ensure_model.py
 
+# --- AUTO-Start LLM Server (Ollama on port 8000) ---
+if ! lsof -i :8000 >/dev/null; then
+    echo "Starting Ollama server on port 8000..."
+    export OLLAMA_HOST=0.0.0.0:8000
+    nohup ollama serve > /tmp/ollama.log 2>&1 &
+    # Give it a moment to initialize
+    sleep 5
+else
+    echo "LLM Server already running on port 8000."
+fi
+
 # Set display for GUI if not set (assuming user is logged in on :0)
 if [ -z "${DISPLAY:-}" ]; then
     export DISPLAY=:0
 fi
 
-# Run the agent using python3
-exec python3 agent.py "$@"
+# Run the agent using python3 (Use new Hailo optimized agent)
+exec python3 agent_hailo.py "$@"
 

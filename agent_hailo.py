@@ -148,6 +148,7 @@ class BotGUI:
         }
         
         try:
+            import urllib.request
             req = urllib.request.Request(url, json.dumps(data).encode(), headers={'Content-Type': 'application/json'})
             with urllib.request.urlopen(req) as response:
                 result = json.loads(response.read().decode())
@@ -158,7 +159,7 @@ class BotGUI:
                 return content
         except Exception as e:
             print(f"LLM Error: {e}")
-            return f"Error: {e}"
+            return f"I'm having trouble connecting to my brain."
 
     # --- AUDIO INPUT ---
     def wait_for_wakeword(self, oww):
@@ -172,42 +173,67 @@ class BotGUI:
         target_rate = 16000
         downsample_factor = capture_rate // target_rate
         
-        with sd.InputStream(samplerate=capture_rate, device=MIC_DEVICE_INDEX, channels=1, dtype='int16') as stream:
-            while not self.stop_event.is_set():
-                data, _ = stream.read(CHUNK * downsample_factor)
-                # Simple integer decimation for 48k -> 16k
-                audio_16k = data[::downsample_factor].flatten() 
-                
-                oww.predict(audio_16k)
-                if oww.prediction_buffer["wakeword"][-1] > WAKE_WORD_THRESHOLD:
-                    oww.reset()
-                    return True
+        try:
+            with sd.InputStream(samplerate=capture_rate, device=MIC_DEVICE_INDEX, channels=1, dtype='int16') as stream:
+                while not self.stop_event.is_set():
+                    data, _ = stream.read(CHUNK * downsample_factor)
+                    # Simple integer decimation for 48k -> 16k
+                    audio_16k = data[::downsample_factor].flatten() 
+                    
+                    # Feed to model. 
+                    # Assuming model name is 'wakeword' if you only loaded that one onnx file
+                    # but openwakeword usually keys predictions by model name.
+                    oww.predict(audio_16k)
+                    
+                    # Dynamically find the score so we don't crash on key error
+                    for key in oww.prediction_buffer.keys():
+                        if oww.prediction_buffer[key][-1] > WAKE_WORD_THRESHOLD:
+                            print(f"Wake Word Detected: {key}")
+                            oww.reset()
+                            return True
+        except Exception as e:
+            print(f"Audio Input Error: {e}")
+            self.set_state(BotStates.ERROR)
+            time.sleep(2) # Prevent rapid looping on error
+            return False
+            
         return False
 
     def record_audio(self):
         """Record until silence"""
         print("Recording...")
         filename = "input.wav"
-        sr = MIC_SAMPLE_RATE # 48000
-        buffer = []
+        frames = []
         silent_chunks = 0
-        MAX_SILENCE = 30 # chunks (~1.5s)
-        
-        def callback(indata, frames, time, status):
+        MAX_SILENCE_CHUNKS = 40 # approx 2 seconds of silence
+
+        def callback(indata, frames_count, time, status):
             nonlocal silent_chunks
-            vol = np.linalg.norm(indata) / np.sqrt(len(indata))
-            buffer.append(indata.copy())
-            if vol < 0.01: # Silence threshold
+            vol = np.linalg.norm(indata) * 10 
+            frames.append(indata.copy())
+            if vol < 50: # Silence threshold
                 silent_chunks += 1
             else:
                 silent_chunks = 0
-
-        with sd.InputStream(samplerate=sr, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', callback=callback):
-            while silent_chunks < MAX_SILENCE and not self.stop_event.is_set():
-                sd.sleep(50)
-                if len(buffer) > 200: break # Max length safety (10s)
+            
+        try:
+            with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', callback=callback):
+                while silent_chunks < MAX_SILENCE_CHUNKS and not self.stop_event.is_set():
+                    sd.sleep(50)
+                    if len(frames) > (MIC_SAMPLE_RATE * 10 / 512): # Max 10 seconds approx
+                        break 
+        except Exception as e:
+            print(f"Recording Error: {e}")
+            return None
         
         # Save file
+        if not frames:
+            return None
+
+        data = np.concatenate(frames, axis=0)
+        import scipy.io.wavfile
+        scipy.io.wavfile.write(filename, MIC_SAMPLE_RATE, data)
+        return filename
         audio_data = np.concatenate(buffer, axis=0)
         with wave.open(filename, "wb") as wf:
             wf.setnchannels(1)
