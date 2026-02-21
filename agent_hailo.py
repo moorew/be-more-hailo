@@ -38,7 +38,7 @@ from duckduckgo_search import DDGS
 # =========================================================================
 
 # AUDIO SETTINGS (Locked to your USB Mic)
-MIC_DEVICE_INDEX = 0      # Your USB Mic Index
+MIC_DEVICE_INDEX = 1      # Your USB Mic Index (Detected on Pi as Device 1)
 MIC_SAMPLE_RATE = 48000   # Standard USB Audio Rate
 WAKE_WORD_MODEL = "./wakeword.onnx"
 WAKE_WORD_THRESHOLD = 0.5
