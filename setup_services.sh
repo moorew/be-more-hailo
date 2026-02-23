@@ -13,7 +13,7 @@ After=network.target
 Type=simple
 User=clevercode
 Environment="OLLAMA_HOST=0.0.0.0:8000"
-ExecStart=/usr/bin/env ollama serve
+ExecStart=/usr/bin/hailo-ollama serve
 Restart=always
 RestartSec=3
 
