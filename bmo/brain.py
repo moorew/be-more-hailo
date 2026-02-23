@@ -7,7 +7,12 @@ import logging
 class Brain:
     def __init__(self, ui_controller):
         self.ui = ui_controller
-        self.history = [{"role": "system", "content": "You are BMO, a helpful robot assistant. Keep answers short and fun."}]
+        system_prompt = (
+            "You are BMO, a helpful robot assistant. Keep answers short, fun, and conversational. "
+            "Never use lists, bullet points, or markdown formatting like bold or italics. "
+            "Speak in natural paragraphs as if you are talking out loud."
+        )
+        self.history = [{"role": "system", "content": system_prompt}]
 
     def think(self, user_text):
         """

@@ -85,7 +85,12 @@ class BotGUI:
         self.tts_queue = []
         
         # Memory
-        self.history = [{"role": "system", "content": "You are a helpful robot assistant. Keep answers short and fun."}]
+        system_prompt = (
+            "You are BMO, a helpful robot assistant. Keep answers short, fun, and conversational. "
+            "Never use lists, bullet points, or markdown formatting like bold or italics. "
+            "Speak in natural paragraphs as if you are talking out loud."
+        )
+        self.history = [{"role": "system", "content": system_prompt}]
 
         # Init UI
         self.background_label = tk.Label(master, bg='black')
