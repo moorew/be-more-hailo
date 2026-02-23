@@ -563,7 +563,11 @@
                 
             } catch (error) {
                 console.error("Error accessing microphone:", error);
-                alert("Could not access microphone. Please check permissions.");
+                if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                    alert("Microphone access requires a secure (HTTPS) connection or localhost. You are currently using HTTP.");
+                } else {
+                    alert("Could not access microphone. Please check permissions.");
+                }
             }
         }
 

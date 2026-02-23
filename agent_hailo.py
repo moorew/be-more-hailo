@@ -214,14 +214,6 @@ class BotGUI:
         import scipy.io.wavfile
         scipy.io.wavfile.write(filename, MIC_SAMPLE_RATE, data)
         return filename
-        audio_data = np.concatenate(buffer, axis=0)
-        with wave.open(filename, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sr)
-            wf.writeframes(audio_data.tobytes())
-            
-        return filename
 
     # --- STT & TTS ---
     def transcribe(self, filename):

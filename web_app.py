@@ -146,5 +146,18 @@ async def get_face(state: str):
 
 if __name__ == "__main__":
     import uvicorn
-    # Run on all interfaces (0.0.0.0) so it can be accessed from other machines on the network
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    import glob
+    
+    # Check for Tailscale SSL certificates (*.ts.net.crt / *.ts.net.key)
+    cert_files = glob.glob("*.ts.net.crt")
+    key_files = glob.glob("*.ts.net.key")
+    
+    if cert_files and key_files:
+        cert_file = cert_files[0]
+        key_file = key_files[0]
+        logger.info(f"Found SSL certificates ({cert_file}). Starting securely on HTTPS...")
+        uvicorn.run(app, host="0.0.0.0", port=8080, ssl_certfile=cert_file, ssl_keyfile=key_file)
+    else:
+        logger.info("No SSL certificates found. Starting on HTTP...")
+        # Run on all interfaces (0.0.0.0) so it can be accessed from other machines on the network
+        uvicorn.run(app, host="0.0.0.0", port=8080)
