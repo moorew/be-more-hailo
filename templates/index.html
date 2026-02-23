@@ -44,6 +44,17 @@
             max-width: 100%;
             max-height: 100%;
             object-fit: contain;
+            transition: transform 0.3s ease-in-out;
+        }
+
+        /* Subtle breathing animation for idle state */
+        @keyframes breathe {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+
+        .idle-animation {
+            animation: breathe 4s infinite ease-in-out;
         }
 
         #chat-container {
@@ -257,9 +268,19 @@
             // Show first frame immediately
             bmoFace.src = images[0];
 
+            // Apply CSS animation for idle state (since it only has 1 frame)
+            if (state === 'idle') {
+                bmoFace.classList.add('idle-animation');
+            } else {
+                bmoFace.classList.remove('idle-animation');
+            }
+
             // If multiple frames, animate
             if (images.length > 1) {
-                const speed = state === 'speaking' ? 100 : 500; // Faster for speaking
+                let speed = 500;
+                if (state === 'speaking') speed = 150; // More natural speaking speed
+                if (state === 'thinking') speed = 300; // Smooth thinking speed
+                
                 animationInterval = setInterval(() => {
                     frameIndex = (frameIndex + 1) % images.length;
                     bmoFace.src = images[frameIndex];

@@ -1,0 +1,20 @@
+# Shared Configuration for BMO
+
+# LLM Settings
+LLM_URL = "http://127.0.0.1:8000/api/chat"
+LLM_MODEL = "llama3.2:3b"
+SYSTEM_PROMPT = (
+    "You are BMO, a helpful robot assistant. Keep answers short, fun, and conversational. "
+    "Never use lists, bullet points, or markdown formatting like bold or italics. "
+    "Speak in natural paragraphs as if you are talking out loud."
+)
+
+# TTS Settings
+PIPER_CMD = "./piper/piper"
+PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
+
+# Audio Settings
+MIC_DEVICE_INDEX = 1
+MIC_SAMPLE_RATE = 48000
+WAKE_WORD_MODEL = "./wakeword.onnx"
+WAKE_WORD_THRESHOLD = 0.5

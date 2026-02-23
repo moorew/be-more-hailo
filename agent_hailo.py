@@ -33,19 +33,14 @@ import scipy.signal
 from openwakeword.model import Model
 from duckduckgo_search import DDGS 
 
+# Import unified core modules
+from core.llm import Brain
+from core.tts import play_audio_on_hardware
+from core.config import MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
+
 # =========================================================================
 # 1. HARDWARE CONFIGURATION
 # =========================================================================
-
-# AUDIO SETTINGS (Locked to your USB Mic)
-MIC_DEVICE_INDEX = 1      # Your USB Mic Index (Detected on Pi as Device 1)
-MIC_SAMPLE_RATE = 48000   # Standard USB Audio Rate
-WAKE_WORD_MODEL = "./wakeword.onnx"
-WAKE_WORD_THRESHOLD = 0.5
-
-# HAILO SERVER SETTINGS
-LLM_HOST = "http://127.0.0.1:8000"
-LLM_MODEL = "llama3.2:3b"
 
 # VISION SETTINGS
 # Set to True only if you have the rpicam-detect setup
@@ -85,12 +80,7 @@ class BotGUI:
         self.tts_queue = []
         
         # Memory
-        system_prompt = (
-            "You are BMO, a helpful robot assistant. Keep answers short, fun, and conversational. "
-            "Never use lists, bullet points, or markdown formatting like bold or italics. "
-            "Speak in natural paragraphs as if you are talking out loud."
-        )
-        self.history = [{"role": "system", "content": system_prompt}]
+        self.brain = Brain()
 
         # Init UI
         self.background_label = tk.Label(master, bg='black')
@@ -137,34 +127,18 @@ class BotGUI:
             self.current_frame = (self.current_frame + 1) % len(frames)
             self.background_label.config(image=frames[self.current_frame])
         
-        speed = 50 if self.current_state == BotStates.SPEAKING else 500
+        # Match web UI animation speeds
+        speed = 500
+        if self.current_state == BotStates.SPEAKING:
+            speed = 150
+        elif self.current_state == BotStates.THINKING:
+            speed = 300
+            
         self.master.after(speed, self.update_animation)
 
     # --- LLM CLIENT (CUSTOM FOR HAILO) ---
     def chat_with_llm(self, user_text):
-        url = f"{LLM_HOST}/api/chat"
-        self.history.append({"role": "user", "content": user_text})
-        
-        # Prepare JSON payload
-        data = {
-            "model": LLM_MODEL,
-            "messages": self.history,
-            "stream": False # Disable streaming to prevent crashes for now
-        }
-        
-        try:
-            import urllib.request
-            req = urllib.request.Request(url, json.dumps(data).encode(), headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req) as response:
-                result = json.loads(response.read().decode())
-                # Handle Hailo/Ollama response structure
-                content = result.get("message", {}).get("content", "")
-                
-                self.history.append({"role": "assistant", "content": content})
-                return content
-        except Exception as e:
-            print(f"LLM Error: {e}")
-            return f"I'm having trouble connecting to my brain."
+        return self.brain.think(user_text)
 
     # --- AUDIO INPUT ---
     def wait_for_wakeword(self, oww):
@@ -268,16 +242,8 @@ class BotGUI:
             return ""
 
     def speak(self, text):
-        clean = re.sub(r"[^\w\s,.!?:-]", "", text)
-        print(f"Speaking: {clean}")
-        
-        voice_path = "piper/en_GB-semaine-medium.onnx"
-        
-        # Run Piper -> Output directly to aplay (ALSA player) to avoid sounddevice output issues
-        # Since input is Card 2, Output is likely Card 0 (Jack/HDMI) which is the default for aplay.
-        
-        piper_cmd = f"./piper/piper --model {voice_path} --output-raw | aplay -r 22050 -f S16_LE -t raw"
-        subprocess.run(piper_cmd, input=clean.encode(), shell=True)
+        print(f"Speaking: {text}")
+        play_audio_on_hardware(text)
 
     # --- MAIN LOOP ---
     def main_loop(self):

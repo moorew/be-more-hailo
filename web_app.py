@@ -3,12 +3,13 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-import requests
 import logging
 import os
-import subprocess
 import uuid
-import re
+
+# Import our new unified core modules
+from core.llm import Brain
+from core.tts import play_audio_on_hardware, generate_audio_file
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,60 +27,10 @@ app.mount("/faces", StaticFiles(directory="faces"), name="faces")
 # Setup templates
 templates = Jinja2Templates(directory="templates")
 
-# Configuration for Hailo/Ollama
-LLM_URL = "http://127.0.0.1:8000/api/chat" # Adjust if the Hailo endpoint is different
-LLM_MODEL = "llama3.2:3b" # Adjust to your specific Hailo model name
-
-# Configuration for Piper TTS
-PIPER_CMD = "./piper/piper"
-PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
-
 class ChatRequest(BaseModel):
     message: str
     history: list = []
     play_on_hardware: bool = False
-
-def clean_text_for_speech(text: str) -> str:
-    """Removes markdown and special characters that shouldn't be spoken."""
-    # Remove asterisks used for emphasis or actions (e.g., *beep boop*)
-    text = text.replace('*', '')
-    # Remove other common markdown like bold/italics
-    text = re.sub(r'[_~`]', '', text)
-    # Remove URLs
-    text = re.sub(r'http[s]?://\S+', '', text)
-    return text.strip()
-
-def play_audio_on_hardware(text: str):
-    """Plays audio directly out of the Pi's speakers using Piper and aplay."""
-    try:
-        clean_text = clean_text_for_speech(text)
-        if not clean_text:
-            return
-            
-        logger.info(f"Playing audio on hardware: {clean_text[:30]}...")
-        # Escape single quotes in text to prevent shell injection
-        safe_text = clean_text.replace("'", "'\\''")
-        piper_cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_raw | aplay -r 22050 -f S16_LE -t raw"
-        subprocess.run(piper_cmd, shell=True, check=True)
-    except Exception as e:
-        logger.error(f"Hardware TTS Error: {e}")
-
-def generate_audio_file(text: str, filename: str):
-    """Generates a WAV file using Piper for the browser to play."""
-    try:
-        clean_text = clean_text_for_speech(text)
-        if not clean_text:
-            return None
-            
-        logger.info(f"Generating audio file: {filename}")
-        safe_text = clean_text.replace("'", "'\\''")
-        filepath = os.path.join("static", "audio", filename)
-        piper_cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_file {filepath}"
-        subprocess.run(piper_cmd, shell=True, check=True)
-        return f"/static/audio/{filename}"
-    except Exception as e:
-        logger.error(f"File TTS Error: {e}")
-        return None
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -91,61 +42,34 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     Send text to local LLM (Hailo/Ollama) and get response.
     """
     user_text = request.message
-    history = request.history
     play_on_hardware = request.play_on_hardware
     
-    # Ensure system prompt is present
-    if not history or history[0].get("role") != "system":
-        system_prompt = (
-            "You are BMO, a helpful robot assistant. Keep answers short, fun, and conversational. "
-            "Never use lists, bullet points, or markdown formatting like bold or italics. "
-            "Speak in natural paragraphs as if you are talking out loud."
-        )
-        history.insert(0, {"role": "system", "content": system_prompt})
-        
-    history.append({"role": "user", "content": user_text})
+    # Initialize brain and load history
+    brain = Brain()
+    brain.set_history(request.history)
 
-    payload = {
-        "model": LLM_MODEL,
-        "messages": history,
-        "stream": False
+    # Get response from LLM
+    content = brain.think(user_text)
+    
+    # Check if there was an error
+    if content.startswith("Error:") or content.startswith("Could not connect") or content.startswith("I'm having trouble"):
+        return {"error": content, "history": brain.get_history()}
+        
+    audio_url = None
+    
+    if play_on_hardware:
+        # Play on Pi speakers in the background so we don't block the UI response
+        background_tasks.add_task(play_audio_on_hardware, content)
+    else:
+        # Generate a WAV file for the browser to play
+        filename = f"response_{uuid.uuid4().hex[:8]}.wav"
+        audio_url = generate_audio_file(content, filename)
+        
+    return {
+        "response": content, 
+        "history": brain.get_history(),
+        "audio_url": audio_url
     }
-
-    try:
-        logger.info(f"Sending request to LLM: {LLM_URL}")
-        response = requests.post(LLM_URL, json=payload, timeout=60)
-        
-        if response.status_code == 200:
-            data = response.json()
-            content = data.get("message", {}).get("content", "")
-            history.append({"role": "assistant", "content": content})
-            
-            audio_url = None
-            
-            if play_on_hardware:
-                # Play on Pi speakers in the background so we don't block the UI response
-                background_tasks.add_task(play_audio_on_hardware, content)
-            else:
-                # Generate a WAV file for the browser to play
-                # We do this synchronously so the browser gets the URL immediately
-                filename = f"response_{uuid.uuid4().hex[:8]}.wav"
-                audio_url = generate_audio_file(content, filename)
-                
-            return {
-                "response": content, 
-                "history": history,
-                "audio_url": audio_url
-            }
-        else:
-            logger.error(f"LLM Error: {response.status_code} - {response.text}")
-            return {"error": f"LLM Error: {response.status_code}", "history": history}
-            
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Connection Error: {e}")
-        return {"error": "Could not connect to the LLM. Is the Hailo server running?", "history": history}
-    except Exception as e:
-        logger.error(f"Brain Exception: {e}")
-        return {"error": "An unexpected error occurred.", "history": history}
 
 @app.get("/api/faces/{state}")
 async def get_face(state: str):

@@ -17,7 +17,7 @@ class Bmo:
         
     def on_wake(self):
         self.ui.set_state("listening", "Listening...")
-        self.brain.history.append({"role": "user", "content": "I heard you."}) # Optional
+        # Optional: self.brain.core_brain.history.append({"role": "user", "content": "I heard you."})
 
         # Record Audio
         filename = self.ears.capture_audio()
