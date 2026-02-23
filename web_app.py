@@ -96,7 +96,12 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     
     # Ensure system prompt is present
     if not history or history[0].get("role") != "system":
-        history.insert(0, {"role": "system", "content": "You are BMO, a helpful robot assistant. Keep answers short and fun."})
+        system_prompt = (
+            "You are BMO, a helpful robot assistant. Keep answers short, fun, and conversational. "
+            "Never use lists, bullet points, or markdown formatting like bold or italics. "
+            "Speak in natural paragraphs as if you are talking out loud."
+        )
+        history.insert(0, {"role": "system", "content": system_prompt})
         
     history.append({"role": "user", "content": user_text})
 
