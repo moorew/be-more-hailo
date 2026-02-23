@@ -175,7 +175,11 @@
 <body>
     <div id="header">
         🎮 BMO is Online! 🎮
-        <div style="float: right; font-size: 0.6em; margin-top: 5px; display: flex; align-items: center; gap: 10px;">
+        <div style="float: right; font-size: 0.6em; margin-top: 5px; display: flex; align-items: center; gap: 15px;">
+            <div id="hailo-status" style="display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 12px;">
+                <div id="status-dot" style="width: 8px; height: 8px; border-radius: 50%; background-color: gray; transition: all 0.3s;"></div>
+                <span id="status-text">Hailo: Checking...</span>
+            </div>
             <label for="audio-toggle" style="cursor: pointer;">
                 <input type="checkbox" id="audio-toggle" style="cursor: pointer;">
                 Play Audio on Pi Hardware
@@ -232,6 +236,32 @@
             userInput.addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') sendMessage();
             });
+
+            // Start status polling
+            checkHailoStatus();
+            setInterval(checkHailoStatus, 5000);
+        }
+
+        async function checkHailoStatus() {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                if (data.status === 'online') {
+                    dot.style.backgroundColor = '#4caf50';
+                    dot.style.boxShadow = '0 0 8px #4caf50';
+                    text.textContent = 'Hailo: Online';
+                } else {
+                    dot.style.backgroundColor = '#f44336';
+                    dot.style.boxShadow = '0 0 8px #f44336';
+                    text.textContent = 'Hailo: Offline';
+                }
+            } catch (error) {
+                dot.style.backgroundColor = '#f44336';
+                dot.style.boxShadow = '0 0 8px #f44336';
+                text.textContent = 'Hailo: Error';
+            }
         }
 
         // Load face images from the server

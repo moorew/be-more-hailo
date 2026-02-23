@@ -6,10 +6,12 @@ from pydantic import BaseModel
 import logging
 import os
 import uuid
+import requests
 
 # Import our new unified core modules
 from core.llm import Brain
 from core.tts import play_audio_on_hardware, generate_audio_file
+from core.config import LLM_URL
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -70,6 +72,19 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
         "history": brain.get_history(),
         "audio_url": audio_url
     }
+
+@app.get("/api/status")
+async def get_status():
+    """Check if the Hailo LLM server is reachable."""
+    try:
+        # Check the base Ollama URL (e.g., http://127.0.0.1:8000)
+        base_url = LLM_URL.replace("/api/chat", "")
+        response = requests.get(base_url, timeout=2)
+        if response.status_code == 200:
+            return {"status": "online"}
+    except Exception:
+        pass
+    return {"status": "offline"}
 
 @app.get("/api/faces/{state}")
 async def get_face(state: str):
