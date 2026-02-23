@@ -162,7 +162,15 @@
     </style>
 </head>
 <body>
-    <div id="header">BMO Control Panel</div>
+    <div id="header">
+        BMO Control Panel
+        <div style="float: right; font-size: 0.6em; margin-top: 5px; display: flex; align-items: center; gap: 10px;">
+            <label for="audio-toggle" style="cursor: pointer;">
+                <input type="checkbox" id="audio-toggle" style="cursor: pointer;">
+                Play Audio on Pi Hardware
+            </label>
+        </div>
+    </div>
     
     <div id="main-container">
         <div id="face-container">
@@ -186,10 +194,12 @@
         const userInput = document.getElementById('user-input');
         const sendBtn = document.getElementById('send-btn');
         const bmoFace = document.getElementById('bmo-face');
+        const audioToggle = document.getElementById('audio-toggle');
 
         let conversationHistory = [];
         let currentAnimation = null;
         let animationInterval = null;
+        let currentAudio = null;
         let faceImages = {
             idle: [],
             thinking: [],
@@ -304,7 +314,8 @@
                     },
                     body: JSON.stringify({
                         message: text,
-                        history: conversationHistory
+                        history: conversationHistory,
+                        play_on_hardware: audioToggle.checked
                     })
                 });
 
@@ -319,10 +330,28 @@
                     addMessage(data.response, 'bmo');
                     conversationHistory = data.history;
                     
-                    // Animate speaking for a bit based on text length
+                    // Handle Audio and Speaking Animation
                     setFaceState('speaking');
-                    const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
-                    setTimeout(() => setFaceState('idle'), speakingDuration);
+                    
+                    if (currentAudio) {
+                        currentAudio.pause();
+                    }
+
+                    if (data.audio_url && !audioToggle.checked) {
+                        // Play audio in browser
+                        currentAudio = new Audio(data.audio_url);
+                        currentAudio.onended = () => setFaceState('idle');
+                        currentAudio.play().catch(e => {
+                            console.error("Browser blocked audio playback:", e);
+                            // Fallback animation duration if audio fails
+                            const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
+                            setTimeout(() => setFaceState('idle'), speakingDuration);
+                        });
+                    } else {
+                        // Hardware mode or no audio returned: estimate speaking time
+                        const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
+                        setTimeout(() => setFaceState('idle'), speakingDuration);
+                    }
                 }
 
             } catch (error) {
