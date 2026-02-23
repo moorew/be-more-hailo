@@ -10,7 +10,7 @@ import requests
 
 # Import our new unified core modules
 from core.llm import Brain
-from core.tts import play_audio_on_hardware, generate_audio_file
+from core.tts import play_audio_on_hardware, generate_audio_file, add_pronunciation, load_pronunciations
 from core.config import LLM_URL
 
 # Configure logging
@@ -34,9 +34,24 @@ class ChatRequest(BaseModel):
     history: list = []
     play_on_hardware: bool = False
 
+class PronunciationRequest(BaseModel):
+    word: str
+    phonetic: str
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+@app.post("/api/pronunciation")
+async def add_pronunciation_rule(request: PronunciationRequest):
+    """Add a new pronunciation rule."""
+    add_pronunciation(request.word, request.phonetic)
+    return {"status": "success", "word": request.word, "phonetic": request.phonetic}
+
+@app.get("/api/pronunciation")
+async def get_pronunciations():
+    """Get all pronunciation rules."""
+    return load_pronunciations()
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks):

@@ -170,12 +170,92 @@
             0%, 80%, 100% { transform: scale(0); }
             40% { transform: scale(1); }
         }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background-color: #2d2d2d;
+            padding: 25px;
+            border-radius: 8px;
+            width: 350px;
+            border: 1px solid #444;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+
+        .modal-header {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #fff;
+        }
+
+        .modal-input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background-color: #3c3c3c;
+            color: white;
+            box-sizing: border-box;
+        }
+
+        .modal-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .btn-primary {
+            background-color: #007acc;
+            color: white;
+        }
+
+        .btn-secondary {
+            background-color: #555;
+            color: white;
+        }
     </style>
 </head>
 <body>
+    <!-- Pronunciation Modal -->
+    <div id="pronunciation-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Fix Pronunciation</div>
+            <p style="font-size: 0.9em; color: #aaa; margin-bottom: 15px;">Teach BMO how to say a word correctly.</p>
+            <input type="text" id="pronounce-word" class="modal-input" placeholder="Word (e.g., poutine)">
+            <input type="text" id="pronounce-phonetic" class="modal-input" placeholder="Phonetic Spelling (e.g., poo-teen)">
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closePronunciationModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="savePronunciation()">Save</button>
+            </div>
+        </div>
+    </div>
+
     <div id="header">
         🎮 BMO is Online! 🎮
         <div style="float: right; font-size: 0.6em; margin-top: 5px; display: flex; align-items: center; gap: 15px;">
+            <button class="btn btn-secondary" style="font-size: 1em; padding: 4px 8px;" onclick="openPronunciationModal()">🗣️ Fix Pronunciation</button>
             <div id="hailo-status" style="display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 12px;">
                 <div id="status-dot" style="width: 8px; height: 8px; border-radius: 50%; background-color: gray; transition: all 0.3s;"></div>
                 <span id="status-text">Hailo: Checking...</span>
@@ -415,6 +495,56 @@
                 userInput.disabled = false;
                 sendBtn.disabled = false;
                 userInput.focus();
+            }
+        }
+
+        // Pronunciation Modal Functions
+        function openPronunciationModal() {
+            document.getElementById('pronunciation-modal').style.display = 'flex';
+            document.getElementById('pronounce-word').focus();
+        }
+
+        function closePronunciationModal() {
+            document.getElementById('pronunciation-modal').style.display = 'none';
+            document.getElementById('pronounce-word').value = '';
+            document.getElementById('pronounce-phonetic').value = '';
+        }
+
+        // Close modal if clicking outside of it
+        window.onclick = function(event) {
+            const modal = document.getElementById('pronunciation-modal');
+            if (event.target == modal) {
+                closePronunciationModal();
+            }
+        }
+
+        async function savePronunciation() {
+            const word = document.getElementById('pronounce-word').value.trim();
+            const phonetic = document.getElementById('pronounce-phonetic').value.trim();
+
+            if (!word || !phonetic) {
+                alert("Please enter both the word and its phonetic spelling.");
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/pronunciation', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ word, phonetic })
+                });
+
+                if (response.ok) {
+                    alert(`Successfully taught BMO to say "${word}" as "${phonetic}"!`);
+                    closePronunciationModal();
+                } else {
+                    alert("Failed to save pronunciation.");
+                }
+            } catch (error) {
+                console.error("Error saving pronunciation:", error);
+                alert("Error saving pronunciation.");
             }
         }
 

@@ -1,6 +1,8 @@
 import requests
 import logging
+import re
 from .config import LLM_URL, LLM_MODEL, SYSTEM_PROMPT
+from .tts import add_pronunciation
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,17 @@ class Brain:
             if response.status_code == 200:
                 data = response.json()
                 content = data.get("message", {}).get("content", "")
+                
+                # Check for pronunciation learning tag
+                pronounce_match = re.search(r'!PRONOUNCE:\s*([a-zA-Z0-9_-]+)\s*=\s*([a-zA-Z0-9_-]+)', content)
+                if pronounce_match:
+                    word = pronounce_match.group(1).strip()
+                    phonetic = pronounce_match.group(2).strip()
+                    logger.info(f"Learned new pronunciation from LLM: {word} -> {phonetic}")
+                    add_pronunciation(word, phonetic)
+                    # Remove the tag from the spoken content
+                    content = re.sub(r'!PRONOUNCE:.*', '', content).strip()
+
                 self.history.append({"role": "assistant", "content": content})
                 return content
             else:
