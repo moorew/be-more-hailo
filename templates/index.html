@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BMO Web UI</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: #ffffff;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        #header {
+            background-color: #2d2d2d;
+            padding: 15px 20px;
+            text-align: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            border-bottom: 1px solid #444;
+        }
+
+        #main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        #face-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #000;
+            border-right: 1px solid #444;
+        }
+
+        #bmo-face {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        #chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: #252526;
+        }
+
+        #chat-history {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            line-height: 1.4;
+        }
+
+        .user-message {
+            align-self: flex-end;
+            background-color: #007acc;
+            color: white;
+        }
+
+        .bmo-message {
+            align-self: flex-start;
+            background-color: #3e3e42;
+            color: #d4d4d4;
+        }
+
+        .system-message {
+            align-self: center;
+            background-color: transparent;
+            color: #888;
+            font-style: italic;
+            font-size: 0.9em;
+        }
+
+        #input-container {
+            padding: 20px;
+            background-color: #2d2d2d;
+            border-top: 1px solid #444;
+            display: flex;
+            gap: 10px;
+        }
+
+        #user-input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background-color: #3c3c3c;
+            color: white;
+            font-size: 1em;
+        }
+
+        #user-input:focus {
+            outline: none;
+            border-color: #007acc;
+        }
+
+        #send-btn {
+            padding: 12px 24px;
+            background-color: #007acc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+
+        #send-btn:hover {
+            background-color: #005999;
+        }
+
+        #send-btn:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+
+        /* Loading indicator */
+        .typing-indicator {
+            display: flex;
+            gap: 5px;
+            padding: 12px 16px;
+            background-color: #3e3e42;
+            border-radius: 8px;
+            align-self: flex-start;
+            width: fit-content;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            background-color: #888;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .dot:nth-child(1) { animation-delay: -0.32s; }
+        .dot:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <div id="header">BMO Control Panel</div>
+    
+    <div id="main-container">
+        <div id="face-container">
+            <img id="bmo-face" src="" alt="BMO Face">
+        </div>
+        
+        <div id="chat-container">
+            <div id="chat-history">
+                <div class="message system-message">System initialized. Ready to chat.</div>
+            </div>
+            
+            <div id="input-container">
+                <input type="text" id="user-input" placeholder="Type a message to BMO..." autocomplete="off">
+                <button id="send-btn">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatHistory = document.getElementById('chat-history');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const bmoFace = document.getElementById('bmo-face');
+
+        let conversationHistory = [];
+        let currentAnimation = null;
+        let animationInterval = null;
+        let faceImages = {
+            idle: [],
+            thinking: [],
+            speaking: [],
+            error: []
+        };
+
+        // Initialize
+        async function init() {
+            await loadFaces('idle');
+            await loadFaces('thinking');
+            await loadFaces('speaking');
+            await loadFaces('error');
+            
+            setFaceState('idle');
+            
+            // Event listeners
+            sendBtn.addEventListener('click', sendMessage);
+            userInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') sendMessage();
+            });
+        }
+
+        // Load face images from the server
+        async function loadFaces(state) {
+            try {
+                const response = await fetch(`/api/faces/${state}`);
+                const data = await response.json();
+                if (data.images && data.images.length > 0) {
+                    faceImages[state] = data.images;
+                } else {
+                    console.warn(`No images found for state: ${state}`);
+                }
+            } catch (error) {
+                console.error(`Error loading faces for ${state}:`, error);
+            }
+        }
+
+        // Set the current face animation state
+        function setFaceState(state) {
+            if (animationInterval) {
+                clearInterval(animationInterval);
+            }
+
+            const images = faceImages[state];
+            if (!images || images.length === 0) {
+                // Fallback if no images
+                bmoFace.style.display = 'none';
+                return;
+            }
+
+            bmoFace.style.display = 'block';
+            let frameIndex = 0;
+            
+            // Show first frame immediately
+            bmoFace.src = images[0];
+
+            // If multiple frames, animate
+            if (images.length > 1) {
+                const speed = state === 'speaking' ? 100 : 500; // Faster for speaking
+                animationInterval = setInterval(() => {
+                    frameIndex = (frameIndex + 1) % images.length;
+                    bmoFace.src = images[frameIndex];
+                }, speed);
+            }
+        }
+
+        function addMessage(text, sender) {
+            const msgDiv = document.createElement('div');
+            msgDiv.classList.add('message');
+            msgDiv.classList.add(sender === 'user' ? 'user-message' : 'bmo-message');
+            msgDiv.textContent = text;
+            chatHistory.appendChild(msgDiv);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            const indicator = document.createElement('div');
+            indicator.classList.add('typing-indicator');
+            indicator.id = 'typing-indicator';
+            indicator.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+            chatHistory.appendChild(indicator);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        function removeTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) {
+                indicator.remove();
+            }
+        }
+
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text) return;
+
+            // Disable input while processing
+            userInput.value = '';
+            userInput.disabled = true;
+            sendBtn.disabled = true;
+
+            // Update UI
+            addMessage(text, 'user');
+            showTypingIndicator();
+            setFaceState('thinking');
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: text,
+                        history: conversationHistory
+                    })
+                });
+
+                const data = await response.json();
+                removeTypingIndicator();
+
+                if (data.error) {
+                    addMessage(`Error: ${data.error}`, 'system');
+                    setFaceState('error');
+                    setTimeout(() => setFaceState('idle'), 3000);
+                } else {
+                    addMessage(data.response, 'bmo');
+                    conversationHistory = data.history;
+                    
+                    // Animate speaking for a bit based on text length
+                    setFaceState('speaking');
+                    const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
+                    setTimeout(() => setFaceState('idle'), speakingDuration);
+                }
+
+            } catch (error) {
+                removeTypingIndicator();
+                addMessage(`Connection Error: ${error.message}`, 'system');
+                setFaceState('error');
+                setTimeout(() => setFaceState('idle'), 3000);
+            } finally {
+                // Re-enable input
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                userInput.focus();
+            }
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+</html>
