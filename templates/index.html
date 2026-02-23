@@ -37,17 +37,147 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            background-color: #000;
+            background-color: #83c5be;
             border-right: 1px solid #444;
             overflow: hidden;
         }
 
+        .bmo-body {
+            width: 320px;
+            height: 450px;
+            background-color: #85c8b9;
+            border-radius: 20px;
+            padding: 20px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            border: 3px solid #111;
+            box-shadow: 10px 10px 0px rgba(0,0,0,0.15), inset -10px -10px 20px rgba(0,0,0,0.1);
+            position: relative;
+        }
+
+        .bmo-screen-container {
+            width: 100%;
+            height: 200px;
+            background-color: #c5e1a5;
+            border: 4px solid #111;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
         #bmo-face {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
             transform-origin: center center;
             transition: transform 0.3s ease-in-out;
+        }
+
+        .bmo-disk-drive {
+            width: 180px;
+            height: 15px;
+            background-color: #1a3a32;
+            border: 2px solid #111;
+            margin-top: 20px;
+            border-radius: 2px;
+        }
+
+        .bmo-controls-area {
+            width: 100%;
+            flex: 1;
+            position: relative;
+            margin-top: 10px;
+        }
+
+        .bmo-small-btn {
+            position: absolute;
+            top: 0;
+            right: 20px;
+            width: 15px;
+            height: 15px;
+            background-color: #2e86c1;
+            border: 2px solid #111;
+            border-radius: 50%;
+            box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+        }
+
+        .bmo-dpad {
+            position: absolute;
+            top: 40px;
+            left: 20px;
+            display: grid;
+            grid-template-columns: 20px 20px 20px;
+            grid-template-rows: 20px 20px 20px;
+            filter: drop-shadow(3px 3px 0px rgba(0,0,0,0.2));
+        }
+
+        .dpad-part { background-color: #f4d03f; border: 2px solid #111; }
+        .dpad-up { grid-column: 2; grid-row: 1; border-bottom: none; border-radius: 4px 4px 0 0; }
+        .dpad-down { grid-column: 2; grid-row: 3; border-top: none; border-radius: 0 0 4px 4px; }
+        .dpad-left { grid-column: 1; grid-row: 2; border-right: none; border-radius: 4px 0 0 4px; }
+        .dpad-right { grid-column: 3; grid-row: 2; border-left: none; border-radius: 0 4px 4px 0; }
+        .dpad-center { grid-column: 2; grid-row: 2; background-color: #f4d03f; }
+
+        .bmo-action-btns {
+            position: absolute;
+            top: 30px;
+            right: 20px;
+            width: 100px;
+            height: 100px;
+        }
+
+        .btn-triangle {
+            position: absolute;
+            top: 0;
+            left: 0;
+            filter: drop-shadow(2px 2px 0px rgba(0,0,0,0.2));
+        }
+
+        .btn-green {
+            position: absolute;
+            top: 25px;
+            right: 0;
+            width: 25px;
+            height: 25px;
+            background-color: #58d68d;
+            border: 2px solid #111;
+            border-radius: 50%;
+            box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+        }
+
+        .btn-pink {
+            position: absolute;
+            bottom: 0;
+            left: 20px;
+            width: 45px;
+            height: 45px;
+            background-color: #f50057;
+            border: 2px solid #111;
+            border-radius: 50%;
+            box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
+        }
+
+        .bmo-pills {
+            position: absolute;
+            bottom: 10px;
+            left: 20px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-pill {
+            width: 25px;
+            height: 8px;
+            background-color: #2e86c1;
+            border: 2px solid #111;
+            border-radius: 10px;
+            box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
         }
 
         /* Subtle breathing animation for idle state */
@@ -274,7 +404,35 @@
     
     <div id="main-container">
         <div id="face-container">
-            <img id="bmo-face" src="" alt="BMO Face">
+            <div class="bmo-body">
+                <div class="bmo-screen-container">
+                    <img id="bmo-face" src="" alt="BMO Face">
+                </div>
+                <div class="bmo-disk-drive"></div>
+                <div class="bmo-controls-area">
+                    <div class="bmo-small-btn"></div>
+                    <div class="bmo-dpad">
+                        <div class="dpad-part dpad-up"></div>
+                        <div class="dpad-part dpad-left"></div>
+                        <div class="dpad-center"></div>
+                        <div class="dpad-part dpad-right"></div>
+                        <div class="dpad-part dpad-down"></div>
+                    </div>
+                    <div class="bmo-action-btns">
+                        <div class="btn-triangle">
+                            <svg width="30" height="30" viewBox="0 0 30 30">
+                                <polygon points="15,2 28,28 2,28" fill="#5dade2" stroke="#111" stroke-width="2" stroke-linejoin="round"/>
+                            </svg>
+                        </div>
+                        <div class="btn-green"></div>
+                        <div class="btn-pink"></div>
+                    </div>
+                    <div class="bmo-pills">
+                        <div class="btn-pill"></div>
+                        <div class="btn-pill"></div>
+                    </div>
+                </div>
+            </div>
         </div>
         
         <div id="chat-container">
