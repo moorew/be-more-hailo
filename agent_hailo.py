@@ -36,6 +36,7 @@ from duckduckgo_search import DDGS
 # Import unified core modules
 from core.llm import Brain
 from core.tts import play_audio_on_hardware
+from core.stt import transcribe_audio
 from core.config import MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
 
 # =========================================================================
@@ -225,21 +226,7 @@ class BotGUI:
     # --- STT & TTS ---
     def transcribe(self, filename):
         print("Transcribing...")
-        # Convert to 16k
-        subprocess.run(f"ffmpeg -y -i {filename} -ar 16000 -ac 1 input_16k.wav", shell=True, stderr=subprocess.DEVNULL)
-        
-        # Using existing whisper.cpp setup
-        cmd = ["./whisper.cpp/build/bin/whisper-cli", "-m", "./whisper.cpp/models/ggml-base.en.bin", "-f", "input_16k.wav", "-nt"]
-        try:
-            res = subprocess.run(cmd, capture_output=True, text=True)
-            # Rough parsing of whisper output
-            text = res.stdout.strip()
-            # Clean up [timestamps] if present
-            text = re.sub(r'\[.*?\]', '', text).strip()
-            return text
-        except Exception as e:
-            print(f"Whisper Error: {e}")
-            return ""
+        return transcribe_audio(filename)
 
     def speak(self, text):
         print(f"Speaking: {text}")

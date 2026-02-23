@@ -277,6 +277,37 @@
             cursor: not-allowed;
         }
 
+        #mic-btn {
+            padding: 12px;
+            background-color: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1.2em;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.2s;
+            width: 45px;
+            height: 45px;
+        }
+
+        #mic-btn:hover {
+            background-color: #c0392b;
+        }
+
+        #mic-btn.recording {
+            background-color: #c0392b;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(231, 76, 60, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+        }
+
         /* Loading indicator */
         .typing-indicator {
             display: flex;
@@ -441,6 +472,7 @@
             </div>
             
             <div id="input-container">
+                <button id="mic-btn" title="Hold to talk">🎤</button>
                 <input type="text" id="user-input" placeholder="Type a message to BMO..." autocomplete="off">
                 <button id="send-btn">Send</button>
             </div>
@@ -451,6 +483,7 @@
         const chatHistory = document.getElementById('chat-history');
         const userInput = document.getElementById('user-input');
         const sendBtn = document.getElementById('send-btn');
+        const micBtn = document.getElementById('mic-btn');
         const bmoFace = document.getElementById('bmo-face');
         const audioToggle = document.getElementById('audio-toggle');
 
@@ -464,6 +497,11 @@
             speaking: [],
             error: []
         };
+
+        // Audio Recording Variables
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
 
         // Initialize
         async function init() {
@@ -480,9 +518,95 @@
                 if (e.key === 'Enter') sendMessage();
             });
 
+            // Mic button listeners (Hold to talk)
+            micBtn.addEventListener('mousedown', startRecording);
+            micBtn.addEventListener('mouseup', stopRecording);
+            micBtn.addEventListener('mouseleave', () => {
+                if (isRecording) stopRecording();
+            });
+            
+            // Touch support for mobile
+            micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
+            micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
+
             // Start status polling
             checkHailoStatus();
             setInterval(checkHailoStatus, 5000);
+        }
+
+        async function startRecording() {
+            if (isRecording) return;
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    await processAudio(audioBlob);
+                    
+                    // Stop all tracks to release microphone
+                    stream.getTracks().forEach(track => track.stop());
+                };
+
+                mediaRecorder.start();
+                isRecording = true;
+                micBtn.classList.add('recording');
+                userInput.placeholder = "Listening...";
+                
+            } catch (error) {
+                console.error("Error accessing microphone:", error);
+                alert("Could not access microphone. Please check permissions.");
+            }
+        }
+
+        function stopRecording() {
+            if (!isRecording || !mediaRecorder) return;
+            
+            mediaRecorder.stop();
+            isRecording = false;
+            micBtn.classList.remove('recording');
+            userInput.placeholder = "Processing audio...";
+        }
+
+        async function processAudio(audioBlob) {
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.webm');
+
+            try {
+                userInput.disabled = true;
+                sendBtn.disabled = true;
+                micBtn.disabled = true;
+                
+                const response = await fetch('/api/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                
+                if (data.text) {
+                    userInput.value = data.text;
+                    sendMessage(); // Automatically send the transcribed text
+                } else if (data.error) {
+                    console.error("Transcription error:", data.error);
+                    alert("Failed to transcribe audio.");
+                }
+            } catch (error) {
+                console.error("Error sending audio:", error);
+            } finally {
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                micBtn.disabled = false;
+                userInput.placeholder = "Type a message to BMO...";
+            }
         }
 
         async function checkHailoStatus() {

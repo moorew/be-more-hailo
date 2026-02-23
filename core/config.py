@@ -16,6 +16,10 @@ SYSTEM_PROMPT = (
 PIPER_CMD = "./piper/piper"
 PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
 
+# STT Settings (Whisper.cpp)
+WHISPER_CMD = "./whisper.cpp/main"
+WHISPER_MODEL = "./whisper.cpp/models/ggml-base.en.bin"
+
 # Audio Settings
 MIC_DEVICE_INDEX = 1
 MIC_SAMPLE_RATE = 48000

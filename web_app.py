@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request, BackgroundTasks, UploadFile, File
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -7,10 +7,12 @@ import logging
 import os
 import uuid
 import requests
+import shutil
 
 # Import our new unified core modules
 from core.llm import Brain
 from core.tts import play_audio_on_hardware, generate_audio_file, add_pronunciation, load_pronunciations
+from core.stt import transcribe_audio
 from core.config import LLM_URL
 
 # Configure logging
@@ -87,6 +89,35 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
         "history": brain.get_history(),
         "audio_url": audio_url
     }
+
+@app.post("/api/transcribe")
+async def transcribe(audio: UploadFile = File(...)):
+    """
+    Receive an audio file from the browser, save it temporarily,
+    and transcribe it using whisper.cpp.
+    """
+    temp_filename = f"temp_{uuid.uuid4().hex}.webm"
+    temp_filepath = os.path.join("static", "audio", temp_filename)
+    
+    try:
+        # Save the uploaded file
+        with open(temp_filepath, "wb") as buffer:
+            shutil.copyfileobj(audio.file, buffer)
+            
+        # Transcribe it
+        text = transcribe_audio(temp_filepath)
+        
+        return {"text": text}
+    except Exception as e:
+        logger.error(f"Transcription endpoint error: {e}")
+        return {"error": str(e)}
+    finally:
+        # Clean up the original uploaded file
+        if os.path.exists(temp_filepath):
+            try:
+                os.remove(temp_filepath)
+            except Exception as e:
+                logger.warning(f"Could not remove temp file {temp_filepath}: {e}")
 
 @app.get("/api/status")
 async def get_status():
