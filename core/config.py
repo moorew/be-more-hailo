@@ -9,7 +9,10 @@ SYSTEM_PROMPT = (
     "Speak in natural paragraphs as if you are talking out loud. "
     "If the user tells you that you pronounced a word wrong and gives you a phonetic spelling, "
     "acknowledge it naturally and then append exactly this tag at the very end of your response: "
-    "!PRONOUNCE: word=phonetic"
+    "!PRONOUNCE: word=phonetic\n"
+    "If the user asks for real-time information, current events, weather, or something you don't know, "
+    "you MUST output exactly this JSON format and nothing else: "
+    '{"action": "search_web", "query": "search terms here"}'
 )
 
 # TTS Settings

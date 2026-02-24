@@ -1,8 +1,10 @@
 import requests
 import logging
 import re
+import json
 from .config import LLM_URL, LLM_MODEL, SYSTEM_PROMPT
 from .tts import add_pronunciation
+from .search import search_web
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,39 @@ class Brain:
             if response.status_code == 200:
                 data = response.json()
                 content = data.get("message", {}).get("content", "")
+                
+                # Check if the LLM outputted a JSON action (like search_web)
+                try:
+                    # Try to find JSON in the response (non-greedy)
+                    json_match = re.search(r'\{.*?\}', content, re.DOTALL)
+                    if json_match:
+                        action_data = json.loads(json_match.group(0))
+                        if action_data.get("action") == "search_web":
+                            query = action_data.get("query", "")
+                            logger.info(f"LLM requested web search for: {query}")
+                            
+                            # Perform the search
+                            search_result = search_web(query)
+                            
+                            # Feed the result back to the LLM to summarize
+                            summary_prompt = [
+                                {"role": "system", "content": "Summarize this search result in one short, conversational sentence as BMO. Do not use markdown."},
+                                {"role": "user", "content": f"RESULT: {search_result}\nUser Question: {user_text}"}
+                            ]
+                            
+                            summary_payload = {
+                                "model": LLM_MODEL,
+                                "messages": summary_prompt,
+                                "stream": False
+                            }
+                            
+                            summary_response = requests.post(LLM_URL, json=summary_payload, timeout=60)
+                            if summary_response.status_code == 200:
+                                content = summary_response.json().get("message", {}).get("content", "")
+                            else:
+                                content = "I tried to search the web, but my brain got confused reading the results."
+                except json.JSONDecodeError:
+                    pass # Not valid JSON, just treat as normal text
                 
                 # Check for pronunciation learning tag
                 pronounce_match = re.search(r'!PRONOUNCE:\s*([a-zA-Z0-9_-]+)\s*=\s*([a-zA-Z0-9_-]+)', content)
