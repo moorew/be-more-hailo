@@ -426,7 +426,11 @@
                 <div id="status-dot" style="width: 8px; height: 8px; border-radius: 50%; background-color: gray; transition: all 0.3s;"></div>
                 <span id="status-text">Hailo: Checking...</span>
             </div>
-            <label for="audio-toggle" style="cursor: pointer;">
+            <label for="hands-free-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 5px;">
+                <input type="checkbox" id="hands-free-toggle" style="cursor: pointer;">
+                Hands-Free Mode
+            </label>
+            <label for="audio-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 5px;">
                 <input type="checkbox" id="audio-toggle" style="cursor: pointer;">
                 Play Audio on Pi Hardware
             </label>
@@ -472,7 +476,7 @@
             </div>
             
             <div id="input-container">
-                <button id="mic-btn" title="Hold to talk">🎤</button>
+                <button id="mic-btn" title="Click to talk">🎤</button>
                 <input type="text" id="user-input" placeholder="Type a message to BMO..." autocomplete="off">
                 <button id="send-btn">Send</button>
             </div>
@@ -518,21 +522,135 @@
                 if (e.key === 'Enter') sendMessage();
             });
 
-            // Mic button listeners (Hold to talk)
-            micBtn.addEventListener('mousedown', startRecording);
-            micBtn.addEventListener('mouseup', stopRecording);
-            micBtn.addEventListener('mouseleave', () => {
-                if (isRecording) stopRecording();
+            // Mic button listener (Click to toggle)
+            micBtn.addEventListener('click', () => {
+                if (isRecording) {
+                    stopRecording();
+                } else {
+                    if (document.getElementById('hands-free-toggle').checked) {
+                        stopWakeWordListener();
+                    }
+                    startRecording();
+                }
             });
-            
-            // Touch support for mobile
-            micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
-            micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
 
             // Start status polling
             checkHailoStatus();
             setInterval(checkHailoStatus, 5000);
+
+            // Initialize Hands-Free Mode
+            initHandsFreeMode();
         }
+
+        let wakeWordSocket = null;
+        let audioContext = null;
+        let processor = null;
+        let mediaStream = null;
+
+        function initHandsFreeMode() {
+            const handsFreeToggle = document.getElementById('hands-free-toggle');
+            
+            handsFreeToggle.addEventListener('change', async (e) => {
+                if (e.target.checked) {
+                    userInput.placeholder = "Hands-Free Mode: Say 'Hey Beemo'...";
+                    await startWakeWordListener();
+                } else {
+                    userInput.placeholder = "Type a message to BMO...";
+                    stopWakeWordListener();
+                }
+            });
+        }
+
+        async function startWakeWordListener() {
+            if (wakeWordSocket) return;
+
+            try {
+                // Connect to WebSocket
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                wakeWordSocket = new WebSocket(`${protocol}//${window.location.host}/api/wakeword`);
+                
+                wakeWordSocket.onopen = () => {
+                    console.log("Wake Word WebSocket connected.");
+                };
+
+                wakeWordSocket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.event === 'wakeword_detected') {
+                        console.log("Wake word detected by server!");
+                        // Stop listening for wake word temporarily
+                        stopWakeWordListener();
+                        
+                        // Start recording the actual command
+                        startRecording();
+                    }
+                };
+
+                wakeWordSocket.onclose = () => {
+                    console.log("Wake Word WebSocket closed.");
+                    wakeWordSocket = null;
+                };
+
+                // Request microphone access
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Create AudioContext
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                
+                // Create a ScriptProcessorNode to capture raw PCM data
+                // 4096 buffer size is a good balance between latency and performance
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                processor.onaudioprocess = (e) => {
+                    if (!wakeWordSocket || wakeWordSocket.readyState !== WebSocket.OPEN) return;
+                    
+                    // Get the raw float32 audio data from the microphone
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    
+                    // Convert Float32 to Int16 (which openwakeword expects)
+                    const int16Data = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        // Clamp values between -1 and 1
+                        const s = Math.max(-1, Math.min(1, inputData[i]));
+                        // Convert to 16-bit integer
+                        int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+                    
+                    // Send the binary chunk to the server
+                    wakeWordSocket.send(int16Data.buffer);
+                };
+                
+                // Connect the nodes
+                source.connect(processor);
+                processor.connect(audioContext.destination); // Required for the processor to run
+                
+            } catch (err) {
+                console.error("Error starting wake word listener:", err);
+                document.getElementById('hands-free-toggle').checked = false;
+                alert("Could not access microphone for Hands-Free Mode.");
+            }
+        }
+
+        function stopWakeWordListener() {
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            if (wakeWordSocket) {
+                wakeWordSocket.close();
+                wakeWordSocket = null;
+            }
+        }
+
+        let vadInterval = null;
 
         async function startRecording() {
             if (isRecording) return;
@@ -542,6 +660,40 @@
                 mediaRecorder = new MediaRecorder(stream);
                 audioChunks = [];
 
+                // Setup VAD (Voice Activity Detection)
+                const vadAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const vadSource = vadAudioContext.createMediaStreamSource(stream);
+                const analyser = vadAudioContext.createAnalyser();
+                analyser.fftSize = 512;
+                vadSource.connect(analyser);
+                const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                
+                let silenceStart = Date.now();
+                let hasSpoken = false;
+
+                vadInterval = setInterval(() => {
+                    analyser.getByteFrequencyData(dataArray);
+                    let sum = 0;
+                    for (let i = 0; i < dataArray.length; i++) {
+                        sum += dataArray[i];
+                    }
+                    let average = sum / dataArray.length;
+
+                    if (average > 10) { // Volume threshold
+                        hasSpoken = true;
+                        silenceStart = Date.now();
+                    } else {
+                        // If they spoke and then were silent for 2 seconds, stop recording
+                        if (hasSpoken && (Date.now() - silenceStart > 2000)) {
+                            stopRecording();
+                        }
+                        // If they never spoke and 5 seconds passed, stop recording
+                        else if (!hasSpoken && (Date.now() - silenceStart > 5000)) {
+                            stopRecording();
+                        }
+                    }
+                }, 100);
+
                 mediaRecorder.ondataavailable = (event) => {
                     if (event.data.size > 0) {
                         audioChunks.push(event.data);
@@ -549,6 +701,14 @@
                 };
 
                 mediaRecorder.onstop = async () => {
+                    if (vadInterval) {
+                        clearInterval(vadInterval);
+                        vadInterval = null;
+                    }
+                    if (vadAudioContext) {
+                        vadAudioContext.close();
+                    }
+
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                     await processAudio(audioBlob);
                     
@@ -559,7 +719,7 @@
                 mediaRecorder.start();
                 isRecording = true;
                 micBtn.classList.add('recording');
-                userInput.placeholder = "Listening...";
+                userInput.placeholder = "Listening... (Speak now)";
                 
             } catch (error) {
                 console.error("Error accessing microphone:", error);
@@ -596,15 +756,26 @@
 
                 const data = await response.json();
                 
-                if (data.text) {
+                if (data.text && data.text.trim().length > 0) {
                     userInput.value = data.text;
                     sendMessage(); // Automatically send the transcribed text
-                } else if (data.error) {
-                    console.error("Transcription error:", data.error);
-                    alert("Failed to transcribe audio.");
+                } else {
+                    if (data.error) {
+                        console.error("Transcription error:", data.error);
+                        alert("Failed to transcribe audio.");
+                    } else {
+                        console.log("No speech detected in audio.");
+                    }
+                    // Restart wake word listener if hands-free is on
+                    if (document.getElementById('hands-free-toggle').checked) {
+                        startWakeWordListener();
+                    }
                 }
             } catch (error) {
                 console.error("Error sending audio:", error);
+                if (document.getElementById('hands-free-toggle').checked) {
+                    startWakeWordListener();
+                }
             } finally {
                 userInput.disabled = false;
                 sendBtn.disabled = false;
@@ -747,7 +918,12 @@
                 if (data.error) {
                     addMessage(`Error: ${data.error}`, 'system');
                     setFaceState('error');
-                    setTimeout(() => setFaceState('idle'), 3000);
+                    setTimeout(() => {
+                        setFaceState('idle');
+                        if (document.getElementById('hands-free-toggle').checked) {
+                            startWakeWordListener();
+                        }
+                    }, 3000);
                 } else {
                     addMessage(data.response, 'bmo');
                     conversationHistory = data.history;
@@ -762,17 +938,32 @@
                     if (data.audio_url && !audioToggle.checked) {
                         // Play audio in browser
                         currentAudio = new Audio(data.audio_url);
-                        currentAudio.onended = () => setFaceState('idle');
+                        currentAudio.onended = () => {
+                            setFaceState('idle');
+                            if (document.getElementById('hands-free-toggle').checked) {
+                                startWakeWordListener();
+                            }
+                        };
                         currentAudio.play().catch(e => {
                             console.error("Browser blocked audio playback:", e);
                             // Fallback animation duration if audio fails
                             const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
-                            setTimeout(() => setFaceState('idle'), speakingDuration);
+                            setTimeout(() => {
+                                setFaceState('idle');
+                                if (document.getElementById('hands-free-toggle').checked) {
+                                    startWakeWordListener();
+                                }
+                            }, speakingDuration);
                         });
                     } else {
                         // Hardware mode or no audio returned: estimate speaking time
                         const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
-                        setTimeout(() => setFaceState('idle'), speakingDuration);
+                        setTimeout(() => {
+                            setFaceState('idle');
+                            if (document.getElementById('hands-free-toggle').checked) {
+                                startWakeWordListener();
+                            }
+                        }, speakingDuration);
                     }
                 }
 
@@ -780,7 +971,12 @@
                 removeTypingIndicator();
                 addMessage(`Connection Error: ${error.message}`, 'system');
                 setFaceState('error');
-                setTimeout(() => setFaceState('idle'), 3000);
+                setTimeout(() => {
+                    setFaceState('idle');
+                    if (document.getElementById('hands-free-toggle').checked) {
+                        startWakeWordListener();
+                    }
+                }, 3000);
             } finally {
                 // Re-enable input
                 userInput.disabled = false;

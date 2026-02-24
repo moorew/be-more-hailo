@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, Request, BackgroundTasks, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -8,12 +8,23 @@ import os
 import uuid
 import requests
 import shutil
+import numpy as np
 
 # Import our new unified core modules
 from core.llm import Brain
 from core.tts import play_audio_on_hardware, generate_audio_file, add_pronunciation, load_pronunciations
 from core.stt import transcribe_audio
-from core.config import LLM_URL
+from core.config import LLM_URL, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
+
+# Try to load openwakeword for web streaming
+try:
+    from openwakeword.model import Model
+    # Initialize the model once for the web app
+    oww_model = Model(wakeword_model_paths=[WAKE_WORD_MODEL])
+    logger.info(f"Loaded OpenWakeWord model: {WAKE_WORD_MODEL}")
+except Exception as e:
+    logger.warning(f"Could not load OpenWakeWord for web app: {e}")
+    oww_model = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -118,6 +129,46 @@ async def transcribe(audio: UploadFile = File(...)):
                 os.remove(temp_filepath)
             except Exception as e:
                 logger.warning(f"Could not remove temp file {temp_filepath}: {e}")
+
+@app.websocket("/api/wakeword")
+async def websocket_wakeword(websocket: WebSocket):
+    """
+    WebSocket endpoint for continuous audio streaming from the browser.
+    Expects 16kHz 16-bit PCM audio chunks.
+    """
+    await websocket.accept()
+    if oww_model is None:
+        await websocket.send_json({"error": "Wake word model not loaded on server."})
+        await websocket.close()
+        return
+
+    try:
+        while True:
+            # Receive binary audio data (Int16 PCM)
+            data = await websocket.receive_bytes()
+            
+            # Convert bytes to numpy array
+            audio_chunk = np.frombuffer(data, dtype=np.int16)
+            
+            # Feed to openwakeword
+            oww_model.predict(audio_chunk)
+            
+            # Check predictions
+            for key in oww_model.prediction_buffer.keys():
+                if oww_model.prediction_buffer[key][-1] > WAKE_WORD_THRESHOLD:
+                    logger.info(f"Web Wake Word Detected: {key}")
+                    await websocket.send_json({"event": "wakeword_detected", "model": key})
+                    oww_model.reset()
+                    break # Only trigger once per chunk
+                    
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.close()
+        except:
+            pass
 
 @app.get("/api/status")
 async def get_status():
