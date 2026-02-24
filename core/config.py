@@ -3,7 +3,7 @@
 # LLM Settings
 # To offload to your Linux server, change this to: "http://blackbox.clevercode.ts.net:11434/api/chat"
 # Make sure Ollama is running on the blackbox server and listening on 0.0.0.0
-LLM_URL = "http://blackbox.clevercode.ts.net:11434/api/chat"
+LLM_URL = "http://127.0.0.1:8000/api/chat"
 LLM_MODEL = "llama3.2:3b"
 SYSTEM_PROMPT = (
     "You are BMO, a helpful robot assistant. Keep answers short, fun, and conversational. "
