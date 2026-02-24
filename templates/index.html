@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BMO is Online!</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background-color: #1e1e1e;
@@ -67,6 +69,7 @@
             box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
             position: relative;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
         }
@@ -77,6 +80,30 @@
             object-fit: cover;
             transform-origin: center center;
             transition: transform 0.3s ease-in-out;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        #bmo-transcript {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            right: 10px;
+            z-index: 2;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            color: #111;
+            text-align: center;
+            text-shadow: 1px 1px 0px rgba(255,255,255,0.5);
+            pointer-events: none;
+            line-height: 1.4;
+            max-height: 40px;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
         }
 
         .bmo-disk-drive {
@@ -399,6 +426,47 @@
             background-color: #555;
             color: white;
         }
+
+        /* Mobile Responsive Styles */
+        @media (max-width: 768px) {
+            #header {
+                flex-direction: column;
+                gap: 10px;
+                padding: 10px;
+                font-size: 1.2em;
+            }
+
+            #header > div {
+                width: 100%;
+                justify-content: center !important;
+                flex-wrap: wrap;
+            }
+
+            #main-container {
+                flex-direction: column;
+            }
+
+            #face-container {
+                border-right: none;
+                border-bottom: 1px solid #444;
+                padding: 20px 0;
+                min-height: 50vh;
+            }
+
+            .bmo-body {
+                transform: scale(0.8);
+                transform-origin: top center;
+                margin-bottom: -90px; /* Compensate for scale */
+            }
+
+            #chat-container {
+                height: 50vh;
+            }
+
+            .message {
+                max-width: 90%;
+            }
+        }
     </style>
 </head>
 <body>
@@ -420,19 +488,19 @@
         <div style="flex: 1; text-align: center;">
             🎮 BMO is Online! 🎮
         </div>
-        <div style="flex: 1; display: flex; justify-content: flex-end; align-items: center; gap: 15px; font-size: 0.6em; font-weight: normal;">
+        <div style="flex: 1; display: flex; justify-content: flex-end; align-items: center; gap: 10px; font-size: 0.6em; font-weight: normal; flex-wrap: wrap;">
             <button class="btn btn-secondary" style="font-size: 1em; padding: 4px 8px;" onclick="openPronunciationModal()">🗣️ Fix Pronunciation</button>
             <div id="hailo-status" style="display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 12px;">
                 <div id="status-dot" style="width: 8px; height: 8px; border-radius: 50%; background-color: gray; transition: all 0.3s;"></div>
                 <span id="status-text">LLM: Checking...</span>
             </div>
-            <label for="hands-free-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 5px;">
+            <label for="hands-free-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 12px;">
                 <input type="checkbox" id="hands-free-toggle" style="cursor: pointer;">
-                Hands-Free Mode
+                Hands-Free
             </label>
-            <label for="audio-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 5px;">
+            <label for="audio-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 12px;">
                 <input type="checkbox" id="audio-toggle" style="cursor: pointer;">
-                Play Audio on Pi Hardware
+                Pi Audio
             </label>
         </div>
     </div>
@@ -446,6 +514,7 @@
             <div class="bmo-body">
                 <div class="bmo-screen-container">
                     <img id="bmo-face" src="" alt="BMO Face">
+                    <div id="bmo-transcript"></div>
                 </div>
                 <div class="bmo-disk-drive"></div>
                 <div class="bmo-controls-area">
@@ -861,10 +930,36 @@
                 if (state === 'speaking') speed = 150; // More natural speaking speed
                 if (state === 'thinking') speed = 300; // Smooth thinking speed
                 
-                animationInterval = setInterval(() => {
-                    frameIndex = (frameIndex + 1) % images.length;
-                    bmoFace.src = images[frameIndex];
-                }, speed);
+                // For thinking, we want to pick a random frame and hold it for a bit, 
+                // rather than cycling through them sequentially, to look more natural.
+                if (state === 'thinking') {
+                    animationInterval = setInterval(() => {
+                        // Pick a random frame that isn't the current one
+                        let nextFrame;
+                        do {
+                            nextFrame = Math.floor(Math.random() * images.length);
+                        } while (nextFrame === frameIndex && images.length > 1);
+                        
+                        frameIndex = nextFrame;
+                        bmoFace.src = images[frameIndex];
+                    }, speed * 2); // Slower transitions for thinking
+                } else {
+                    animationInterval = setInterval(() => {
+                        frameIndex = (frameIndex + 1) % images.length;
+                        bmoFace.src = images[frameIndex];
+                    }, speed);
+                }
+            }
+        }
+
+        function updateTranscript(text) {
+            const transcriptEl = document.getElementById('bmo-transcript');
+            if (text) {
+                transcriptEl.textContent = text;
+                transcriptEl.style.display = '-webkit-box';
+            } else {
+                transcriptEl.textContent = '';
+                transcriptEl.style.display = 'none';
             }
         }
 
@@ -962,6 +1057,7 @@
                     setFaceState('error');
                 } else {
                     addMessage(data.response, 'bmo');
+                    updateTranscript(data.response);
                     conversationHistory = data.history;
                     setFaceState('speaking');
                     
@@ -973,6 +1069,7 @@
                         currentAudio = new Audio(data.audio_url);
                         currentAudio.onended = () => {
                             setFaceState('idle');
+                            updateTranscript('');
                             if (document.getElementById('hands-free-toggle').checked) {
                                 startWakeWordListener();
                             }
@@ -981,6 +1078,7 @@
                             console.error("Browser blocked audio playback:", e);
                             setTimeout(() => {
                                 setFaceState('idle');
+                                updateTranscript('');
                                 if (document.getElementById('hands-free-toggle').checked) {
                                     startWakeWordListener();
                                 }
@@ -989,6 +1087,7 @@
                     } else {
                         setTimeout(() => {
                             setFaceState('idle');
+                            updateTranscript('');
                             if (document.getElementById('hands-free-toggle').checked) {
                                 startWakeWordListener();
                             }
@@ -1048,6 +1147,7 @@
                     takePhotoAndSend(text);
                 } else {
                     addMessage(data.response, 'bmo');
+                    updateTranscript(data.response);
                     conversationHistory = data.history;
                     
                     // Handle Audio and Speaking Animation
@@ -1062,6 +1162,7 @@
                         currentAudio = new Audio(data.audio_url);
                         currentAudio.onended = () => {
                             setFaceState('idle');
+                            updateTranscript('');
                             if (document.getElementById('hands-free-toggle').checked) {
                                 startWakeWordListener();
                             }
@@ -1072,6 +1173,7 @@
                             const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
                             setTimeout(() => {
                                 setFaceState('idle');
+                                updateTranscript('');
                                 if (document.getElementById('hands-free-toggle').checked) {
                                     startWakeWordListener();
                                 }
@@ -1082,6 +1184,7 @@
                         const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
                         setTimeout(() => {
                             setFaceState('idle');
+                            updateTranscript('');
                             if (document.getElementById('hands-free-toggle').checked) {
                                 startWakeWordListener();
                             }

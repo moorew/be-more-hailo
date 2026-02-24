@@ -2,7 +2,7 @@ import requests
 import logging
 import re
 import json
-from .config import LLM_URL, LLM_MODEL, VISION_MODEL, SYSTEM_PROMPT
+from .config import LLM_URL, LLM_MODEL, VISION_MODEL, get_system_prompt
 from .tts import add_pronunciation
 from .search import search_web
 
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class Brain:
     def __init__(self):
-        self.history = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.history = [{"role": "system", "content": get_system_prompt()}]
 
     def think(self, user_text: str) -> str:
         """
@@ -100,9 +100,11 @@ class Brain:
         return self.history
 
     def set_history(self, new_history):
-        # Ensure system prompt is always present
+        # Ensure system prompt is always present and up to date
         if not new_history or new_history[0].get("role") != "system":
-            new_history.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+            new_history.insert(0, {"role": "system", "content": get_system_prompt()})
+        else:
+            new_history[0]["content"] = get_system_prompt()
         self.history = new_history
 
     def analyze_image(self, image_base64: str, user_text: str) -> str:
