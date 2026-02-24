@@ -12,7 +12,8 @@ SYSTEM_PROMPT = (
     "!PRONOUNCE: word=phonetic\n"
     "If the user asks for real-time information, current events, weather, or something you don't know, "
     "you MUST output exactly this JSON format and nothing else: "
-    '{"action": "search_web", "query": "search terms here"}'
+    '{"action": "search_web", "query": "search terms here"}\n'
+    "Do not include any conversational text before or after the JSON block when searching."
 )
 
 # TTS Settings

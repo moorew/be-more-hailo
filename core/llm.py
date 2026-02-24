@@ -35,7 +35,9 @@ class Brain:
                 # Check if the LLM outputted a JSON action (like search_web)
                 try:
                     # Try to find JSON in the response (non-greedy)
-                    json_match = re.search(r'\{.*?\}', content, re.DOTALL)
+                    # Also replace smart quotes with standard quotes before parsing
+                    clean_content = content.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
+                    json_match = re.search(r'\{.*?\}', clean_content, re.DOTALL)
                     if json_match:
                         action_data = json.loads(json_match.group(0))
                         if action_data.get("action") == "search_web":
