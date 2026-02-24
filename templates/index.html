@@ -424,7 +424,7 @@
             <button class="btn btn-secondary" style="font-size: 1em; padding: 4px 8px;" onclick="openPronunciationModal()">🗣️ Fix Pronunciation</button>
             <div id="hailo-status" style="display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 12px;">
                 <div id="status-dot" style="width: 8px; height: 8px; border-radius: 50%; background-color: gray; transition: all 0.3s;"></div>
-                <span id="status-text">Hailo: Checking...</span>
+                <span id="status-text">LLM: Checking...</span>
             </div>
             <label for="hands-free-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 5px;">
                 <input type="checkbox" id="hands-free-toggle" style="cursor: pointer;">
@@ -793,16 +793,16 @@
                 if (data.status === 'online') {
                     dot.style.backgroundColor = '#4caf50';
                     dot.style.boxShadow = '0 0 8px #4caf50';
-                    text.textContent = 'Hailo: Online';
+                    text.textContent = 'LLM: Online';
                 } else {
                     dot.style.backgroundColor = '#f44336';
                     dot.style.boxShadow = '0 0 8px #f44336';
-                    text.textContent = 'Hailo: Offline';
+                    text.textContent = 'LLM: Offline';
                 }
             } catch (error) {
                 dot.style.backgroundColor = '#f44336';
                 dot.style.boxShadow = '0 0 8px #f44336';
-                text.textContent = 'Hailo: Error';
+                text.textContent = 'LLM: Error';
             }
         }
 
