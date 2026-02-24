@@ -12,7 +12,6 @@ fi
 # Ensure model is available
 # SKIPPED: Hailo server reports model "in store" but API returns empty list/500 on pull.
 # Assuming model is present based on server logs to allow boot.
-# python3 ensure_model.py
 
 # --- AUTO-Start LLM Server (Ollama on port 8000) ---
 if ! lsof -i :8000 >/dev/null; then

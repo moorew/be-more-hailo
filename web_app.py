@@ -56,6 +56,10 @@ class PronunciationRequest(BaseModel):
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
+@app.get("/favicon.png")
+async def get_favicon():
+    return FileResponse("favicon.png")
+
 @app.post("/api/pronunciation")
 async def add_pronunciation_rule(request: PronunciationRequest):
     """Add a new pronunciation rule."""
