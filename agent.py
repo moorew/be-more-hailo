@@ -44,7 +44,7 @@ from openwakeword.model import Model
 import ollama 
 
 # --- WEB SEARCH (Using your working import) ---
-from ddgs import DDGS 
+from duckduckgo_search import DDGS 
 
 # =========================================================================
 # 1. CONFIGURATION & CONSTANTS
@@ -60,22 +60,21 @@ WAKE_WORD_THRESHOLD = 0.5
 INPUT_DEVICE_NAME = None 
 
 DEFAULT_CONFIG = {
-    "text_model": "gemma3:1b",
-    "vision_model": "moondream",
+    "text_model": "llama3.2:3b",      # Updated for Hailo-10H
+    "vision_model": "hailo-yolo",     # Placeholder for new vision pipeline
     "voice_model": "piper/en_GB-semaine-medium.onnx",
     "chat_memory": True,
     "camera_rotation": 0,
     "system_prompt_extras": ""
 }
 
-# LLM SETTINGS
-OLLAMA_OPTIONS = {
-    'keep_alive': '-1',     
-    'num_thread': 4,
-    'temperature': 0.7,     
-    'top_k': 40,
-    'top_p': 0.9
-}
+# LLM SETTINGS (HAILO SERVER)
+# Use 127.0.0.1 to avoid localhost resolution issues
+OLLAMA_HOST = "http://127.0.0.1:8000"
+OLLAMA_CLIENT = ollama.Client(host=OLLAMA_HOST)
+
+# OLLAMA_OPTIONS removed for Hailo compatibility
+OLLAMA_OPTIONS = {}
 
 def load_config():
     config = DEFAULT_CONFIG.copy()
@@ -633,15 +632,33 @@ class BotGUI:
             return ""
 
     def capture_image(self):
+        """
+        Captures an image and runs hardware-accelerated object detection via Hailo.
+        Returns a description string of what it sees, rather than just a file path.
+        """
         self.set_state(BotStates.CAPTURING, "Watching...")
         try:
+            # 1. Capture the raw image for reference/UI
             subprocess.run(["rpicam-still", "-t", "500", "-n", "--width", "640", "--height", "480", "-o", BMO_IMAGE_FILE], check=True)
-            rotation = CURRENT_CONFIG.get("camera_rotation", 0)
-            if rotation != 0:
-                img = Image.open(BMO_IMAGE_FILE)
-                img = img.rotate(rotation, expand=True) 
-                img.save(BMO_IMAGE_FILE)
-            return BMO_IMAGE_FILE
+            
+            # 2. Run Hailo detection (simulated command for rpicam-detect with post-processing)
+            # In a real deployment, this would be a specific 'rpicam-detect' command with a JSON output flag 
+            # or a Python binding. For now, we'll assume a wrapper script 'hailo_detect.py' exists.
+            # If that script doesn't exist, we fall back to a simple capture.
+            
+            # Check if we have the detection script
+            if os.path.exists("hailo_detect.py"):
+                result = subprocess.run(["python3", "hailo_detect.py", "--input", BMO_IMAGE_FILE], capture_output=True, text=True)
+                detections = result.stdout.strip()
+                if not detections:
+                    return None
+                return f"I see: {detections}"
+            else:
+                # Fallback if no detection script: just return the image path, 
+                # but note that Llama 3.2 (text) can't see it without a VLM adapter.
+                # We'll return a placeholder text so the agent knows it took a photo.
+                return "I took a photo, but my vision processing script (hailo_detect.py) is missing."
+
         except Exception as e:
             print(f"Camera Error: {e}")
             return None
@@ -650,7 +667,7 @@ class BotGUI:
     # 5. CHAT & RESPOND
     # =========================================================================
 
-    def chat_and_respond(self, text, img_path=None):
+    def chat_and_respond(self, text, img_path_or_desc=None):
         if "forget everything" in text.lower() or "reset memory" in text.lower():
             self.session_memory = []
             self.permanent_memory = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -660,14 +677,22 @@ class BotGUI:
             self.set_state(BotStates.IDLE, "Memory Wiped")
             return
 
-        model_to_use = VISION_MODEL if img_path else TEXT_MODEL
-        self.set_state(BotStates.THINKING, "Thinking...", cam_path=img_path)
+        # If we have an image description (from Hailo detection), append it to the text.
+        # This allows us to use fast, small text models (Llama 3.2) instead of heavy VLMs.
+        final_text = text
+        if img_path_or_desc and not img_path_or_desc.endswith(('.jpg', '.png')):
+             final_text = f"[SYSTEM: Visual Input Detected] {img_path_or_desc}\nUser: {text}"
+             img_path_or_desc = None # Clear it so we don't try to send it as an image file
+
+        model_to_use = TEXT_MODEL 
+        self.set_state(BotStates.THINKING, "Thinking...", cam_path=BMO_IMAGE_FILE if img_path_or_desc else None)
         
         messages = []
-        if img_path:
-            messages = [{"role": "user", "content": text, "images": [img_path]}]
+        if img_path_or_desc and img_path_or_desc.endswith(('.jpg', '.png')):
+            # Only use this path if we have a true VLM backend that accepts images directly
+            messages = [{"role": "user", "content": final_text, "images": [img_path_or_desc]}]
         else:
-            user_msg = {"role": "user", "content": text}
+            user_msg = {"role": "user", "content": final_text}
             messages = self.permanent_memory + self.session_memory + [user_msg]
         
         self.thinking_sound_active.set()
@@ -677,7 +702,8 @@ class BotGUI:
         sentence_buffer = "" 
         
         try:
-            stream = ollama.chat(model=model_to_use, messages=messages, stream=True, options=OLLAMA_OPTIONS)
+            # Use the configured client for the Hailo server
+            stream = OLLAMA_CLIENT.chat(model=model_to_use, messages=messages, stream=True, options=OLLAMA_OPTIONS)
             
             is_action_mode = False
             

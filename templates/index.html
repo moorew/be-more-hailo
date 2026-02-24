@@ -1,0 +1,1318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BMO is Online!</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #87CEEB; /* Adventure Time Sky Blue */
+            background-image: radial-gradient(#ffffff 15%, transparent 16%), radial-gradient(#ffffff 15%, transparent 16%);
+            background-size: 60px 60px;
+            background-position: 0 0, 30px 30px;
+            color: #111;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        #header {
+            background-color: #52c8b6; /* BMO Teal */
+            color: #111;
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 0.8em;
+            border-bottom: 4px solid #111;
+            box-shadow: 0 4px 0 rgba(0,0,0,0.2);
+            z-index: 10;
+        }
+
+        #main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        #face-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: transparent;
+            border-right: 4px solid #111;
+            overflow: hidden;
+        }
+
+        .bmo-body {
+            width: 320px;
+            height: 450px;
+            background-color: #85c8b9;
+            border-radius: 20px;
+            padding: 20px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            border: 3px solid #111;
+            box-shadow: 10px 10px 0px rgba(0,0,0,0.15), inset -10px -10px 20px rgba(0,0,0,0.1);
+            position: relative;
+        }
+
+        .bmo-screen-container {
+            width: 100%;
+            height: 200px;
+            background-color: #c5e1a5;
+            border: 4px solid #111;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #bmo-face {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform-origin: center center;
+            transition: transform 0.3s ease-in-out;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        #bmo-transcript {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            right: 10px;
+            z-index: 2;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            color: #111;
+            text-align: center;
+            text-shadow: 1px 1px 0px rgba(255,255,255,0.5);
+            pointer-events: none;
+            line-height: 1.4;
+            max-height: 40px;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        .bmo-disk-drive {
+            width: 180px;
+            height: 15px;
+            background-color: #1a3a32;
+            border: 2px solid #111;
+            margin-top: 20px;
+            border-radius: 2px;
+        }
+
+        .bmo-controls-area {
+            width: 100%;
+            flex: 1;
+            position: relative;
+            margin-top: 10px;
+        }
+
+        .bmo-small-btn {
+            position: absolute;
+            top: 0;
+            right: 20px;
+            width: 15px;
+            height: 15px;
+            background-color: #2e86c1;
+            border: 2px solid #111;
+            border-radius: 50%;
+            box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+        }
+
+        .bmo-dpad {
+            position: absolute;
+            top: 40px;
+            left: 20px;
+            display: grid;
+            grid-template-columns: 20px 20px 20px;
+            grid-template-rows: 20px 20px 20px;
+            filter: drop-shadow(3px 3px 0px rgba(0,0,0,0.2));
+        }
+
+        .dpad-part { background-color: #f4d03f; border: 2px solid #111; }
+        .dpad-up { grid-column: 2; grid-row: 1; border-bottom: none; border-radius: 4px 4px 0 0; }
+        .dpad-down { grid-column: 2; grid-row: 3; border-top: none; border-radius: 0 0 4px 4px; }
+        .dpad-left { grid-column: 1; grid-row: 2; border-right: none; border-radius: 4px 0 0 4px; }
+        .dpad-right { grid-column: 3; grid-row: 2; border-left: none; border-radius: 0 4px 4px 0; }
+        .dpad-center { grid-column: 2; grid-row: 2; background-color: #f4d03f; }
+
+        .bmo-action-btns {
+            position: absolute;
+            top: 30px;
+            right: 20px;
+            width: 100px;
+            height: 100px;
+        }
+
+        .btn-triangle {
+            position: absolute;
+            top: 0;
+            left: 0;
+            filter: drop-shadow(2px 2px 0px rgba(0,0,0,0.2));
+        }
+
+        .btn-green {
+            position: absolute;
+            top: 25px;
+            right: 0;
+            width: 25px;
+            height: 25px;
+            background-color: #58d68d;
+            border: 2px solid #111;
+            border-radius: 50%;
+            box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+        }
+
+        .btn-pink {
+            position: absolute;
+            bottom: 0;
+            left: 20px;
+            width: 45px;
+            height: 45px;
+            background-color: #f50057;
+            border: 2px solid #111;
+            border-radius: 50%;
+            box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
+        }
+
+        .bmo-pills {
+            position: absolute;
+            bottom: 10px;
+            left: 20px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-pill {
+            width: 25px;
+            height: 8px;
+            background-color: #2e86c1;
+            border: 2px solid #111;
+            border-radius: 10px;
+            box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+        }
+
+        /* Subtle breathing animation for idle state */
+        @keyframes breathe {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+
+        .idle-animation {
+            animation: breathe 4s infinite ease-in-out;
+        }
+
+        #chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: #fff9e6;
+        }
+
+        #chat-history {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            background-image: linear-gradient(#e5e5e5 1px, transparent 1px);
+            background-size: 100% 30px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 15px;
+            line-height: 1.4;
+            border: 3px solid #111;
+            box-shadow: 4px 4px 0px rgba(0,0,0,0.15);
+            font-weight: bold;
+            color: #111;
+        }
+
+        .user-message {
+            align-self: flex-end;
+            background-color: #00bfff;
+            border-bottom-right-radius: 0;
+        }
+
+        .bmo-message {
+            align-self: flex-start;
+            background-color: #c5e1a5;
+            border-bottom-left-radius: 0;
+        }
+
+        .system-message {
+            align-self: center;
+            background-color: #ffcc00;
+            color: #111;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 0.7em;
+            border-radius: 8px;
+            border: 2px solid #111;
+            box-shadow: 2px 2px 0px rgba(0,0,0,0.15);
+            padding: 8px 12px;
+        }
+
+        #input-container {
+            padding: 20px;
+            background-color: #ffcc00;
+            border-top: 4px solid #111;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        #user-input {
+            flex: 1;
+            min-width: 150px;
+            padding: 12px;
+            border: 3px solid #111;
+            border-radius: 8px;
+            background-color: #fff;
+            color: #111;
+            font-size: 1em;
+            font-weight: bold;
+            box-shadow: inset 2px 2px 0px rgba(0,0,0,0.1);
+        }
+
+        #user-input:focus {
+            outline: none;
+            border-color: #f50057;
+        }
+
+        #send-btn {
+            padding: 12px 24px;
+            background-color: #f50057;
+            color: white;
+            border: 3px solid #111;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 0.8em;
+            box-shadow: 4px 4px 0px rgba(0,0,0,0.2);
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+
+        #send-btn:hover {
+            background-color: #d81b60;
+        }
+        
+        #send-btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+        }
+
+        #send-btn:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+
+        #mic-btn {
+            padding: 12px;
+            background-color: #e74c3c;
+            color: white;
+            border: 3px solid #111;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1.2em;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.2s;
+            width: 50px;
+            height: 50px;
+            box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
+        }
+
+        #mic-btn:hover {
+            background-color: #c0392b;
+        }
+        
+        #mic-btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: 1px 1px 0px rgba(0,0,0,0.2);
+        }
+
+        #mic-btn.recording {
+            background-color: #c0392b;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(231, 76, 60, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+        }
+
+        /* Loading indicator */
+        .typing-indicator {
+            display: flex;
+            gap: 5px;
+            padding: 12px 16px;
+            background-color: #c5e1a5;
+            border-radius: 15px;
+            border-bottom-left-radius: 0;
+            border: 3px solid #111;
+            box-shadow: 4px 4px 0px rgba(0,0,0,0.15);
+            align-self: flex-start;
+            width: fit-content;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            background-color: #111;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .dot:nth-child(1) { animation-delay: -0.32s; }
+        .dot:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background-color: #ffcc00;
+            padding: 25px;
+            border-radius: 15px;
+            width: 350px;
+            border: 4px solid #111;
+            box-shadow: 8px 8px 0px rgba(0,0,0,0.3);
+            color: #111;
+        }
+
+        .modal-header {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 1em;
+            margin-bottom: 15px;
+            color: #111;
+            text-shadow: 1px 1px 0px rgba(255,255,255,0.5);
+        }
+
+        .modal-input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 3px solid #111;
+            border-radius: 8px;
+            background-color: #fff;
+            color: #111;
+            font-weight: bold;
+            box-sizing: border-box;
+            box-shadow: inset 2px 2px 0px rgba(0,0,0,0.1);
+        }
+
+        .modal-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: 3px solid #111;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 0.7em;
+            box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+        
+        .btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: 1px 1px 0px rgba(0,0,0,0.2);
+        }
+
+        .btn-primary {
+            background-color: #58d68d;
+            color: #111;
+        }
+
+        .btn-secondary {
+            background-color: #f4d03f;
+            color: #111;
+        }
+
+        /* Mobile Responsive Styles */
+        @media (max-width: 768px) {
+            #header {
+                flex-direction: column;
+                gap: 10px;
+                padding: 10px;
+                font-size: 0.8em;
+            }
+
+            #header > div {
+                width: 100%;
+                justify-content: center !important;
+                flex-wrap: wrap;
+            }
+
+            #main-container {
+                flex-direction: column;
+            }
+
+            #face-container {
+                border-right: none;
+                border-bottom: 4px solid #111;
+                padding: 20px 0;
+                min-height: 50vh;
+            }
+
+            .bmo-body {
+                transform: scale(0.8);
+                transform-origin: top center;
+                margin-bottom: -90px; /* Compensate for scale */
+            }
+
+            #chat-container {
+                height: 50vh;
+                border-left: none;
+            }
+
+            .message {
+                max-width: 90%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Pronunciation Modal -->
+    <div id="pronunciation-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Fix Pronunciation</div>
+            <p style="font-size: 0.9em; color: #333; margin-bottom: 15px; font-weight: bold;">Teach BMO how to say a word correctly.</p>
+            <input type="text" id="pronounce-word" class="modal-input" placeholder="Word (e.g., poutine)">
+            <input type="text" id="pronounce-phonetic" class="modal-input" placeholder="Phonetic Spelling (e.g., poo-teen)">
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closePronunciationModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="savePronunciation()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="header">
+        <div style="flex: 1; text-align: center; text-shadow: 2px 2px 0px rgba(255,255,255,0.5);">
+            🎮 BMO is Online! 🎮
+        </div>
+        <div style="flex: 1; display: flex; justify-content: flex-end; align-items: center; gap: 10px; font-size: 0.8em; font-weight: normal; flex-wrap: wrap;">
+            <button class="btn btn-secondary" onclick="openPronunciationModal()">🗣️ Fix Pronunciation</button>
+            <div id="hailo-status" style="display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,0.5); padding: 6px 10px; border-radius: 12px; border: 2px solid #111; box-shadow: 2px 2px 0px rgba(0,0,0,0.1);">
+                <div id="status-dot" style="width: 8px; height: 8px; border-radius: 50%; background-color: gray; transition: all 0.3s; border: 1px solid #111;"></div>
+                <span id="status-text">LLM: Checking...</span>
+            </div>
+            <label for="hands-free-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,0.5); padding: 6px 10px; border-radius: 12px; border: 2px solid #111; box-shadow: 2px 2px 0px rgba(0,0,0,0.1);">
+                <input type="checkbox" id="hands-free-toggle" style="cursor: pointer;">
+                Hands-Free
+            </label>
+            <label for="audio-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,0.5); padding: 6px 10px; border-radius: 12px; border: 2px solid #111; box-shadow: 2px 2px 0px rgba(0,0,0,0.1);">
+                <input type="checkbox" id="audio-toggle" style="cursor: pointer;">
+                Pi Audio
+            </label>
+        </div>
+    </div>
+    
+    <div id="main-container">
+        <!-- Hidden elements for webcam capture -->
+        <video id="webcam" autoplay playsinline style="display:none;"></video>
+        <canvas id="canvas" style="display:none;"></canvas>
+
+        <div id="face-container">
+            <div class="bmo-body">
+                <div class="bmo-screen-container">
+                    <img id="bmo-face" src="" alt="BMO Face">
+                    <div id="bmo-transcript"></div>
+                </div>
+                <div class="bmo-disk-drive"></div>
+                <div class="bmo-controls-area">
+                    <div class="bmo-small-btn"></div>
+                    <div class="bmo-dpad">
+                        <div class="dpad-part dpad-up"></div>
+                        <div class="dpad-part dpad-left"></div>
+                        <div class="dpad-center"></div>
+                        <div class="dpad-part dpad-right"></div>
+                        <div class="dpad-part dpad-down"></div>
+                    </div>
+                    <div class="bmo-action-btns">
+                        <div class="btn-triangle">
+                            <svg width="30" height="30" viewBox="0 0 30 30">
+                                <polygon points="15,2 28,28 2,28" fill="#5dade2" stroke="#111" stroke-width="2" stroke-linejoin="round"/>
+                            </svg>
+                        </div>
+                        <div class="btn-green"></div>
+                        <div class="btn-pink"></div>
+                    </div>
+                    <div class="bmo-pills">
+                        <div class="btn-pill"></div>
+                        <div class="btn-pill"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="chat-container">
+            <div id="chat-history">
+                <div class="message system-message">System initialized. Ready to chat.</div>
+            </div>
+            
+            <div id="input-container">
+                <button id="mic-btn" title="Click to talk">🎤</button>
+                <input type="text" id="user-input" placeholder="Type a message to BMO..." autocomplete="off">
+                <button id="send-btn">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatHistory = document.getElementById('chat-history');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const micBtn = document.getElementById('mic-btn');
+        const bmoFace = document.getElementById('bmo-face');
+        const audioToggle = document.getElementById('audio-toggle');
+
+        let conversationHistory = [];
+        let currentAnimation = null;
+        let animationInterval = null;
+        let currentAudio = null;
+        let faceImages = {
+            idle: [],
+            thinking: [],
+            speaking: [],
+            error: []
+        };
+
+        // Audio Recording Variables
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+        // Initialize
+        async function init() {
+            await loadFaces('idle');
+            await loadFaces('thinking');
+            await loadFaces('speaking');
+            await loadFaces('error');
+            
+            setFaceState('idle');
+            
+            // Event listeners
+            sendBtn.addEventListener('click', sendMessage);
+            userInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') sendMessage();
+            });
+
+            // Mic button listener (Click to toggle)
+            micBtn.addEventListener('click', () => {
+                if (isRecording) {
+                    stopRecording();
+                } else {
+                    if (document.getElementById('hands-free-toggle').checked) {
+                        stopWakeWordListener();
+                    }
+                    startRecording();
+                }
+            });
+
+            // Start status polling
+            checkHailoStatus();
+            setInterval(checkHailoStatus, 5000);
+
+            // Initialize Hands-Free Mode
+            initHandsFreeMode();
+        }
+
+        let wakeWordSocket = null;
+        let audioContext = null;
+        let processor = null;
+        let mediaStream = null;
+
+        function initHandsFreeMode() {
+            const handsFreeToggle = document.getElementById('hands-free-toggle');
+            
+            handsFreeToggle.addEventListener('change', async (e) => {
+                if (e.target.checked) {
+                    userInput.placeholder = "Hands-Free Mode: Say 'Hey Beemo'...";
+                    await startWakeWordListener();
+                } else {
+                    userInput.placeholder = "Type a message to BMO...";
+                    stopWakeWordListener();
+                }
+            });
+        }
+
+        async function startWakeWordListener() {
+            if (wakeWordSocket) return;
+
+            try {
+                // Connect to WebSocket
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                wakeWordSocket = new WebSocket(`${protocol}//${window.location.host}/api/wakeword`);
+                
+                wakeWordSocket.onopen = () => {
+                    console.log("Wake Word WebSocket connected.");
+                };
+
+                wakeWordSocket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.event === 'wakeword_detected') {
+                        console.log("Wake word detected by server!");
+                        // Stop listening for wake word temporarily
+                        stopWakeWordListener();
+                        
+                        // Start recording the actual command
+                        startRecording();
+                    }
+                };
+
+                wakeWordSocket.onclose = () => {
+                    console.log("Wake Word WebSocket closed.");
+                    wakeWordSocket = null;
+                };
+
+                // Request microphone access
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Create AudioContext
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                
+                // Create a ScriptProcessorNode to capture raw PCM data
+                // 4096 buffer size is a good balance between latency and performance
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                processor.onaudioprocess = (e) => {
+                    if (!wakeWordSocket || wakeWordSocket.readyState !== WebSocket.OPEN) return;
+                    
+                    // Get the raw float32 audio data from the microphone
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    
+                    // Convert Float32 to Int16 (which openwakeword expects)
+                    const int16Data = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        // Clamp values between -1 and 1
+                        const s = Math.max(-1, Math.min(1, inputData[i]));
+                        // Convert to 16-bit integer
+                        int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+                    
+                    // Send the binary chunk to the server
+                    wakeWordSocket.send(int16Data.buffer);
+                };
+                
+                // Connect the nodes
+                source.connect(processor);
+                processor.connect(audioContext.destination); // Required for the processor to run
+                
+            } catch (err) {
+                console.error("Error starting wake word listener:", err);
+                document.getElementById('hands-free-toggle').checked = false;
+                if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                    alert("Microphone access requires a secure (HTTPS) connection or localhost. You are currently using HTTP.");
+                } else {
+                    alert("Could not access microphone for Hands-Free Mode. Please check your browser permissions.");
+                }
+            }
+        }
+
+        function stopWakeWordListener() {
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            if (wakeWordSocket) {
+                wakeWordSocket.close();
+                wakeWordSocket = null;
+            }
+        }
+
+        let vadInterval = null;
+
+        async function startRecording() {
+            if (isRecording) return;
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                // Setup VAD (Voice Activity Detection)
+                const vadAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const vadSource = vadAudioContext.createMediaStreamSource(stream);
+                const analyser = vadAudioContext.createAnalyser();
+                analyser.fftSize = 512;
+                vadSource.connect(analyser);
+                const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                
+                let silenceStart = Date.now();
+                let hasSpoken = false;
+
+                vadInterval = setInterval(() => {
+                    analyser.getByteFrequencyData(dataArray);
+                    let sum = 0;
+                    for (let i = 0; i < dataArray.length; i++) {
+                        sum += dataArray[i];
+                    }
+                    let average = sum / dataArray.length;
+
+                    if (average > 10) { // Volume threshold
+                        hasSpoken = true;
+                        silenceStart = Date.now();
+                    } else {
+                        // If they spoke and then were silent for 2 seconds, stop recording
+                        if (hasSpoken && (Date.now() - silenceStart > 2000)) {
+                            stopRecording();
+                        }
+                        // If they never spoke and 5 seconds passed, stop recording
+                        else if (!hasSpoken && (Date.now() - silenceStart > 5000)) {
+                            stopRecording();
+                        }
+                    }
+                }, 100);
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+
+                mediaRecorder.onstop = async () => {
+                    if (vadInterval) {
+                        clearInterval(vadInterval);
+                        vadInterval = null;
+                    }
+                    if (vadAudioContext) {
+                        vadAudioContext.close();
+                    }
+
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    await processAudio(audioBlob);
+                    
+                    // Stop all tracks to release microphone
+                    stream.getTracks().forEach(track => track.stop());
+                };
+
+                mediaRecorder.start();
+                isRecording = true;
+                micBtn.classList.add('recording');
+                userInput.placeholder = "Listening... (Speak now)";
+                
+            } catch (error) {
+                console.error("Error accessing microphone:", error);
+                if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                    alert("Microphone access requires a secure (HTTPS) connection or localhost. You are currently using HTTP.");
+                } else {
+                    alert("Could not access microphone. Please check your browser permissions.");
+                }
+            }
+        }
+
+        function stopRecording() {
+            if (!isRecording || !mediaRecorder) return;
+            
+            mediaRecorder.stop();
+            isRecording = false;
+            micBtn.classList.remove('recording');
+            userInput.placeholder = "Processing audio...";
+        }
+
+        async function processAudio(audioBlob) {
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.webm');
+
+            try {
+                userInput.disabled = true;
+                sendBtn.disabled = true;
+                micBtn.disabled = true;
+                
+                const response = await fetch('/api/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                
+                if (data.text && data.text.trim().length > 0) {
+                    userInput.value = data.text;
+                    sendMessage(); // Automatically send the transcribed text
+                } else {
+                    if (data.error) {
+                        console.error("Transcription error:", data.error);
+                        alert("Failed to transcribe audio.");
+                    } else {
+                        console.log("No speech detected in audio.");
+                    }
+                    // Restart wake word listener if hands-free is on
+                    if (document.getElementById('hands-free-toggle').checked) {
+                        startWakeWordListener();
+                    }
+                }
+            } catch (error) {
+                console.error("Error sending audio:", error);
+                if (document.getElementById('hands-free-toggle').checked) {
+                    startWakeWordListener();
+                }
+            } finally {
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                micBtn.disabled = false;
+                userInput.placeholder = "Type a message to BMO...";
+            }
+        }
+
+        async function checkHailoStatus() {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                if (data.status === 'online') {
+                    dot.style.backgroundColor = '#4caf50';
+                    dot.style.boxShadow = '0 0 8px #4caf50';
+                    text.textContent = 'LLM: Online';
+                } else {
+                    dot.style.backgroundColor = '#f44336';
+                    dot.style.boxShadow = '0 0 8px #f44336';
+                    text.textContent = 'LLM: Offline';
+                }
+            } catch (error) {
+                dot.style.backgroundColor = '#f44336';
+                dot.style.boxShadow = '0 0 8px #f44336';
+                text.textContent = 'LLM: Error';
+            }
+        }
+
+        // Load face images from the server
+        async function loadFaces(state) {
+            try {
+                const response = await fetch(`/api/faces/${state}`);
+                const data = await response.json();
+                if (data.images && data.images.length > 0) {
+                    faceImages[state] = data.images;
+                } else {
+                    console.warn(`No images found for state: ${state}`);
+                }
+            } catch (error) {
+                console.error(`Error loading faces for ${state}:`, error);
+            }
+        }
+
+        // Set the current face animation state
+        function setFaceState(state) {
+            if (animationInterval) {
+                clearInterval(animationInterval);
+            }
+
+            const images = faceImages[state];
+            if (!images || images.length === 0) {
+                // Fallback if no images
+                bmoFace.style.display = 'none';
+                return;
+            }
+
+            bmoFace.style.display = 'block';
+            let frameIndex = 0;
+            
+            // Show first frame immediately
+            bmoFace.src = images[0];
+
+            // Apply CSS animation for idle state (since it only has 1 frame)
+            if (state === 'idle') {
+                bmoFace.classList.add('idle-animation');
+            } else {
+                bmoFace.classList.remove('idle-animation');
+            }
+
+            // If multiple frames, animate
+            if (images.length > 1) {
+                let speed = 500;
+                if (state === 'speaking') speed = 150; // More natural speaking speed
+                if (state === 'thinking') speed = 300; // Smooth thinking speed
+                
+                // For thinking, we want to pick a random frame and hold it for a bit, 
+                // rather than cycling through them sequentially, to look more natural.
+                if (state === 'thinking') {
+                    animationInterval = setInterval(() => {
+                        // Pick a random frame that isn't the current one
+                        let nextFrame;
+                        do {
+                            nextFrame = Math.floor(Math.random() * images.length);
+                        } while (nextFrame === frameIndex && images.length > 1);
+                        
+                        frameIndex = nextFrame;
+                        bmoFace.src = images[frameIndex];
+                    }, speed * 2); // Slower transitions for thinking
+                } else {
+                    animationInterval = setInterval(() => {
+                        frameIndex = (frameIndex + 1) % images.length;
+                        bmoFace.src = images[frameIndex];
+                    }, speed);
+                }
+            }
+        }
+
+        function updateTranscript(text) {
+            const transcriptEl = document.getElementById('bmo-transcript');
+            if (text) {
+                transcriptEl.textContent = text;
+                transcriptEl.style.display = '-webkit-box';
+            } else {
+                transcriptEl.textContent = '';
+                transcriptEl.style.display = 'none';
+            }
+        }
+
+        function addMessage(text, sender, isHtml = false) {
+            const msgDiv = document.createElement('div');
+            msgDiv.classList.add('message');
+            msgDiv.classList.add(sender === 'user' ? 'user-message' : 'bmo-message');
+            if (isHtml) {
+                msgDiv.innerHTML = text;
+            } else {
+                msgDiv.textContent = text;
+            }
+            chatHistory.appendChild(msgDiv);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            const indicator = document.createElement('div');
+            indicator.classList.add('typing-indicator');
+            indicator.id = 'typing-indicator';
+            indicator.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+            chatHistory.appendChild(indicator);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        function removeTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) {
+                indicator.remove();
+            }
+        }
+
+        async function takePhotoAndSend(originalText) {
+            setFaceState('capturing');
+            addMessage("Taking a photo...", 'system');
+            
+            try {
+                const video = document.getElementById('webcam');
+                const canvas = document.getElementById('canvas');
+                
+                // Request camera access
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                video.srcObject = stream;
+                
+                // Wait for video to be ready
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        resolve();
+                    };
+                });
+                
+                // Give the camera a moment to adjust exposure
+                await new Promise(r => setTimeout(r, 500));
+                
+                // Set canvas dimensions to match video
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                
+                // Draw frame to canvas
+                const context = canvas.getContext('2d');
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // Get base64 image
+                const imageData = canvas.toDataURL('image/jpeg', 0.8);
+                
+                // Stop camera tracks
+                stream.getTracks().forEach(track => track.stop());
+                
+                // Show the image in chat
+                const imgHtml = `<img src="${imageData}" style="max-width: 100%; border-radius: 10px; margin-top: 10px;">`;
+                addMessage(`Here is what I see:<br>${imgHtml}`, 'user', true);
+                
+                // Send to backend
+                setFaceState('thinking');
+                showTypingIndicator();
+                
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: originalText,
+                        history: conversationHistory,
+                        play_on_hardware: audioToggle.checked,
+                        image: imageData
+                    })
+                });
+                
+                const data = await response.json();
+                removeTypingIndicator();
+                
+                if (data.error) {
+                    addMessage(`Error: ${data.error}`, 'system');
+                    setFaceState('error');
+                } else {
+                    addMessage(data.response, 'bmo');
+                    updateTranscript(data.response);
+                    conversationHistory = data.history;
+                    setFaceState('speaking');
+                    
+                    if (currentAudio) {
+                        currentAudio.pause();
+                    }
+                    
+                    if (data.audio_url && !audioToggle.checked) {
+                        currentAudio = new Audio(data.audio_url);
+                        currentAudio.onended = () => {
+                            setFaceState('idle');
+                            updateTranscript('');
+                            if (document.getElementById('hands-free-toggle').checked) {
+                                startWakeWordListener();
+                            }
+                        };
+                        currentAudio.play().catch(e => {
+                            console.error("Browser blocked audio playback:", e);
+                            setTimeout(() => {
+                                setFaceState('idle');
+                                updateTranscript('');
+                                if (document.getElementById('hands-free-toggle').checked) {
+                                    startWakeWordListener();
+                                }
+                            }, 3000);
+                        });
+                    } else {
+                        setTimeout(() => {
+                            setFaceState('idle');
+                            updateTranscript('');
+                            if (document.getElementById('hands-free-toggle').checked) {
+                                startWakeWordListener();
+                            }
+                        }, 3000);
+                    }
+                }
+                
+            } catch (err) {
+                console.error("Camera error:", err);
+                addMessage("Could not access the camera. Make sure you are using HTTPS or localhost.", 'system');
+                setFaceState('error');
+                setTimeout(() => setFaceState('idle'), 3000);
+            }
+        }
+
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text) return;
+
+            // Disable input while processing
+            userInput.value = '';
+            userInput.disabled = true;
+            sendBtn.disabled = true;
+
+            // Update UI
+            addMessage(text, 'user');
+            showTypingIndicator();
+            setFaceState('thinking');
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: text,
+                        history: conversationHistory,
+                        play_on_hardware: audioToggle.checked
+                    })
+                });
+
+                const data = await response.json();
+                removeTypingIndicator();
+
+                if (data.error) {
+                    addMessage(`Error: ${data.error}`, 'system');
+                    setFaceState('error');
+                    setTimeout(() => {
+                        setFaceState('idle');
+                        if (document.getElementById('hands-free-toggle').checked) {
+                            startWakeWordListener();
+                        }
+                    }, 3000);
+                } else if (data.response.includes('{"action": "take_photo"}')) {
+                    // LLM requested a photo
+                    takePhotoAndSend(text);
+                } else {
+                    addMessage(data.response, 'bmo');
+                    updateTranscript(data.response);
+                    conversationHistory = data.history;
+                    
+                    // Handle Audio and Speaking Animation
+                    setFaceState('speaking');
+                    
+                    if (currentAudio) {
+                        currentAudio.pause();
+                    }
+
+                    if (data.audio_url && !audioToggle.checked) {
+                        // Play audio in browser
+                        currentAudio = new Audio(data.audio_url);
+                        currentAudio.onended = () => {
+                            setFaceState('idle');
+                            updateTranscript('');
+                            if (document.getElementById('hands-free-toggle').checked) {
+                                startWakeWordListener();
+                            }
+                        };
+                        currentAudio.play().catch(e => {
+                            console.error("Browser blocked audio playback:", e);
+                            // Fallback animation duration if audio fails
+                            const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
+                            setTimeout(() => {
+                                setFaceState('idle');
+                                updateTranscript('');
+                                if (document.getElementById('hands-free-toggle').checked) {
+                                    startWakeWordListener();
+                                }
+                            }, speakingDuration);
+                        });
+                    } else {
+                        // Hardware mode or no audio returned: estimate speaking time
+                        const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
+                        setTimeout(() => {
+                            setFaceState('idle');
+                            updateTranscript('');
+                            if (document.getElementById('hands-free-toggle').checked) {
+                                startWakeWordListener();
+                            }
+                        }, speakingDuration);
+                    }
+                }
+
+            } catch (error) {
+                removeTypingIndicator();
+                addMessage(`Connection Error: ${error.message}`, 'system');
+                setFaceState('error');
+                setTimeout(() => {
+                    setFaceState('idle');
+                    if (document.getElementById('hands-free-toggle').checked) {
+                        startWakeWordListener();
+                    }
+                }, 3000);
+            } finally {
+                // Re-enable input
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                userInput.focus();
+            }
+        }
+
+        // Pronunciation Modal Functions
+        function openPronunciationModal() {
+            document.getElementById('pronunciation-modal').style.display = 'flex';
+            document.getElementById('pronounce-word').focus();
+        }
+
+        function closePronunciationModal() {
+            document.getElementById('pronunciation-modal').style.display = 'none';
+            document.getElementById('pronounce-word').value = '';
+            document.getElementById('pronounce-phonetic').value = '';
+        }
+
+        // Close modal if clicking outside of it
+        window.onclick = function(event) {
+            const modal = document.getElementById('pronunciation-modal');
+            if (event.target == modal) {
+                closePronunciationModal();
+            }
+        }
+
+        async function savePronunciation() {
+            const word = document.getElementById('pronounce-word').value.trim();
+            const phonetic = document.getElementById('pronounce-phonetic').value.trim();
+
+            if (!word || !phonetic) {
+                alert("Please enter both the word and its phonetic spelling.");
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/pronunciation', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ word, phonetic })
+                });
+
+                if (response.ok) {
+                    alert(`Successfully taught BMO to say "${word}" as "${phonetic}"!`);
+                    closePronunciationModal();
+                } else {
+                    alert("Failed to save pronunciation.");
+                }
+            } catch (error) {
+                console.error("Error saving pronunciation:", error);
+                alert("Error saving pronunciation.");
+            }
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+</html>

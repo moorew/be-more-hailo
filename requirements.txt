@@ -6,3 +6,8 @@ onnxruntime
 ollama
 duckduckgo-search
 Pillow
+fastapi
+python-multipart
+uvicorn
+jinja2
+requests
