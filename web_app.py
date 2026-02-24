@@ -16,6 +16,10 @@ from core.tts import play_audio_on_hardware, generate_audio_file, add_pronunciat
 from core.stt import transcribe_audio
 from core.config import LLM_URL, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Try to load openwakeword for web streaming
 try:
     from openwakeword.model import Model
@@ -25,10 +29,6 @@ try:
 except Exception as e:
     logger.warning(f"Could not load OpenWakeWord for web app: {e}")
     oww_model = None
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 app = FastAPI(title="BMO Web UI")
 
