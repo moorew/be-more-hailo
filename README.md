@@ -1,8 +1,6 @@
 # Be More Agent 🤖 (Hailo-10H & Web Edition)
 **A Customizable, Offline-First AI Agent for Raspberry Pi**
 
-[![Watch the Demo](https://img.youtube.com/vi/l5ggH-YhuAw/maxresdefault.jpg)](https://youtu.be/l5ggH-YhuAw)
-
 <p align="center">
   <img src="bmo_irl.jpg" width="45%" alt="BMO On-Device" />
   <img src="bmo_web.png" width="45%" alt="BMO Web Interface" />
