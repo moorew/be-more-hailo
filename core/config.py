@@ -7,6 +7,7 @@ import datetime
 # Make sure Ollama is running on the blackbox server and listening on 0.0.0.0
 LLM_URL = "http://127.0.0.1:8000/api/chat"
 LLM_MODEL = "llama3.2:3b"
+FAST_LLM_MODEL = "llama3.2:1b" # Fast model for simple chat
 VISION_MODEL = "moondream" # Fast, small vision model for Pi
 
 def get_system_prompt():

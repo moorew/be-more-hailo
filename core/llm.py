@@ -2,7 +2,7 @@ import requests
 import logging
 import re
 import json
-from .config import LLM_URL, LLM_MODEL, VISION_MODEL, get_system_prompt
+from .config import LLM_URL, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, get_system_prompt
 from .tts import add_pronunciation
 from .search import search_web
 
@@ -18,14 +18,22 @@ class Brain:
         """
         self.history.append({"role": "user", "content": user_text})
 
+        # Simple heuristic to route to a faster model for simple chat
+        complex_keywords = ["explain", "story", "how", "why", "code", "write", "create", "analyze", "compare", "difference", "history", "long"]
+        words = user_text.lower().split()
+        
+        chosen_model = FAST_LLM_MODEL
+        if len(words) > 15 or any(kw in words for kw in complex_keywords):
+            chosen_model = LLM_MODEL
+
         payload = {
-            "model": LLM_MODEL,
+            "model": chosen_model,
             "messages": self.history,
             "stream": False
         }
 
         try:
-            logger.info(f"Sending request to LLM: {LLM_URL}")
+            logger.info(f"Sending request to LLM ({chosen_model}): {LLM_URL}")
             response = requests.post(LLM_URL, json=payload, timeout=60)
             
             if response.status_code == 200:
@@ -60,7 +68,7 @@ class Brain:
                             ]
                             
                             summary_payload = {
-                                "model": LLM_MODEL,
+                                "model": FAST_LLM_MODEL,
                                 "messages": summary_prompt,
                                 "stream": False
                             }
