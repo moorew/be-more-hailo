@@ -17,7 +17,7 @@ PIPER_CMD = "./piper/piper"
 PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
 
 # STT Settings (Whisper.cpp)
-WHISPER_CMD = "./whisper.cpp/main"
+WHISPER_CMD = "./whisper.cpp/build/bin/whisper-cli"
 WHISPER_MODEL = "./whisper.cpp/models/ggml-base.en.bin"
 
 # Audio Settings
