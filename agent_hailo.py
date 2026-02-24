@@ -259,6 +259,24 @@ class BotGUI:
                 self.set_state(BotStates.THINKING, "Thinking...")
                 response = self.chat_with_llm(user_text)
                 
+                if '{"action": "take_photo"}' in response:
+                    self.set_state(BotStates.CAPTURING, "Taking Photo...")
+                    try:
+                        # Use libcamera-still to capture a frame
+                        subprocess.run(['libcamera-still', '-o', 'temp.jpg', '--width', '640', '--height', '480', '--nopreview', '-t', '1000'], check=True)
+                        
+                        # Convert to base64
+                        import base64
+                        with open('temp.jpg', 'rb') as img_file:
+                            b64_string = base64.b64encode(img_file.read()).decode('utf-8')
+                            
+                        # Send to vision model
+                        self.set_state(BotStates.THINKING, "Analyzing...")
+                        response = self.brain.analyze_image(b64_string, user_text)
+                    except Exception as e:
+                        print(f"Camera Error: {e}")
+                        response = "I tried to take a photo, but my camera isn't working."
+                
                 # 5. Speak
                 self.set_state(BotStates.SPEAKING, response[:20] + "...")
                 self.speak(response)

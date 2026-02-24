@@ -2,7 +2,7 @@ import requests
 import logging
 import re
 import json
-from .config import LLM_URL, LLM_MODEL, SYSTEM_PROMPT
+from .config import LLM_URL, LLM_MODEL, VISION_MODEL, SYSTEM_PROMPT
 from .tts import add_pronunciation
 from .search import search_web
 
@@ -40,7 +40,13 @@ class Brain:
                     json_match = re.search(r'\{.*?\}', clean_content, re.DOTALL)
                     if json_match:
                         action_data = json.loads(json_match.group(0))
-                        if action_data.get("action") == "search_web":
+                        
+                        if action_data.get("action") == "take_photo":
+                            logger.info("LLM requested to take a photo.")
+                            # Return the JSON string directly so the caller can handle the camera
+                            return json.dumps({"action": "take_photo"})
+                            
+                        elif action_data.get("action") == "search_web":
                             query = action_data.get("query", "")
                             logger.info(f"LLM requested web search for: {query}")
                             
@@ -98,3 +104,55 @@ class Brain:
         if not new_history or new_history[0].get("role") != "system":
             new_history.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
         self.history = new_history
+
+    def analyze_image(self, image_base64: str, user_text: str) -> str:
+        """
+        Send an image and text to the vision model (e.g., moondream) and get a response.
+        """
+        # Strip data URI prefix if present
+        if "," in image_base64:
+            image_base64 = image_base64.split(",")[1]
+            
+        # We don't append the image to the main history to save context window,
+        # but we do append the user's question and the assistant's answer.
+        self.history.append({"role": "user", "content": user_text})
+        
+        # Create a temporary message list for the vision model
+        vision_messages = [
+            {"role": "system", "content": "You are BMO, a helpful robot assistant. Describe what you see in the image concisely and conversationally."},
+            {
+                "role": "user",
+                "content": user_text,
+                "images": [image_base64]
+            }
+        ]
+        
+        payload = {
+            "model": VISION_MODEL,
+            "messages": vision_messages,
+            "stream": False
+        }
+        
+        try:
+            logger.info(f"Sending image to Vision Model ({VISION_MODEL}) at {LLM_URL}")
+            response = requests.post(LLM_URL, json=payload, timeout=120) # Vision takes longer
+            
+            if response.status_code == 200:
+                data = response.json()
+                content = data.get("message", {}).get("content", "")
+                
+                # Clean up any markdown or weird formatting
+                content = content.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
+                
+                self.history.append({"role": "assistant", "content": content})
+                return content
+            else:
+                logger.error(f"Vision Model Error: {response.status_code} - {response.text}")
+                return "I tried to look, but my eyes aren't working right now."
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Vision Connection Error: {e}")
+            return "I couldn't connect to my vision processor."
+        except Exception as e:
+            logger.error(f"Vision Exception: {e}")
+            return "I'm having trouble seeing right now."

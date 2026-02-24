@@ -46,6 +46,7 @@ class ChatRequest(BaseModel):
     message: str
     history: list = []
     play_on_hardware: bool = False
+    image: str = None # Optional base64 image for vision tasks
 
 class PronunciationRequest(BaseModel):
     word: str
@@ -78,8 +79,13 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     brain = Brain()
     brain.set_history(request.history)
 
-    # Get response from LLM
-    content = brain.think(user_text)
+    # If an image is provided, use the vision model
+    if request.image:
+        logger.info("Received image for vision analysis.")
+        content = brain.analyze_image(request.image, user_text)
+    else:
+        # Get response from LLM
+        content = brain.think(user_text)
     
     # Check if there was an error
     if content.startswith("Error:") or content.startswith("Could not connect") or content.startswith("I'm having trouble"):

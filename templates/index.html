@@ -438,6 +438,10 @@
     </div>
     
     <div id="main-container">
+        <!-- Hidden elements for webcam capture -->
+        <video id="webcam" autoplay playsinline style="display:none;"></video>
+        <canvas id="canvas" style="display:none;"></canvas>
+
         <div id="face-container">
             <div class="bmo-body">
                 <div class="bmo-screen-container">
@@ -860,11 +864,15 @@
             }
         }
 
-        function addMessage(text, sender) {
+        function addMessage(text, sender, isHtml = false) {
             const msgDiv = document.createElement('div');
             msgDiv.classList.add('message');
             msgDiv.classList.add(sender === 'user' ? 'user-message' : 'bmo-message');
-            msgDiv.textContent = text;
+            if (isHtml) {
+                msgDiv.innerHTML = text;
+            } else {
+                msgDiv.textContent = text;
+            }
             chatHistory.appendChild(msgDiv);
             chatHistory.scrollTop = chatHistory.scrollHeight;
         }
@@ -882,6 +890,113 @@
             const indicator = document.getElementById('typing-indicator');
             if (indicator) {
                 indicator.remove();
+            }
+        }
+
+        async function takePhotoAndSend(originalText) {
+            setFaceState('capturing');
+            addMessage("Taking a photo...", 'system');
+            
+            try {
+                const video = document.getElementById('webcam');
+                const canvas = document.getElementById('canvas');
+                
+                // Request camera access
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                video.srcObject = stream;
+                
+                // Wait for video to be ready
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        resolve();
+                    };
+                });
+                
+                // Give the camera a moment to adjust exposure
+                await new Promise(r => setTimeout(r, 500));
+                
+                // Set canvas dimensions to match video
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                
+                // Draw frame to canvas
+                const context = canvas.getContext('2d');
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // Get base64 image
+                const imageData = canvas.toDataURL('image/jpeg', 0.8);
+                
+                // Stop camera tracks
+                stream.getTracks().forEach(track => track.stop());
+                
+                // Show the image in chat
+                const imgHtml = `<img src="${imageData}" style="max-width: 100%; border-radius: 10px; margin-top: 10px;">`;
+                addMessage(`Here is what I see:<br>${imgHtml}`, 'user', true);
+                
+                // Send to backend
+                setFaceState('thinking');
+                showTypingIndicator();
+                
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: originalText,
+                        history: conversationHistory,
+                        play_on_hardware: audioToggle.checked,
+                        image: imageData
+                    })
+                });
+                
+                const data = await response.json();
+                removeTypingIndicator();
+                
+                if (data.error) {
+                    addMessage(`Error: ${data.error}`, 'system');
+                    setFaceState('error');
+                } else {
+                    addMessage(data.response, 'bmo');
+                    conversationHistory = data.history;
+                    setFaceState('speaking');
+                    
+                    if (currentAudio) {
+                        currentAudio.pause();
+                    }
+                    
+                    if (data.audio_url && !audioToggle.checked) {
+                        currentAudio = new Audio(data.audio_url);
+                        currentAudio.onended = () => {
+                            setFaceState('idle');
+                            if (document.getElementById('hands-free-toggle').checked) {
+                                startWakeWordListener();
+                            }
+                        };
+                        currentAudio.play().catch(e => {
+                            console.error("Browser blocked audio playback:", e);
+                            setTimeout(() => {
+                                setFaceState('idle');
+                                if (document.getElementById('hands-free-toggle').checked) {
+                                    startWakeWordListener();
+                                }
+                            }, 3000);
+                        });
+                    } else {
+                        setTimeout(() => {
+                            setFaceState('idle');
+                            if (document.getElementById('hands-free-toggle').checked) {
+                                startWakeWordListener();
+                            }
+                        }, 3000);
+                    }
+                }
+                
+            } catch (err) {
+                console.error("Camera error:", err);
+                addMessage("Could not access the camera. Make sure you are using HTTPS or localhost.", 'system');
+                setFaceState('error');
+                setTimeout(() => setFaceState('idle'), 3000);
             }
         }
 
@@ -924,6 +1039,9 @@
                             startWakeWordListener();
                         }
                     }, 3000);
+                } else if (data.response.includes('{"action": "take_photo"}')) {
+                    // LLM requested a photo
+                    takePhotoAndSend(text);
                 } else {
                     addMessage(data.response, 'bmo');
                     conversationHistory = data.history;
