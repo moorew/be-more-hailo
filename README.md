@@ -6,9 +6,7 @@
   <img src="bmo_web.png" width="45%" alt="BMO Web Interface" />
 </p>
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue) ![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi-red) ![License](https://img.shields.io/badge/License-MIT-green)
-
-The original project turns a Raspberry Pi into a fully functional, conversational AI agent. Unlike cloud-based assistants, this agent runs **100% locally** on your device. It listens for a wake word, processes speech, "thinks" using a local Large Language Model (LLM), and speaks back with a low-latency neural voice. This fork updates the build to work with the Hailo 10H in the Pi AI HAT 2+
+The original project is incredible! It turns a Raspberry Pi into a fully functional, conversational AI agent. Unlike cloud-based assistants, this agent runs **100% locally** on your device. It listens for a wake word, processes speech, "thinks" using a local Large Language Model (LLM), and speaks back with a low-latency neural voice. This fork updates the build to work with the Hailo 10H in the Pi AI HAT 2+
 
 **Major Upgrade:** This fork has been completely revamped to support the **Hailo-10H NPU** for lightning-fast local AI inference, introduces a **headless web service** alongside the original on-device GUI, and features a unified "core" architecture!
 
@@ -72,59 +70,61 @@ be-more-agent/
 ├── piper/                     # Piper TTS engine & voice models
 ├── sounds/                    # Sound effects folder
 └── faces/                     # Face images folder
-`
-
----
-
+```
 ## 🚀 Installation
 
 ### 1. Prerequisites
 Ensure your Raspberry Pi OS is up to date.
-`ash
+```
 sudo apt update && sudo apt upgrade -y
 sudo apt install git ffmpeg -y
-`
+```
 
 ### 2. Install Ollama (with Hailo Support)
 This agent relies on [Ollama](https://ollama.com) to run the brain. If you have a Hailo-10H NPU, ensure you install the Hailo-optimized version of Ollama.
-`ash
-curl -fsSL https://ollama.com/install.sh | sh
-`
+
+`curl -fsSL https://ollama.com/install.sh | sh`
+
 *Pull the required models:*
-`ash
+
+```
 ollama pull llama3.2:3b
 ollama pull llama3.2:1b
-`
+```
 
 ### 3. Clone & Setup
-`ash
+
+```
 git clone https://github.com/brenpoly/be-more-agent.git
 cd be-more-agent
 chmod +x setup.sh setup_web.sh setup_services.sh start_web.sh start_agent.sh
 ./setup.sh
-`
+```
+
 *The setup script will install system libraries, download Piper TTS, and set up the Python virtual environment.*
 
 ### 4. Running the Agent
 
 **To run the Web Server:**
-`ash
+
+```
 source venv/bin/activate
 ./start_web.sh
-`
+```
+
 Then, open your browser and navigate to http://<YOUR_PI_IP>:8000.
 
 **To run the On-Device GUI:**
-`ash
+```
 source venv/bin/activate
 ./start_agent.sh
-`
+```
 
 ### 5. Run as a Background Service (Optional)
 To have the web agent start automatically when the Pi boots:
-`ash
+```
 ./setup_services.sh
-`
+```
 
 ---
 
@@ -132,12 +132,13 @@ To have the web agent start automatically when the Pi boots:
 
 You can modify the models, URLs, and system prompts in core/config.py:
 
-`python
+```
+python
 LLM_URL = "http://127.0.0.1:8000/api/chat"
 LLM_MODEL = "llama3.2:3b"
 FAST_LLM_MODEL = "llama3.2:1b" # Fast model for simple chat
 VISION_MODEL = "moondream"
-`
+```
 
 ---
 
@@ -162,6 +163,9 @@ This software is a generic framework. You can give it a new personality by repla
 ## 📄 License
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## ⚖️ Legal Disclaimer
+## Credits
+The BMO project is 100% the brainchild of @brenpoly. They did the hard work in their original project, I just vibe-coded some updates for new hardware. Nothing would have been possible without their initual hard work. Thank you for making this, and for sharing it with the world.
+
+## ⚖️ Legal Disclaimer (just in case!)
 **"BMO"** and **"Adventure Time"** are trademarks of **Cartoon Network** (Warner Bros. Discovery).
 This project is a **fan creation** built for educational and hobbyist purposes only. It is **not** affiliated with, endorsed by, or connected to Cartoon Network or the official Adventure Time brand in any way.
