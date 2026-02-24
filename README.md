@@ -16,7 +16,7 @@ The original project turns a Raspberry Pi into a fully functional, conversationa
 
 * **Hailo-10H NPU Support**: Optimized to run on the Raspberry Pi 5 with the Hailo-10H AI accelerator, drastically reducing LLM response times.
 * **Dual Interfaces (On-Device GUI & Web App)**: 
-  * **On-Device (gent_hailo.py)**: The classic Tkinter-based GUI that displays reactive faces on an attached screen (HDMI/DSI) and listens via a physical USB microphone.
+  * **On-Device (agent_hailo.py)**: The classic Tkinter-based GUI that displays reactive faces on an attached screen (HDMI/DSI) and listens via a physical USB microphone.
   * **Web Version (web_app.py)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
 * **Unified core Architecture**: Both the on-device GUI and the web app share the exact same brain! The logic for LLMs, Text-to-Speech (TTS), and Speech-to-Text (STT) has been extracted into a shared core/ module. Any improvements made to core/ instantly benefit both interfaces.
 * **Dual-Model Routing**: Intelligently routes simple queries to a blazing-fast lightweight model (llama3.2:1b) and complex queries to a larger model (llama3.2:3b), ensuring the best balance of speed and intelligence.
@@ -52,7 +52,7 @@ This is the "headless" mode. The Pi sits on your network without needing a scree
 
 ## 📂 Project Structure
 
-`	ext
+```	ext
 be-more-agent/
 ├── agent_hailo.py             # The On-Device GUI application
 ├── web_app.py                 # The FastAPI web server application
