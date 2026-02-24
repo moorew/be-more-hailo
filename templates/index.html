@@ -631,7 +631,11 @@
             } catch (err) {
                 console.error("Error starting wake word listener:", err);
                 document.getElementById('hands-free-toggle').checked = false;
-                alert("Could not access microphone for Hands-Free Mode.");
+                if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                    alert("Microphone access requires a secure (HTTPS) connection or localhost. You are currently using HTTP.");
+                } else {
+                    alert("Could not access microphone for Hands-Free Mode. Please check your browser permissions.");
+                }
             }
         }
 
@@ -730,7 +734,7 @@
                 if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
                     alert("Microphone access requires a secure (HTTPS) connection or localhost. You are currently using HTTP.");
                 } else {
-                    alert("Could not access microphone. Please check permissions.");
+                    alert("Could not access microphone. Please check your browser permissions.");
                 }
             }
         }
