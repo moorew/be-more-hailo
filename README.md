@@ -127,6 +127,12 @@ source venv/bin/activate
 ./start_agent.sh
 ```
 
+**To test LLM speed via CLI (No GUI/Web):**
+```
+source venv/bin/activate
+python cli_chat.py
+```
+
 ### 5. Run as a Background Service (Optional)
 To have the web agent start automatically when the Pi boots:
 ```
