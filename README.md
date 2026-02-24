@@ -40,7 +40,7 @@ This is the "headless" mode. The Pi sits on your network without needing a scree
 
 ## 🌐 Secure Remote Access with Tailscale
 
-To access BMO's web interface or SSH into the Pi from anywhere in the world, without the security risks of opening ports on your router, I recommend using **[Tailscale](https://tailscale.com/)**. Tailscale creates a secure, zero-config private mesh network (VPN) between your devices. Once installed on the Raspberry Pi and your personal devices, you can securely access the web UI by simply navigating to your Pi's Tailscale IP or MagicDNS hostname (e.g., `http://bmo.your-tailnet.ts.net:8000`) from your phone, tablet, or laptop, no matter where you are. It is free to use!
+To access BMO's web interface or SSH into the Pi from anywhere in the world, without the security risks of opening ports on your router, I recommend using **[Tailscale](https://tailscale.com/)**. Tailscale creates a secure, zero-config private mesh network (VPN) between your devices. Once installed on the Raspberry Pi and your personal devices, you can securely access the web UI by simply navigating to your Pi's Tailscale IP or MagicDNS hostname (e.g., `https://bmo.your-tailnet.ts.net:8080`) from your phone, tablet, or laptop, no matter where you are. It is free to use!
 
 _Disclaimer: I work for Tailscale, but it's still great!_
 
@@ -118,7 +118,7 @@ source venv/bin/activate
 ./start_web.sh
 ```
 
-Then, open your browser and navigate to http://<YOUR_PI_IP>:8000.
+Then, open your browser and navigate to `http://<YOUR_PI_IP>:8080` (or `https://` if you have SSL certificates configured).
 
 **To run the On-Device GUI:**
 ```
