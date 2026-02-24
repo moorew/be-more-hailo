@@ -565,6 +565,7 @@
             <div class="bmo-body">
                 <div class="bmo-screen-container">
                     <img id="bmo-face" src="" alt="BMO Face">
+                    <img id="bmo-display-image" src="" alt="Displayed Image" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; z-index:10; background-color:#c4d4b4; border-radius:20px;">
                     <div id="bmo-transcript"></div>
                 </div>
                 <div class="bmo-disk-drive"></div>
@@ -1044,6 +1045,9 @@
         }
 
         async function takePhotoAndSend(originalText) {
+            // Hide any displayed image
+            document.getElementById('bmo-display-image').style.display = 'none';
+            
             setFaceState('capturing');
             addMessage("Taking a photo...", 'system');
             
@@ -1107,11 +1111,35 @@
                     addMessage(`Error: ${data.error}`, 'system');
                     setFaceState('error');
                 } else {
-                    addMessage(data.response, 'bmo');
-                    updateTranscript(data.response);
+                    let responseText = data.response;
+                    let imageUrl = null;
+                    
+                    // Check for display_image action
+                    const jsonMatch = responseText.match(/\{.*?\}/s);
+                    if (jsonMatch) {
+                        try {
+                            const actionData = JSON.parse(jsonMatch[0]);
+                            if (actionData.action === 'display_image' && actionData.image_url) {
+                                imageUrl = actionData.image_url;
+                                // Remove JSON from text
+                                responseText = responseText.replace(jsonMatch[0], '').trim();
+                            }
+                        } catch (e) {
+                            console.error("Failed to parse JSON action:", e);
+                        }
+                    }
+
+                    addMessage(responseText, 'bmo');
+                    updateTranscript(responseText);
                     conversationHistory = data.history;
                     setFaceState('speaking');
                     
+                    if (imageUrl) {
+                        const displayImg = document.getElementById('bmo-display-image');
+                        displayImg.src = imageUrl;
+                        displayImg.style.display = 'block';
+                    }
+
                     if (currentAudio) {
                         currentAudio.pause();
                     }
@@ -1158,6 +1186,9 @@
             const text = userInput.value.trim();
             if (!text) return;
 
+            // Hide any displayed image
+            document.getElementById('bmo-display-image').style.display = 'none';
+
             // Disable input while processing
             userInput.value = '';
             userInput.disabled = true;
@@ -1197,13 +1228,37 @@
                     // LLM requested a photo
                     takePhotoAndSend(text);
                 } else {
-                    addMessage(data.response, 'bmo');
-                    updateTranscript(data.response);
+                    let responseText = data.response;
+                    let imageUrl = null;
+                    
+                    // Check for display_image action
+                    const jsonMatch = responseText.match(/\{.*?\}/s);
+                    if (jsonMatch) {
+                        try {
+                            const actionData = JSON.parse(jsonMatch[0]);
+                            if (actionData.action === 'display_image' && actionData.image_url) {
+                                imageUrl = actionData.image_url;
+                                // Remove JSON from text
+                                responseText = responseText.replace(jsonMatch[0], '').trim();
+                            }
+                        } catch (e) {
+                            console.error("Failed to parse JSON action:", e);
+                        }
+                    }
+
+                    addMessage(responseText, 'bmo');
+                    updateTranscript(responseText);
                     conversationHistory = data.history;
                     
                     // Handle Audio and Speaking Animation
                     setFaceState('speaking');
                     
+                    if (imageUrl) {
+                        const displayImg = document.getElementById('bmo-display-image');
+                        displayImg.src = imageUrl;
+                        displayImg.style.display = 'block';
+                    }
+
                     if (currentAudio) {
                         currentAudio.pause();
                     }
@@ -1221,7 +1276,7 @@
                         currentAudio.play().catch(e => {
                             console.error("Browser blocked audio playback:", e);
                             // Fallback animation duration if audio fails
-                            const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
+                            const speakingDuration = Math.min(Math.max(responseText.length * 50, 2000), 8000);
                             setTimeout(() => {
                                 setFaceState('idle');
                                 updateTranscript('');
@@ -1232,7 +1287,7 @@
                         });
                     } else {
                         // Hardware mode or no audio returned: estimate speaking time
-                        const speakingDuration = Math.min(Math.max(data.response.length * 50, 2000), 8000);
+                        const speakingDuration = Math.min(Math.max(responseText.length * 50, 2000), 8000);
                         setTimeout(() => {
                             setFaceState('idle');
                             updateTranscript('');

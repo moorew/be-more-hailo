@@ -59,6 +59,7 @@ class BotStates:
     ERROR = "error"
     CAPTURING = "capturing"
     WARMUP = "warmup"
+    DISPLAY_IMAGE = "display_image"
 
 class BotGUI:
     BG_WIDTH, BG_HEIGHT = 800, 480 
@@ -123,6 +124,11 @@ class BotGUI:
                     self.animations[state].append(ImageTk.PhotoImage(img))
     
     def update_animation(self):
+        if self.current_state == BotStates.DISPLAY_IMAGE:
+            # Don't animate, just wait
+            self.master.after(500, self.update_animation)
+            return
+            
         frames = self.animations.get(self.current_state, []) or self.animations.get(BotStates.IDLE, [])
         if frames:
             self.current_frame = (self.current_frame + 1) % len(frames)
@@ -278,7 +284,35 @@ class BotGUI:
                         response = "I tried to take a photo, but my camera isn't working."
                 
                 # 5. Speak
-                self.set_state(BotStates.SPEAKING, response[:20] + "...")
+                image_url = None
+                json_match = re.search(r'\{.*?\}', response, re.DOTALL)
+                if json_match:
+                    try:
+                        action_data = json.loads(json_match.group(0))
+                        if action_data.get("action") == "display_image" and action_data.get("image_url"):
+                            image_url = action_data.get("image_url")
+                            response = response.replace(json_match.group(0), '').strip()
+                    except Exception as e:
+                        print(f"JSON Parse Error: {e}")
+
+                if image_url:
+                    self.set_state(BotStates.DISPLAY_IMAGE, "Showing Image...")
+                    try:
+                        # Download and display image
+                        req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
+                        with urllib.request.urlopen(req) as u:
+                            raw_data = u.read()
+                        
+                        from io import BytesIO
+                        img = Image.open(BytesIO(raw_data)).resize((self.BG_WIDTH, self.BG_HEIGHT))
+                        self.current_display_image = ImageTk.PhotoImage(img)
+                        self.background_label.config(image=self.current_display_image)
+                    except Exception as e:
+                        print(f"Image Download Error: {e}")
+                        self.set_state(BotStates.SPEAKING, response[:20] + "...")
+                else:
+                    self.set_state(BotStates.SPEAKING, response[:20] + "...")
+                
                 self.speak(response)
                 
                 self.set_state(BotStates.IDLE, "Ready")

@@ -42,6 +42,8 @@ def add_pronunciation(word: str, phonetic: str):
 
 def clean_text_for_speech(text: str) -> str:
     """Removes markdown and special characters that shouldn't be spoken."""
+    # Remove JSON blocks
+    text = re.sub(r'\{.*?\}', '', text, flags=re.DOTALL)
     # Remove asterisks used for emphasis or actions (e.g., *beep boop*)
     text = text.replace('*', '')
     # Remove other common markdown like bold/italics

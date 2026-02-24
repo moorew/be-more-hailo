@@ -28,6 +28,10 @@ def get_system_prompt():
         "CRITICAL: If the user asks you to look at something, take a photo, or asks what you see, "
         "you MUST output exactly this JSON format and nothing else: "
         '{"action": "take_photo"}\n'
+        "CRITICAL: If the user asks you to show a picture or image of something, "
+        "you MUST output a conversational response followed by exactly this JSON format: "
+        '{"action": "display_image", "image_url": "https://image.pollinations.ai/prompt/YOUR_PROMPT_HERE"}\n'
+        "Replace YOUR_PROMPT_HERE with a detailed description of the image they want to see, with spaces replaced by %20.\n"
         "Do not include any conversational text before or after the JSON block when searching or taking photos."
     )
 
