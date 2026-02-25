@@ -18,7 +18,7 @@ The original project is incredible! It turns a Raspberry Pi into a fully functio
   * **Web Version (web_app.py)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
 * **Unified core Architecture**: Both the on-device GUI and the web app share the exact same brain! The logic for LLMs, Text-to-Speech (TTS), and Speech-to-Text (STT) has been extracted into a shared core/ module. Any improvements made to core/ instantly benefit both interfaces.
 * **On-the-Fly Image Generation**: Ask BMO to show you a picture of anything, and it will generate and display the image directly on the screen (both Web and On-Device) using the free Pollinations.ai API!
-* **Dual-Model Routing**: Intelligently routes simple queries to a blazing-fast lightweight model (llama3.2:1b) and complex queries to a larger model (llama3.2:3b), ensuring the best balance of speed and intelligence.
+* **Dual-Model Routing**: Intelligently routes simple queries to a blazing-fast lightweight model and complex queries to a larger model, ensuring the best balance of speed and intelligence. (Currently configured to use `qwen2.5-instruct:1.5b` for both to maximize NPU performance).
 * **Service Management**: Run the web agent seamlessly in the background using the provided systemd service scripts.
 
 ## 🧠 How It Works: On-Device vs Web
@@ -87,16 +87,14 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install git ffmpeg -y
 ```
 
-### 2. Install Ollama (with Hailo Support)
-This agent relies on [Ollama](https://ollama.com) to run the brain. If you have a Hailo-10H NPU, ensure you install the Hailo-optimized version of Ollama.
+### 2. Install hailo-ollama (Hailo-10H Support)
+This agent relies on `hailo-ollama` to run the brain on the NPU. Ensure you have installed the Hailo-10H software suite and the `hailo-ollama` server according to Hailo's official documentation.
 
-`curl -fsSL https://ollama.com/install.sh | sh`
+Once `hailo-ollama` is running, pull the required models using the API. 
+*(Note: While `llama3.2:3b` is supported, it currently experiences severe timeouts on some Pi 5 setups. We highly recommend using `qwen2.5-instruct:1.5b` which responds in ~1.4 seconds!)*
 
-*Pull the required models:*
-
-```
-ollama pull llama3.2:3b
-ollama pull llama3.2:1b
+```bash
+curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2.5-instruct:1.5b", "stream": true }'
 ```
 
 ### 3. Clone & Setup
@@ -145,11 +143,10 @@ To have the web agent start automatically when the Pi boots:
 
 You can modify the models, URLs, and system prompts in core/config.py:
 
-```
-python
+```python
 LLM_URL = "http://127.0.0.1:8000/api/chat"
-LLM_MODEL = "llama3.2:3b"
-FAST_LLM_MODEL = "llama3.2:1b" # Fast model for simple chat
+LLM_MODEL = "qwen2.5-instruct:1.5b"
+FAST_LLM_MODEL = "qwen2.5-instruct:1.5b" # Fast model for simple chat
 VISION_MODEL = "moondream"
 ```
 
@@ -158,8 +155,8 @@ VISION_MODEL = "moondream"
 ## 🧠 How Dual-Model Routing Works
 
 To provide the fastest possible responses, the core/llm.py module analyzes your prompt before sending it to the LLM. 
-- If your prompt is **short** (<= 15 words) and does **not** contain complex keywords (like "explain", "code", "story", "how"), it is routed to the FAST_LLM_MODEL (llama3.2:1b).
-- If your prompt is **long** or requires deep reasoning, it is routed to the primary LLM_MODEL (llama3.2:3b).
+- If your prompt is **short** (<= 15 words) and does **not** contain complex keywords (like "explain", "code", "story", "how"), it is routed to the FAST_LLM_MODEL.
+- If your prompt is **long** or requires deep reasoning, it is routed to the primary LLM_MODEL.
 
 This ensures snappy conversational replies while retaining the ability to handle complex tasks!
 

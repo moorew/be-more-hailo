@@ -58,12 +58,9 @@ pip install -r requirements.txt
 
 # 6. Pull AI Models
 echo -e "${YELLOW}[6/6] Checking AI Models...${NC}"
-if command -v ollama &> /dev/null; then
-    ollama pull gemma3:1b
-    ollama pull moondream
-else
-    echo -e "${RED}❌ Ollama not found. Please install it manually.${NC}"
-fi
+echo -e "${YELLOW}Pulling Hailo-10H optimized models via hailo-ollama API...${NC}"
+curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2.5-instruct:1.5b", "stream": false }'
+echo -e "${GREEN}Models pulled successfully!${NC}"
 
 # 7. OpenWakeWord Model (Added this back so the user has a default)
 if [ ! -f "wakeword.onnx" ]; then
