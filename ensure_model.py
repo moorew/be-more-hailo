@@ -40,8 +40,9 @@ def get_installed_models():
 def pull_model(model_name):
     print(f"Triggering pull for {model_name}...")
     url = f"{OLLAMA_HOST}/api/pull"
-    data = json.dumps({"name": model_name}).encode('utf-8')
+    data = json.dumps({"model": model_name, "stream": True}).encode('utf-8')
     req = urllib.request.Request(url, data=data, method='POST')
+    req.add_header('Content-Type', 'application/json')
     
     try:
         with urllib.request.urlopen(req) as response:
