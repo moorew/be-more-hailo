@@ -31,7 +31,7 @@ class Brain:
             "messages": self.history,
             "stream": False,
             "options": {
-                "temperature": 0.8
+                "temperature": 0.4
             }
         }
 
