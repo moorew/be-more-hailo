@@ -21,7 +21,8 @@ def load_pronunciations() -> dict:
     # Default dictionary if file doesn't exist or fails to load
     default_dict = {
         "cheesy": "cheezy",
-        "poutine": "poo-teen"
+        "poutine": "poo-teen",
+        "bmo": "beemo"
     }
     save_pronunciations(default_dict)
     return default_dict
