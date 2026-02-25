@@ -33,7 +33,7 @@ Requires=bmo-ollama.service
 Type=simple
 User=clevercode
 WorkingDirectory=/home/clevercode/be-more-agent
-ExecStart=/home/clevercode/be-more-agent/start_web.sh
+ExecStart=/bin/bash /home/clevercode/be-more-agent/start_web.sh
 Restart=always
 RestartSec=5
 
@@ -41,7 +41,12 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-# 3. Reload systemd, enable, and start the services
+# 3. Fix Permissions
+echo "Fixing permissions for the web app..."
+sudo chown -R clevercode:clevercode /home/clevercode/be-more-agent
+sudo chmod +x /home/clevercode/be-more-agent/*.sh
+
+# 4. Reload systemd, enable, and start the services
 echo "Reloading systemd daemon..."
 sudo systemctl daemon-reload
 
