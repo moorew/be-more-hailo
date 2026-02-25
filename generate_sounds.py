@@ -52,6 +52,8 @@ thinking = [
 
 def generate_audio(text, filename):
     print(f"Generating {filename}...")
+    # Replace BMO with Beemo for correct pronunciation
+    text = text.replace("BMO", "Beemo")
     safe_text = text.replace("'", "'\\''")
     cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_file {filename}"
     subprocess.run(cmd, shell=True, check=True)
