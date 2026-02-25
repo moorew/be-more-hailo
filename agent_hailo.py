@@ -287,8 +287,16 @@ class BotGUI:
                     ack_proc = self.play_sound("ack_sounds")
                     if ack_proc:
                         ack_proc.wait()
-                    if self.current_state == BotStates.THINKING:
+                    
+                    while self.current_state == BotStates.THINKING:
                         self.thinking_audio_process = self.play_sound("thinking_sounds")
+                        if self.thinking_audio_process:
+                            self.thinking_audio_process.wait()
+                        # Wait 8 seconds before playing again, but check state frequently
+                        for _ in range(80):
+                            if self.current_state != BotStates.THINKING:
+                                break
+                            time.sleep(0.1)
                 
                 threading.Thread(target=play_thinking_sequence, daemon=True).start()
 
@@ -330,7 +338,7 @@ class BotGUI:
                             
                         # Send to vision model
                         self.set_state(BotStates.THINKING, "Analyzing...")
-                        self.thinking_audio_process = self.play_sound("thinking_sounds")
+                        threading.Thread(target=play_thinking_sequence, daemon=True).start()
                         response = self.brain.analyze_image(b64_string, user_text)
                         if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
                             try:

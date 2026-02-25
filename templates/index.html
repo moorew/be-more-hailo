@@ -882,6 +882,36 @@
             }
         }
 
+        let thinkingSoundInterval = null;
+
+        function startThinkingSound() {
+            if (thinkingSoundInterval) clearInterval(thinkingSoundInterval);
+            
+            // Play immediately
+            currentThinkingSound = playRandomSound('thinking_sounds');
+            
+            // Then play every 8 seconds
+            thinkingSoundInterval = setInterval(() => {
+                if (document.getElementById('typing-indicator') || document.getElementById('bmo-face').src.includes('thinking')) {
+                    currentThinkingSound = playRandomSound('thinking_sounds');
+                } else {
+                    stopThinkingSound();
+                }
+            }, 8000);
+        }
+
+        function stopThinkingSound() {
+            if (thinkingSoundInterval) {
+                clearInterval(thinkingSoundInterval);
+                thinkingSoundInterval = null;
+            }
+            if (currentThinkingSound) {
+                currentThinkingSound.pause();
+                currentThinkingSound.currentTime = 0;
+                currentThinkingSound = null;
+            }
+        }
+
         function stopRecording() {
             if (!isRecording || !mediaRecorder) return;
             
@@ -896,11 +926,11 @@
             if (ackAudio) {
                 ackAudio.onended = () => {
                     if (document.getElementById('bmo-face').src.includes('thinking')) {
-                        currentThinkingSound = playRandomSound('thinking_sounds', true);
+                        startThinkingSound();
                     }
                 };
             } else {
-                currentThinkingSound = playRandomSound('thinking_sounds', true);
+                startThinkingSound();
             }
         }
 
@@ -1091,11 +1121,7 @@
             if (indicator) {
                 indicator.remove();
             }
-            if (currentThinkingSound) {
-                currentThinkingSound.pause();
-                currentThinkingSound.currentTime = 0;
-                currentThinkingSound = null;
-            }
+            stopThinkingSound();
         }
 
         async function takePhotoAndSend(originalText) {
@@ -1150,11 +1176,11 @@
                 if (ackAudio) {
                     ackAudio.onended = () => {
                         if (document.getElementById('typing-indicator')) {
-                            currentThinkingSound = playRandomSound('thinking_sounds', true);
+                            startThinkingSound();
                         }
                     };
                 } else {
-                    currentThinkingSound = playRandomSound('thinking_sounds', true);
+                    startThinkingSound();
                 }
 
                 const response = await fetch('/api/chat', {
@@ -1271,11 +1297,11 @@
                 if (ackAudio) {
                     ackAudio.onended = () => {
                         if (document.getElementById('typing-indicator')) {
-                            currentThinkingSound = playRandomSound('thinking_sounds', true);
+                            startThinkingSound();
                         }
                     };
                 } else {
-                    currentThinkingSound = playRandomSound('thinking_sounds', true);
+                    startThinkingSound();
                 }
             }
 

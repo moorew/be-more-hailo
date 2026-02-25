@@ -29,7 +29,10 @@ class Brain:
         payload = {
             "model": chosen_model,
             "messages": self.history,
-            "stream": False
+            "stream": False,
+            "options": {
+                "temperature": 0.8
+            }
         }
 
         try:
