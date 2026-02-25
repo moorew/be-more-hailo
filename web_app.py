@@ -217,6 +217,17 @@ async def get_sounds(category: str):
 
     sounds = [f"/sounds/{category}/{s}" for s in os.listdir(sound_dir) if s.endswith('.wav')]
     return {"sounds": sorted(sounds)}
+
+if __name__ == "__main__":
+    import uvicorn
+    import glob
+
+    # Check for Tailscale SSL certificates (*.ts.net.crt / *.ts.net.key)
+    cert_files = glob.glob("*.ts.net.crt")
+    key_files = glob.glob("*.ts.net.key")
+
+    if cert_files and key_files:
+        cert_file = cert_files[0]
         key_file = key_files[0]
         logger.info(f"Found SSL certificates ({cert_file}). Starting securely on HTTPS...")
         uvicorn.run(app, host="0.0.0.0", port=8080, ssl_certfile=cert_file, ssl_keyfile=key_file)
