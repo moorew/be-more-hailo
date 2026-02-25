@@ -92,7 +92,9 @@ async def get_debug_info():
     
     # Check Hailo/Ollama status
     try:
-        response = requests.get(f"{LLM_URL}/api/tags", timeout=2)
+        # Extract base URL from LLM_URL (e.g., http://127.0.0.1:8000)
+        base_url = LLM_URL.split("/api/")[0]
+        response = requests.get(f"{base_url}/api/tags", timeout=2)
         if response.status_code == 200:
             info["hailo"]["status"] = "online"
         else:

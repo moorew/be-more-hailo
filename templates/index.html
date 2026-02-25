@@ -905,14 +905,8 @@
             // Play immediately
             currentThinkingSound = playRandomSound('thinking_sounds');
             
-            // Then play every 8 seconds
-            thinkingSoundInterval = setInterval(() => {
-                if (document.getElementById('typing-indicator') || document.getElementById('bmo-face').src.includes('thinking')) {
-                    currentThinkingSound = playRandomSound('thinking_sounds');
-                } else {
-                    stopThinkingSound();
-                }
-            }, 8000);
+            // We no longer loop the thinking sound to avoid audio clashes
+            // It will just play once at the start of the request
         }
 
         function stopThinkingSound() {
