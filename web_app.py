@@ -9,6 +9,8 @@ import uuid
 import requests
 import shutil
 import numpy as np
+import psutil
+import subprocess
 
 # Import our new unified core modules
 from core.llm import Brain
@@ -71,6 +73,45 @@ async def add_pronunciation_rule(request: PronunciationRequest):
 async def get_pronunciations():
     """Get all pronunciation rules."""
     return load_pronunciations()
+
+@app.get("/api/debug")
+async def get_debug_info():
+    """Get system diagnostics and Hailo status."""
+    info = {
+        "status": "online",
+        "system": {
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
+            "memory_percent": psutil.virtual_memory().percent
+        },
+        "hailo": {
+            "status": "unknown",
+            "error": None
+        },
+        "logs": []
+    }
+    
+    # Check Hailo/Ollama status
+    try:
+        response = requests.get(f"{LLM_URL}/api/tags", timeout=2)
+        if response.status_code == 200:
+            info["hailo"]["status"] = "online"
+        else:
+            info["hailo"]["status"] = f"error ({response.status_code})"
+    except Exception as e:
+        info["hailo"]["status"] = "offline"
+        info["hailo"]["error"] = str(e)
+        
+    # Get recent logs from journalctl
+    try:
+        result = subprocess.run(
+            ["journalctl", "-u", "bmo-web", "-n", "10", "--no-pager"],
+            capture_output=True, text=True, timeout=2
+        )
+        info["logs"] = result.stdout.splitlines()
+    except Exception as e:
+        info["logs"] = [f"Could not fetch logs: {e}"]
+        
+    return info
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
