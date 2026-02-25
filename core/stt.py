@@ -35,7 +35,9 @@ def transcribe_audio(audio_filepath: str) -> str:
         # 3. Clean up output (remove timestamps like [00:00:00.000 --> 00:00:02.000] or [BLANK_AUDIO])
         output = re.sub(r'\[.*?\]', '', output).strip()
         
-        return output
+        # Fix common misspellings of BMO
+        output = re.sub(r'\b[Bb]emo\b', 'BMO', output)
+        output = re.sub(r'\b[Bb]eemo\b', 'BMO', output)
 
     except subprocess.CalledProcessError as e:
         logger.error(f"FFmpeg or Whisper process failed: {e}")
