@@ -12,6 +12,7 @@ After=network.target
 [Service]
 Type=simple
 User=clevercode
+WorkingDirectory=/home/clevercode/be-more-agent
 Environment="OLLAMA_HOST=0.0.0.0:8000"
 ExecStart=/usr/bin/hailo-ollama serve
 Restart=always
