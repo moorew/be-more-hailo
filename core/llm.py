@@ -94,6 +94,9 @@ class Brain:
                     # Remove the tag from the spoken content
                     content = re.sub(r'!PRONOUNCE:.*', '', content).strip()
 
+                # Ensure BMO is spelled correctly in text responses
+                content = re.sub(r'\bBeemo\b', 'BMO', content, flags=re.IGNORECASE)
+
                 self.history.append({"role": "assistant", "content": content})
                 return content
             else:
