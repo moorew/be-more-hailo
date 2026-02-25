@@ -163,9 +163,11 @@ class BotGUI:
         if self.current_state == BotStates.SPEAKING:
             speed = 150
         elif self.current_state == BotStates.THINKING:
-            speed = 300
+            speed = 500
         elif self.current_state == BotStates.LISTENING:
             speed = 400
+
+        self.master.after(speed, self.update_animation)
 
     # --- AUDIO INPUT ---
     def wait_for_wakeword(self, oww):
@@ -263,8 +265,13 @@ class BotGUI:
             self.set_state(BotStates.ERROR, "Wake Word Error")
             return
 
-        self.set_state(BotStates.IDLE, "Waiting...")
-        self.play_sound("greeting_sounds")
+        self.set_state(BotStates.SPEAKING, "Ready!")
+        greeting_proc = self.play_sound("greeting_sounds")
+        if greeting_proc:
+            # Wait for greeting to finish before going idle
+            threading.Thread(target=lambda: (greeting_proc.wait(), self.set_state(BotStates.IDLE, "Waiting...") if self.current_state == BotStates.SPEAKING else None), daemon=True).start()
+        else:
+            self.set_state(BotStates.IDLE, "Waiting...")
 
         while not self.stop_event.is_set():
             # 1. Wait for Wake Word
@@ -275,15 +282,6 @@ class BotGUI:
                 
                 # 3. Transcribe
                 self.set_state(BotStates.THINKING, "Transcribing...")
-                user_text = self.transcribe(wav_file)
-                print(f"User Transcribed: {user_text}")
-                
-                if len(user_text) < 2:
-                    self.set_state(BotStates.IDLE, "Unknown Input")
-                    continue
-
-                # 4. LLM
-                self.set_state(BotStates.THINKING, "Thinking...")
                 
                 def play_thinking_sequence():
                     ack_proc = self.play_sound("ack_sounds")
@@ -293,6 +291,22 @@ class BotGUI:
                         self.thinking_audio_process = self.play_sound("thinking_sounds")
                 
                 threading.Thread(target=play_thinking_sequence, daemon=True).start()
+
+                user_text = self.transcribe(wav_file)
+                print(f"User Transcribed: {user_text}")
+                
+                if len(user_text) < 2:
+                    self.set_state(BotStates.IDLE, "Unknown Input")
+                    if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+                        try:
+                            self.thinking_audio_process.terminate()
+                        except:
+                            pass
+                        self.thinking_audio_process = None
+                    continue
+
+                # 4. LLM
+                self.set_state(BotStates.THINKING, "Thinking...")
 
                 response = self.chat_with_llm(user_text)
                 

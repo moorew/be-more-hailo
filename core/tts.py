@@ -50,6 +50,8 @@ def clean_text_for_speech(text: str) -> str:
     text = re.sub(r'[_~`]', '', text)
     # Remove URLs
     text = re.sub(r'http[s]?://\S+', '', text)
+    # Remove emojis and other symbols (keep ASCII, common punctuation, and accents)
+    text = re.sub(r'[^\x00-\x7F\xC0-\xFF\u0100-\u017F\u0180-\u024F\u1E00-\u1EFF\u2018-\u201F\u2028-\u202F]', '', text)
     
     # Apply pronunciation fixes (case-insensitive)
     pronunciations = load_pronunciations()

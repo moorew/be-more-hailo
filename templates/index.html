@@ -651,10 +651,16 @@
             await loadSounds('ack_sounds');
             await loadSounds('thinking_sounds');
 
-            setFaceState('idle');
-            
             // Try to play greeting sound (might be blocked by browser autoplay policy)
-            playRandomSound('greeting_sounds');
+            const greetingAudio = playRandomSound('greeting_sounds');
+            if (greetingAudio) {
+                setFaceState('speaking');
+                greetingAudio.onended = () => {
+                    setFaceState('idle');
+                };
+            } else {
+                setFaceState('idle');
+            }
 
             // Event listeners
             sendBtn.addEventListener('click', sendMessage);
@@ -884,6 +890,18 @@
             micBtn.classList.remove('recording');
             userInput.placeholder = "Processing audio...";
             setFaceState('thinking');
+            
+            // Play ack sound as soon as thinking starts
+            const ackAudio = playRandomSound('ack_sounds');
+            if (ackAudio) {
+                ackAudio.onended = () => {
+                    if (document.getElementById('bmo-face').src.includes('thinking')) {
+                        currentThinkingSound = playRandomSound('thinking_sounds', true);
+                    }
+                };
+            } else {
+                currentThinkingSound = playRandomSound('thinking_sounds', true);
+            }
         }
 
         async function processAudio(audioBlob) {
@@ -904,7 +922,7 @@
                 
                 if (data.text && data.text.trim().length > 0) {
                     userInput.value = data.text;
-                    sendMessage(); // Automatically send the transcribed text
+                    sendMessage(true); // Automatically send the transcribed text, skip ack sound since it already played
                 } else {
                     if (data.error) {
                         console.error("Transcription error:", data.error);
@@ -1023,35 +1041,22 @@
             if (images.length > 1) {
                 let speed = 500;
                 if (state === 'speaking') speed = 150; // More natural speaking speed
-                if (state === 'thinking') speed = 300; // Smooth thinking speed
+                if (state === 'thinking') speed = 500; // Smooth thinking speed
                 if (state === 'listening') speed = 400; // Gentle listening speed
 
-                // For thinking, we want to pick a random frame and hold it for a bit,
-                // rather than cycling through them sequentially, to look more natural.
-                if (state === 'thinking') {
-                    animationInterval = setInterval(() => {
-                        // Pick a random frame that isn't the current one
-                        let nextFrame;
-                        do {
-                            nextFrame = Math.floor(Math.random() * images.length);
-                        } while (nextFrame === frameIndex && images.length > 1);
-                        
-                        frameIndex = nextFrame;
-                        bmoFace.src = images[frameIndex];
-                    }, speed * 2); // Slower transitions for thinking
-                } else {
-                    animationInterval = setInterval(() => {
-                        frameIndex = (frameIndex + 1) % images.length;
-                        bmoFace.src = images[frameIndex];
-                    }, speed);
-                }
+                animationInterval = setInterval(() => {
+                    frameIndex = (frameIndex + 1) % images.length;
+                    bmoFace.src = images[frameIndex];
+                }, speed);
             }
         }
 
         function updateTranscript(text) {
             const transcriptEl = document.getElementById('bmo-transcript');
             if (text) {
-                transcriptEl.textContent = text;
+                // Strip emojis for the transcript display since the font doesn't support them
+                const cleanText = text.replace(/[^\x00-\x7F\xC0-\xFF\u0100-\u017F\u0180-\u024F\u1E00-\u1EFF\u2018-\u201F\u2028-\u202F]/g, '');
+                transcriptEl.textContent = cleanText;
                 transcriptEl.style.display = '-webkit-box';
             } else {
                 transcriptEl.textContent = '';
@@ -1243,7 +1248,7 @@
             }
         }
 
-        async function sendMessage() {
+        async function sendMessage(skipAckSound = false) {
             const text = userInput.value.trim();
             if (!text) return;
 
@@ -1260,16 +1265,18 @@
             showTypingIndicator();
             setFaceState('thinking');
             
-            // Play ack sound, then thinking sound
-            const ackAudio = playRandomSound('ack_sounds');
-            if (ackAudio) {
-                ackAudio.onended = () => {
-                    if (document.getElementById('typing-indicator')) {
-                        currentThinkingSound = playRandomSound('thinking_sounds', true);
-                    }
-                };
-            } else {
-                currentThinkingSound = playRandomSound('thinking_sounds', true);
+            if (!skipAckSound) {
+                // Play ack sound, then thinking sound
+                const ackAudio = playRandomSound('ack_sounds');
+                if (ackAudio) {
+                    ackAudio.onended = () => {
+                        if (document.getElementById('typing-indicator')) {
+                            currentThinkingSound = playRandomSound('thinking_sounds', true);
+                        }
+                    };
+                } else {
+                    currentThinkingSound = playRandomSound('thinking_sounds', true);
+                }
             }
 
             try {
