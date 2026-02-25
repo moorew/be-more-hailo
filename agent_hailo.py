@@ -94,6 +94,7 @@ class BotGUI:
         self.animations = {}
         self.current_frame = 0
         self.load_animations()
+        self.load_sounds()
         self.update_animation()
 
         # Start Main Thread
@@ -111,7 +112,30 @@ class BotGUI:
         if msg:
             self.status_label.config(text=msg)
 
-    # --- ANIMATION ENGINE ---
+    # --- ANIMATION & SOUND ENGINE ---
+    def load_sounds(self):
+        self.sounds = {
+            "greeting_sounds": [],
+            "ack_sounds": [],
+            "thinking_sounds": []
+        }
+        base = "sounds"
+        for category in self.sounds.keys():
+            path = os.path.join(base, category)
+            if os.path.exists(path):
+                self.sounds[category] = [os.path.join(path, f) for f in os.listdir(path) if f.lower().endswith('.wav')]
+
+    def play_sound(self, category):
+        sounds = self.sounds.get(category, [])
+        if not sounds:
+            return None
+        sound_file = random.choice(sounds)
+        try:
+            return subprocess.Popen(['aplay', '-q', sound_file])
+        except Exception as e:
+            print(f"Error playing sound {sound_file}: {e}")
+            return None
+
     def load_animations(self):
         base = "faces"
         for state in [BotStates.IDLE, BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.ERROR]:
@@ -244,7 +268,8 @@ class BotGUI:
             return
 
         self.set_state(BotStates.IDLE, "Waiting...")
-        
+        self.play_sound("greeting_sounds")
+
         while not self.stop_event.is_set():
             # 1. Wait for Wake Word
             if self.wait_for_wakeword(oww):
@@ -263,8 +288,25 @@ class BotGUI:
 
                 # 4. LLM
                 self.set_state(BotStates.THINKING, "Thinking...")
+                
+                def play_thinking_sequence():
+                    ack_proc = self.play_sound("ack_sounds")
+                    if ack_proc:
+                        ack_proc.wait()
+                    if self.current_state == BotStates.THINKING:
+                        self.thinking_audio_process = self.play_sound("thinking_sounds")
+                
+                threading.Thread(target=play_thinking_sequence, daemon=True).start()
+
                 response = self.chat_with_llm(user_text)
                 
+                if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+                    try:
+                        self.thinking_audio_process.terminate()
+                    except:
+                        pass
+                    self.thinking_audio_process = None
+
                 if '{"action": "take_photo"}' in response:
                     self.set_state(BotStates.CAPTURING, "Taking Photo...")
                     try:
@@ -278,7 +320,14 @@ class BotGUI:
                             
                         # Send to vision model
                         self.set_state(BotStates.THINKING, "Analyzing...")
+                        self.thinking_audio_process = self.play_sound("thinking_sounds")
                         response = self.brain.analyze_image(b64_string, user_text)
+                        if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+                            try:
+                                self.thinking_audio_process.terminate()
+                            except:
+                                pass
+                            self.thinking_audio_process = None
                     except Exception as e:
                         print(f"Camera Error: {e}")
                         response = "I tried to take a photo, but my camera isn't working."

@@ -620,11 +620,17 @@
         let currentAnimation = null;
         let animationInterval = null;
         let currentAudio = null;
+        let currentThinkingSound = null;
         let faceImages = {
             idle: [],
             thinking: [],
             speaking: [],
             error: []
+        };
+        let soundFiles = {
+            greeting_sounds: [],
+            ack_sounds: [],
+            thinking_sounds: []
         };
 
         // Audio Recording Variables
@@ -638,9 +644,16 @@
             await loadFaces('thinking');
             await loadFaces('speaking');
             await loadFaces('error');
-            
+
+            await loadSounds('greeting_sounds');
+            await loadSounds('ack_sounds');
+            await loadSounds('thinking_sounds');
+
             setFaceState('idle');
             
+            // Try to play greeting sound (might be blocked by browser autoplay policy)
+            playRandomSound('greeting_sounds');
+
             // Event listeners
             sendBtn.addEventListener('click', sendMessage);
             userInput.addEventListener('keypress', (e) => {
@@ -950,6 +963,32 @@
             }
         }
 
+        async function loadSounds(category) {
+            try {
+                const response = await fetch(`/api/sounds/${category}`);
+                const data = await response.json();
+                if (data.sounds && data.sounds.length > 0) {
+                    soundFiles[category] = data.sounds;
+                }
+            } catch (error) {
+                console.error(`Error loading sounds for ${category}:`, error);
+            }
+        }
+
+        function playRandomSound(category, loop = false) {
+            const sounds = soundFiles[category];
+            if (!sounds || sounds.length === 0) return null;
+            
+            const randomSound = sounds[Math.floor(Math.random() * sounds.length)];
+            const audio = new Audio(randomSound);
+            audio.loop = loop;
+            
+            // Only play if hardware audio is NOT toggled, or if it's a UI sound we want to play anyway.
+            // We'll play UI sounds in the browser regardless of the TTS toggle, so the user gets feedback.
+            audio.play().catch(e => console.log("Audio play blocked by browser:", e));
+            return audio;
+        }
+
         // Set the current face animation state
         function setFaceState(state) {
             if (animationInterval) {
@@ -1042,6 +1081,11 @@
             if (indicator) {
                 indicator.remove();
             }
+            if (currentThinkingSound) {
+                currentThinkingSound.pause();
+                currentThinkingSound.currentTime = 0;
+                currentThinkingSound = null;
+            }
         }
 
         async function takePhotoAndSend(originalText) {
@@ -1091,6 +1135,18 @@
                 setFaceState('thinking');
                 showTypingIndicator();
                 
+                // Play ack sound, then thinking sound
+                const ackAudio = playRandomSound('ack_sounds');
+                if (ackAudio) {
+                    ackAudio.onended = () => {
+                        if (document.getElementById('typing-indicator')) {
+                            currentThinkingSound = playRandomSound('thinking_sounds', true);
+                        }
+                    };
+                } else {
+                    currentThinkingSound = playRandomSound('thinking_sounds', true);
+                }
+
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: {
@@ -1198,6 +1254,18 @@
             addMessage(text, 'user');
             showTypingIndicator();
             setFaceState('thinking');
+            
+            // Play ack sound, then thinking sound
+            const ackAudio = playRandomSound('ack_sounds');
+            if (ackAudio) {
+                ackAudio.onended = () => {
+                    if (document.getElementById('typing-indicator')) {
+                        currentThinkingSound = playRandomSound('thinking_sounds', true);
+                    }
+                };
+            } else {
+                currentThinkingSound = playRandomSound('thinking_sounds', true);
+            }
 
             try {
                 const response = await fetch('/api/chat', {

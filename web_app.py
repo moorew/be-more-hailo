@@ -38,6 +38,7 @@ os.makedirs("static/audio", exist_ok=True)
 # Mount static files (for CSS, JS, images, and audio)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/faces", StaticFiles(directory="faces"), name="faces")
+app.mount("/sounds", StaticFiles(directory="sounds"), name="sounds")
 
 # Setup templates
 templates = Jinja2Templates(directory="templates")
@@ -205,16 +206,17 @@ async def get_face(state: str):
     images = [f"/faces/{state}/{img}" for img in os.listdir(face_dir) if img.endswith(('.png', '.jpg', '.jpeg'))]
     return {"images": sorted(images)}
 
-if __name__ == "__main__":
-    import uvicorn
-    import glob
-    
-    # Check for Tailscale SSL certificates (*.ts.net.crt / *.ts.net.key)
-    cert_files = glob.glob("*.ts.net.crt")
-    key_files = glob.glob("*.ts.net.key")
-    
-    if cert_files and key_files:
-        cert_file = cert_files[0]
+@app.get("/api/sounds/{category}")
+async def get_sounds(category: str):
+    """
+    Returns a list of sound paths for a given category (greeting_sounds, ack_sounds, thinking_sounds)
+    """
+    sound_dir = os.path.join("sounds", category)
+    if not os.path.exists(sound_dir):
+        return {"sounds": []}
+
+    sounds = [f"/sounds/{category}/{s}" for s in os.listdir(sound_dir) if s.endswith('.wav')]
+    return {"sounds": sorted(sounds)}
         key_file = key_files[0]
         logger.info(f"Found SSL certificates ({cert_file}). Starting securely on HTTPS...")
         uvicorn.run(app, host="0.0.0.0", port=8080, ssl_certfile=cert_file, ssl_keyfile=key_file)
