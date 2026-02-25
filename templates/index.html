@@ -884,6 +884,13 @@
             micBtn.classList.remove('recording');
             userInput.placeholder = "Processing audio...";
             setFaceState('thinking');
+        }
+
+        async function processAudio(audioBlob) {
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.webm');
+
+            try {
                 userInput.disabled = true;
                 sendBtn.disabled = true;
                 micBtn.disabled = true;
