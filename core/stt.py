@@ -15,7 +15,7 @@ def transcribe_audio(audio_filepath: str) -> str:
         return ""
 
     temp_wav = f"{audio_filepath}_16k.wav"
-    
+
     try:
         # 1. Convert audio to 16kHz mono WAV (required by whisper.cpp)
         logger.info(f"Converting {audio_filepath} to 16kHz WAV...")
@@ -29,15 +29,17 @@ def transcribe_audio(audio_filepath: str) -> str:
         # 2. Run whisper.cpp
         logger.info("Running whisper.cpp transcription...")
         cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", temp_wav, "-nt"]
-        
+
         output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode("utf-8").strip()
-        
+
         # 3. Clean up output (remove timestamps like [00:00:00.000 --> 00:00:02.000] or [BLANK_AUDIO])
         output = re.sub(r'\[.*?\]', '', output).strip()
-        
+
         # Fix common misspellings of BMO
         output = re.sub(r'\b[Bb]emo\b', 'BMO', output)
         output = re.sub(r'\b[Bb]eemo\b', 'BMO', output)
+
+        return output
 
     except subprocess.CalledProcessError as e:
         logger.error(f"FFmpeg or Whisper process failed: {e}")
