@@ -623,6 +623,7 @@
         let currentThinkingSound = null;
         let faceImages = {
             idle: [],
+            listening: [],
             thinking: [],
             speaking: [],
             error: []
@@ -641,6 +642,7 @@
         // Initialize
         async function init() {
             await loadFaces('idle');
+            await loadFaces('listening');
             await loadFaces('thinking');
             await loadFaces('speaking');
             await loadFaces('error');
@@ -862,7 +864,8 @@
                 isRecording = true;
                 micBtn.classList.add('recording');
                 userInput.placeholder = "Listening... (Speak now)";
-                
+                setFaceState('listening');
+
             } catch (error) {
                 console.error("Error accessing microphone:", error);
                 if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
@@ -880,13 +883,7 @@
             isRecording = false;
             micBtn.classList.remove('recording');
             userInput.placeholder = "Processing audio...";
-        }
-
-        async function processAudio(audioBlob) {
-            const formData = new FormData();
-            formData.append('audio', audioBlob, 'recording.webm');
-
-            try {
+            setFaceState('thinking');
                 userInput.disabled = true;
                 sendBtn.disabled = true;
                 micBtn.disabled = true;
@@ -1020,8 +1017,9 @@
                 let speed = 500;
                 if (state === 'speaking') speed = 150; // More natural speaking speed
                 if (state === 'thinking') speed = 300; // Smooth thinking speed
-                
-                // For thinking, we want to pick a random frame and hold it for a bit, 
+                if (state === 'listening') speed = 400; // Gentle listening speed
+
+                // For thinking, we want to pick a random frame and hold it for a bit,
                 // rather than cycling through them sequentially, to look more natural.
                 if (state === 'thinking') {
                     animationInterval = setInterval(() => {

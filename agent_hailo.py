@@ -164,12 +164,8 @@ class BotGUI:
             speed = 150
         elif self.current_state == BotStates.THINKING:
             speed = 300
-            
-        self.master.after(speed, self.update_animation)
-
-    # --- LLM CLIENT (CUSTOM FOR HAILO) ---
-    def chat_with_llm(self, user_text):
-        return self.brain.think(user_text)
+        elif self.current_state == BotStates.LISTENING:
+            speed = 400
 
     # --- AUDIO INPUT ---
     def wait_for_wakeword(self, oww):
