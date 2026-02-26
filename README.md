@@ -98,16 +98,24 @@ curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json'
 curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2.5-instruct:1.5b", "stream": true }'
 ```
 
-### 3. Clone & Setup
+### 3. Setup & Installation
 
-```
-git clone https://github.com/brenpoly/be-more-agent.git
+**Single Command Installation (Recommended):**
+You can download and install everything in one go. The script will install system dependencies, clone the repository, download Piper TTS, and set up the Python environment:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/moorew/be-more-hailo/main/setup.sh | bash
 cd be-more-agent
-chmod +x setup.sh setup_web.sh setup_services.sh start_web.sh start_agent.sh
+```
+
+**Manual Setup:**
+If you prefer to configure it manually:
+```bash
+git clone https://github.com/moorew/be-more-hailo.git be-more-agent
+cd be-more-agent
+chmod +x *.sh
 ./setup.sh
 ```
-
-*The setup script will install system libraries, download Piper TTS, and set up the Python virtual environment.*
 
 ### 4. Running the Agent
 

@@ -9,12 +9,27 @@ NC='\033[0m' # No Color
 echo -e "${GREEN}🤖 Pi Local Assistant Setup Script${NC}"
 
 # 1. Install System Dependencies (The "Hidden" Requirements)
-echo -e "${YELLOW}[1/6] Installing System Tools (apt)...${NC}"
+echo -e "${YELLOW}[1/7] Installing System Tools (apt)...${NC}"
 sudo apt update
-sudo apt install -y python3-tk libasound2-dev libportaudio2 libatlas-base-dev cmake build-essential espeak-ng git
+sudo apt install -y python3-tk libasound2-dev libportaudio2 libatlas-base-dev cmake build-essential espeak-ng git curl
 
-# 2. Create Folders
-echo -e "${YELLOW}[2/6] Creating Folders...${NC}"
+# 2. Clone Repository (if run via curl outside repo)
+echo -e "${YELLOW}[2/7] Checking for Repository...${NC}"
+if [ ! -f "requirements.txt" ] || [ ! -f "agent_hailo.py" ]; then
+    if [ -d "be-more-agent" ]; then
+        echo -e "${YELLOW}Directory 'be-more-agent' already exists. Entering it...${NC}"
+        cd be-more-agent
+    else
+        echo -e "${YELLOW}Downloading be-more-agent repository...${NC}"
+        git clone https://github.com/moorew/be-more-hailo.git be-more-agent
+        cd be-more-agent
+    fi
+    # Make scripts executable
+    chmod +x *.sh
+fi
+
+# 3. Create Folders
+echo -e "${YELLOW}[3/7] Creating Folders...${NC}"
 mkdir -p piper
 mkdir -p sounds/greeting_sounds
 mkdir -p sounds/thinking_sounds
@@ -27,8 +42,8 @@ mkdir -p faces/speaking
 mkdir -p faces/error
 mkdir -p faces/warmup
 
-# 3. Download Piper (Architecture Check)
-echo -e "${YELLOW}[3/6] Setting up Piper TTS...${NC}"
+# 4. Download Piper (Architecture Check)
+echo -e "${YELLOW}[4/7] Setting up Piper TTS...${NC}"
 ARCH=$(uname -m)
 if [ "$ARCH" == "aarch64" ]; then
     # FIXED: Using the specific 2023.11.14-2 release known to work on Pi
@@ -39,15 +54,15 @@ else
     echo -e "${RED}⚠️  Not on Raspberry Pi (aarch64). Skipping Piper download.${NC}"
 fi
 
-# 4. Download Voice Model
-echo -e "${YELLOW}[4/6] Downloading Voice Model...${NC}"
+# 5. Download Voice Model
+echo -e "${YELLOW}[5/7] Downloading Voice Model...${NC}"
 cd piper
 wget -nc -O en_GB-semaine-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium/en_GB-semaine-medium.onnx
 wget -nc -O en_GB-semaine-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium/en_GB-semaine-medium.onnx.json
 cd ..
 
-# 5. Install Python Libraries
-echo -e "${YELLOW}[5/6] Installing Python Libraries...${NC}"
+# 6. Install Python Libraries
+echo -e "${YELLOW}[6/7] Installing Python Libraries...${NC}"
 # Check if venv exists, if not create it
 if [ ! -d "venv" ]; then
     python3 -m venv venv
@@ -56,8 +71,8 @@ source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# 6. Pull AI Models
-echo -e "${YELLOW}[6/6] Checking AI Models...${NC}"
+# 7. Pull AI Models
+echo -e "${YELLOW}[7/7] Checking AI Models...${NC}"
 echo -e "${YELLOW}Pulling Hailo-10H optimized models via hailo-ollama API...${NC}"
 curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2.5-instruct:1.5b", "stream": false }'
 echo -e "${GREEN}Models pulled successfully!${NC}"
@@ -68,4 +83,4 @@ if [ ! -f "wakeword.onnx" ]; then
     curl -L -o wakeword.onnx https://github.com/dscripka/openWakeWord/raw/main/openwakeword/resources/models/hey_jarvis_v0.1.onnx
 fi
 
-echo -e "${GREEN}✨ Setup Complete! Run 'source venv/bin/activate' then 'python agent.py'${NC}"
+echo -e "${GREEN}✨ Setup Complete! Run 'cd be-more-agent' (if not there), then 'source venv/bin/activate', and run './start_agent.sh' or './start_web.sh'${NC}"
