@@ -12,7 +12,7 @@ The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) i
 
 ## ✨ What's New in this Version (vs Original)
 
-* **Hailo-10H NPU Support**: Optimized to run on the Raspberry Pi 5 with the Hailo-10H AI accelerator, drastically reducing LLM response times.
+* **Full Hailo-10H Accelerator Pipeline**: Not only do the LLMs and Vision Models run on the NPU (via Ollama), but this fork now exclusively uses `hailo-whisper` to process **Speech-to-Text directly on the Hailo NPU** for near-instant 16kHz transcription!
 * **Dual Interfaces (On-Device GUI & Web App)**: 
   * **On-Device (`agent_hailo.py`)**: The classic Tkinter-based GUI that displays reactive faces on an attached screen (HDMI/DSI) and listens via a physical USB microphone.
   * **Web Version (`web_app.py`)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
@@ -93,7 +93,8 @@ be-more-agent/
 ├── start_agent.sh             # Script to launch the on-device GUI
 ├── wakeword.onnx              # OpenWakeWord model (The "Ear")
 ├── requirements.txt           # Python dependencies
-├── whisper.cpp/               # Speech-to-Text engine
+├── models/                    # Hardware Accelerated NN weights
+│   └── whisper-small.hef      # (Download Manually) - Hailo STT model
 ├── piper/                     # Piper TTS engine & voice models
 ├── sounds/                    # Sound effects folder
 └── faces/                     # Face images folder
@@ -121,13 +122,20 @@ curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json'
 
 ### 3. Setup & Installation
 
-**Single Command Installation (Recommended):**
+**Single Command Installation:**
 You can download and install everything in one go. The script will install system dependencies, clone the repository, download Piper TTS, and set up the Python environment:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/moorew/be-more-hailo/main/setup.sh | bash
 cd be-more-agent
 ```
+
+> [!CAUTION]
+> **Hailo Whisper Model Required!**
+> Because this fork runs speech recognition entirely on the Hailo 10H NPU, you must manually download the compiled `.hef` model for Whisper.
+> 1. Create a `models/` folder in the project (`mkdir models`)
+> 2. Download `whisper-small.hef` (or `whisper-base.hef`) from the official Hailo Model Zoo.
+> 3. Place the `.hef` file in `be-more-agent/models/` and ensure your `core/config.py` is pointing to it!
 
 **Manual Setup:**
 If you prefer to configure it manually:

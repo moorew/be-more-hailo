@@ -55,11 +55,15 @@ else
 fi
 
 # 5. Download Voice Model
-echo -e "${YELLOW}[5/7] Downloading Voice Model...${NC}"
+echo -e "${YELLOW}[5/7] Downloading Voice Model & STT pre-reqs...${NC}"
 cd piper
 wget -nc -O en_GB-semaine-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium/en_GB-semaine-medium.onnx
 wget -nc -O en_GB-semaine-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium/en_GB-semaine-medium.onnx.json
 cd ..
+
+# Make directory for Whisper
+mkdir -p models
+echo -e "${RED}⚠️  IMPORTANT: You must manually download 'whisper-small.hef' from the Hailo Model Zoo and place it in the 'models/' directory!${NC}"
 
 # 6. Install Python Libraries
 echo -e "${YELLOW}[6/7] Installing Python Libraries...${NC}"

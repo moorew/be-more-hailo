@@ -6,9 +6,9 @@ import datetime
 # To offload to your Linux server, change this to: "http://blackbox.clevercode.ts.net:11434/api/chat"
 # Make sure Ollama is running on the blackbox server and listening on 0.0.0.0
 LLM_URL = "http://127.0.0.1:8000/api/chat"
-LLM_MODEL = "qwen2.5-instruct:1.5b" # Native Hailo model for all queries
-FAST_LLM_MODEL = "qwen2.5-instruct:1.5b" # Unify models to prevent NPU swap crashing
-VISION_MODEL = "moondream" # Fast, small vision model for Pi
+LLM_MODEL = "llama3.2:1b" # Native Hailo model for all queries
+FAST_LLM_MODEL = "llama3.2:1b" # Unify models to prevent NPU swap crashing
+VISION_MODEL = "qwen2-vl-instruct:2b" # Fast, small vision model for Pi
 
 def get_system_prompt():
     current_time = datetime.datetime.now().strftime("%I:%M %p")
@@ -58,9 +58,8 @@ SYSTEM_PROMPT = get_system_prompt()
 PIPER_CMD = "./piper/piper"
 PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
 
-# STT Settings (Whisper.cpp)
-WHISPER_CMD = "./whisper.cpp/build/bin/whisper-cli"
-WHISPER_MODEL = "./whisper.cpp/models/ggml-base.en.bin"
+# STT Settings (Hailo Whisper)
+WHISPER_MODEL = "./models/whisper-small.hef"
 
 # Audio Settings
 MIC_DEVICE_INDEX = 1
