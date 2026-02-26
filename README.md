@@ -39,6 +39,14 @@ This is the "headless" mode. The Pi sits on your network without needing a scree
 
 **The Shared core/**: Whether you ask a question via the physical microphone or the web browser, the request is routed through core/llm.py. This means features like **Dual-Model Routing** (picking the 1B or 3B model based on prompt complexity) work identically across both platforms!
 
+### 3. Web UI Controls
+When using the web interface, the top header bar includes several tools to customize your experience:
+- **🛠️ Debug**: Opens a dark-mode diagnostic window displaying the conversation history and internal system logs.
+- **🗣️ Fix Pronunciation**: Allows you to override Piper TTS by providing a phonetic spelling for specific difficult words.
+- **LLM Status**: A live indicator that checks the `hailo-ollama` API to let you know if the AI is still loading, computing, or ready.
+- **Hands-Free Toggle**: Normally, you have to click and hold the microphone button to talk. Checking this box allows BMO to listen continuously for the "Hey BMO" wake word, then automatically records your next sentence! 
+- **Pi Audio Toggle**: Reroutes BMO's audio responses to play physically through the speakers plugged into your Raspberry Pi instead of playing back in your web browser.
+
 ## 🌐 Secure Remote Access with Tailscale
 
 To access BMO's web interface securely from anywhere, and **vital for using the microphone in modern web browsers**, I recommend using **[Tailscale](https://tailscale.com/)**. 
