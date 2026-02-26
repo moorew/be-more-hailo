@@ -1,4 +1,4 @@
-# Be More Agent 🤖 (Hailo-10H & Web Edition)
+﻿# Be More Agent 🤖 (Hailo-10H & Web Edition)
 **A Customizable, Offline-First AI Agent for Raspberry Pi**
 
 <p align="center">
@@ -14,8 +14,8 @@ The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) i
 
 * **Hailo-10H NPU Support**: Optimized to run on the Raspberry Pi 5 with the Hailo-10H AI accelerator, drastically reducing LLM response times.
 * **Dual Interfaces (On-Device GUI & Web App)**: 
-  * **On-Device (agent_hailo.py)**: The classic Tkinter-based GUI that displays reactive faces on an attached screen (HDMI/DSI) and listens via a physical USB microphone.
-  * **Web Version (web_app.py)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
+  * **On-Device (`agent_hailo.py`)**: The classic Tkinter-based GUI that displays reactive faces on an attached screen (HDMI/DSI) and listens via a physical USB microphone.
+  * **Web Version (`web_app.py`)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
 * **Unified core Architecture**: Both the on-device GUI and the web app share the exact same brain! The logic for LLMs, Text-to-Speech (TTS), and Speech-to-Text (STT) has been extracted into a shared core/ module. Any improvements made to core/ instantly benefit both interfaces.
 * **On-the-Fly Image Generation**: Ask BMO to show you a picture of anything, and it will generate and display the image directly on the screen (both Web and On-Device) using the free Pollinations.ai API!
 * **Fast Unified Routing (Optional Dual-Model)**: By default, all queries are routed through a single optimized model (`qwen2.5-instruct:1.5b`) for blazing-fast performance without NPU module swapping latency. Optionally, you can enable Dual-Model routing to send complex queries to a larger model.
@@ -25,7 +25,7 @@ The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) i
 
 Because of the new modular design, the project can be run in two different ways depending on your needs:
 
-### 1. On-Device Mode (`agent_hailo.py`)
+### 1. On-Device Mode (`agent_hailo.py`)
 This is the traditional "robot" mode. You plug a screen, microphone, and speaker directly into the Raspberry Pi.
 - **Input**: Uses sounddevice and openwakeword to constantly listen for the wake word ("Hey BMO") via the physical microphone.
 - **Processing**: Uses the shared core/ modules to transcribe audio, query the LLM, and generate speech.
@@ -207,3 +207,4 @@ The BMO project is 100% the brainchild of @brenpoly. They did the hard work in t
 ## ⚖️ Legal Disclaimer (just in case!)
 **"BMO"** and **"Adventure Time"** are trademarks of **Cartoon Network** (Warner Bros. Discovery).
 This project is a **fan creation** built for educational and hobbyist purposes only. It is **not** affiliated with, endorsed by, or connected to Cartoon Network or the official Adventure Time brand in any way.
+
