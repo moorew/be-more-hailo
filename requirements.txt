@@ -13,4 +13,3 @@ jinja2
 requests
 librosa
 soundfile
-hailo-whisper @ git+https://github.com/hailocs/hailo-whisper.git
