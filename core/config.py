@@ -7,7 +7,7 @@ import datetime
 # Make sure Ollama is running on the blackbox server and listening on 0.0.0.0
 LLM_URL = "http://127.0.0.1:8000/api/chat"
 LLM_MODEL = "llama3.2:3b" # Using Llama 3.2 3B for complex queries (Supported by Hailo-Ollama)
-FAST_LLM_MODEL = "qwen2.5-instruct:1.5b" # Fast model for simple chat (Supported by Hailo-Ollama)
+FAST_LLM_MODEL = "llama3.2:3b" # Use the SAME model to prevent Hailo NPU swap crashes
 VISION_MODEL = "moondream" # Fast, small vision model for Pi
 
 def get_system_prompt():
