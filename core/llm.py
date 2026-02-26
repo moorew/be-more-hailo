@@ -85,14 +85,14 @@ class Brain:
                     pass # Not valid JSON, just treat as normal text
                 
                 # Check for pronunciation learning tag
-                pronounce_match = re.search(r'!PRONOUNCE:\s*([a-zA-Z0-9_-]+)\s*=\s*([a-zA-Z0-9_-]+)', content)
+                pronounce_match = re.search(r'!PRONOUNCE:\s*([a-zA-Z0-9_-]+)\s*=\s*([a-zA-Z0-9_-]+)', content, re.IGNORECASE)
                 if pronounce_match:
                     word = pronounce_match.group(1).strip()
                     phonetic = pronounce_match.group(2).strip()
                     logger.info(f"Learned new pronunciation from LLM: {word} -> {phonetic}")
                     add_pronunciation(word, phonetic)
                     # Remove the tag from the spoken content
-                    content = re.sub(r'!PRONOUNCE:.*', '', content).strip()
+                    content = re.sub(r'!PRONOUNCE:.*', '', content, flags=re.IGNORECASE).strip()
 
                 # Ensure BMO is spelled correctly in text responses
                 content = re.sub(r'\bBeemo\b', 'BMO', content, flags=re.IGNORECASE)

@@ -6,8 +6,8 @@ import datetime
 # To offload to your Linux server, change this to: "http://blackbox.clevercode.ts.net:11434/api/chat"
 # Make sure Ollama is running on the blackbox server and listening on 0.0.0.0
 LLM_URL = "http://127.0.0.1:8000/api/chat"
-LLM_MODEL = "llama3.2:3b" # Using Llama 3.2 3B for complex queries (Supported by Hailo-Ollama)
-FAST_LLM_MODEL = "llama3.2:3b" # Use the SAME model to prevent Hailo NPU swap crashes
+LLM_MODEL = "qwen2.5-instruct:1.5b" # Native Hailo model for all queries
+FAST_LLM_MODEL = "qwen2.5-instruct:1.5b" # Unify models to prevent NPU swap crashing
 VISION_MODEL = "moondream" # Fast, small vision model for Pi
 
 def get_system_prompt():
@@ -35,9 +35,10 @@ def get_system_prompt():
         "'Good morning! Beemo is ready to help you with your projects today.' "
         "'I found the documentation you need. That looks like a tough puzzle to solve!' "
         "'Hmm, BMO isn't sure about the answer to that. I don't want to give you the wrong information!' "
-        "If the user tells you that you pronounced a word wrong and gives you a phonetic spelling, "
+        "If the user explicitly tells you that you pronounced a word wrong and provides a phonetic spelling, "
         "acknowledge it naturally and then append exactly this tag at the very end of your response: "
         "!PRONOUNCE: word=phonetic\n"
+        "IMPORTANT: Do NOT use the !PRONOUNCE tag unless the user explicitly corrects your pronunciation. "
         "CRITICAL: If the user asks for real-time information, current events, weather, or something you don't know, "
         "DO NOT apologize or say you don't know. Instead, you MUST output exactly this JSON format and nothing else: "
         '{"action": "search_web", "query": "search terms here"}\n'

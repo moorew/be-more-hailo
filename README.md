@@ -18,7 +18,7 @@ The original project is incredible! It turns a Raspberry Pi into a fully functio
   * **Web Version (web_app.py)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
 * **Unified core Architecture**: Both the on-device GUI and the web app share the exact same brain! The logic for LLMs, Text-to-Speech (TTS), and Speech-to-Text (STT) has been extracted into a shared core/ module. Any improvements made to core/ instantly benefit both interfaces.
 * **On-the-Fly Image Generation**: Ask BMO to show you a picture of anything, and it will generate and display the image directly on the screen (both Web and On-Device) using the free Pollinations.ai API!
-* **Dual-Model Routing**: Intelligently routes simple queries to a blazing-fast lightweight model and complex queries to a larger model, ensuring the best balance of speed and intelligence. (Currently configured to use `llama3.2:3b` and `qwen2.5-instruct:1.5b`).
+* **Fast Unified Routing**: All queries are routed through a single optimized model (`qwen2.5-instruct:1.5b`) to provide blazing fast performance on the Raspberry Pi without NPU module swapping latency!
 * **Service Management**: Run the web agent seamlessly in the background using the provided systemd service scripts.
 
 ## 🧠 How It Works: On-Device vs Web
@@ -146,8 +146,8 @@ You can modify the models, URLs, and system prompts in core/config.py:
 
 ```python
 LLM_URL = "http://127.0.0.1:8000/api/chat"
-LLM_MODEL = "llama3.2:3b"
-FAST_LLM_MODEL = "qwen2.5-instruct:1.5b" # Fast model for simple chat
+LLM_MODEL = "qwen2.5-instruct:1.5b"
+FAST_LLM_MODEL = "qwen2.5-instruct:1.5b"
 VISION_MODEL = "moondream"
 ```
 
