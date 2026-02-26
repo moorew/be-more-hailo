@@ -18,7 +18,7 @@ The original project is incredible! It turns a Raspberry Pi into a fully functio
   * **Web Version (web_app.py)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
 * **Unified core Architecture**: Both the on-device GUI and the web app share the exact same brain! The logic for LLMs, Text-to-Speech (TTS), and Speech-to-Text (STT) has been extracted into a shared core/ module. Any improvements made to core/ instantly benefit both interfaces.
 * **On-the-Fly Image Generation**: Ask BMO to show you a picture of anything, and it will generate and display the image directly on the screen (both Web and On-Device) using the free Pollinations.ai API!
-* **Dual-Model Routing**: Intelligently routes simple queries to a blazing-fast lightweight model and complex queries to a larger model, ensuring the best balance of speed and intelligence. (Currently configured to use `gemma2:2b` and `llama3.2:1b` for accuracy and performance).
+* **Dual-Model Routing**: Intelligently routes simple queries to a blazing-fast lightweight model and complex queries to a larger model, ensuring the best balance of speed and intelligence. (Currently configured to use `llama3.2:3b` and `qwen2.5-instruct:1.5b`).
 * **Service Management**: Run the web agent seamlessly in the background using the provided systemd service scripts.
 
 ## 🧠 How It Works: On-Device vs Web
@@ -91,11 +91,11 @@ sudo apt install git ffmpeg -y
 This agent relies on `hailo-ollama` to run the brain on the NPU. Ensure you have installed the Hailo-10H software suite and the `hailo-ollama` server according to Hailo's official documentation.
 
 Once `hailo-ollama` is running, pull the required models using the API. 
-*(Note: We highly recommend using `gemma2:2b` for complex queries as it reduces hallucination significantly compared to smaller models, while still running flawlessly on the NPU!)*
+*(Note: We highly recommend using `llama3.2:3b` for complex queries as it reduces hallucination significantly compared to smaller models. `qwen2.5-instruct:1.5b` handles fast routing!)*
 
 ```bash
-curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "gemma2:2b", "stream": true }'
-curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "llama3.2:1b", "stream": true }'
+curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "llama3.2:3b", "stream": true }'
+curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2.5-instruct:1.5b", "stream": true }'
 ```
 
 ### 3. Clone & Setup
@@ -146,8 +146,8 @@ You can modify the models, URLs, and system prompts in core/config.py:
 
 ```python
 LLM_URL = "http://127.0.0.1:8000/api/chat"
-LLM_MODEL = "gemma2:2b"
-FAST_LLM_MODEL = "llama3.2:1b" # Fast model for simple chat
+LLM_MODEL = "llama3.2:3b"
+FAST_LLM_MODEL = "qwen2.5-instruct:1.5b" # Fast model for simple chat
 VISION_MODEL = "moondream"
 ```
 

@@ -8,7 +8,7 @@ import urllib.error
 # Should match what's in agent.py or be passed in
 # But for simplicity, we hardcode the defaults for the Hailo setup
 OLLAMA_HOST = "http://localhost:8000"
-REQUIRED_MODEL = "gemma2:2b"
+REQUIRED_MODEL = "llama3.2:3b"
 
 def get_installed_models():
     try:
