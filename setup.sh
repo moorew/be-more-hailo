@@ -42,8 +42,8 @@ fi
 # 4. Download Voice Model
 echo -e "${YELLOW}[4/6] Downloading Voice Model...${NC}"
 cd piper
-wget -nc -O en_GB-semaine-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium/en_GB-semaine-medium.onnx
-wget -nc -O en_GB-semaine-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium/en_GB-semaine-medium.onnx.json
+wget -nc -O en_GB-cori-high.onnx https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/cori/high/en_GB-cori-high.onnx
+wget -nc -O en_GB-cori-high.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/cori/high/en_GB-cori-high.onnx.json
 cd ..
 
 # 5. Install Python Libraries

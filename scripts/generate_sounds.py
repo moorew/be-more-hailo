@@ -17,7 +17,7 @@ greetings = [
     "System check complete. BMO is perfect!",
     "Hello! What game are we playing today?",
     "BMO is awake!",
-    "I am a little living boy!",
+    "I am a little living robot!",
     "BMO is ready to help!",
     "Hello! Do you have any batteries?",
     "BMO is here to save the day!",
