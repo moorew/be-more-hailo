@@ -54,7 +54,7 @@ SYSTEM_PROMPT = get_system_prompt()
 
 # TTS Settings
 PIPER_CMD = "./piper/piper"
-PIPER_MODEL = "./piper/en_GB-cori-high.onnx"
+PIPER_MODEL = "./piper/en_US-libritts-high.onnx"
 
 # STT Settings (Whisper.cpp)
 WHISPER_CMD = "./whisper.cpp/build/bin/whisper-cli"
