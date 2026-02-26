@@ -16,7 +16,14 @@ The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) i
 * **Dual Interfaces (On-Device GUI & Web App)**: 
   * **On-Device (`agent_hailo.py`)**: The classic Tkinter-based GUI that displays reactive faces on an attached screen (HDMI/DSI) and listens via a physical USB microphone.
   * **Web Version (`web_app.py`)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
-* **Unified core Architecture**: Both the on-device GUI and the web app share the exact same brain! The logic for LLMs, Text-to-Speech (TTS), and Speech-to-Text (STT) has been extracted into a shared core/ module. Any improvements made to core/ instantly benefit both interfaces.
+* **Hailo 10H NPU Power**: Designed specifically for the Raspberry Pi 5 AI Hat+ (Hailo 10H).
+   - Generative Chat (`Llama 3.2 1B`) via `hailo-ollama`
+   - Vision Integration (`Qwen2-VL 2B`) via `hailo-ollama`
+   - Speech-to-Text (`Whisper`) natively accelerated via `hailo-whisper`
+* **Blazing Fast TTS Streaming**: Uses Piper (`en_GB-semaine-medium`). BMO utilizes sentence-chunk buffering, so he begins speaking the first sentence *while* the NPU is still thinking about the rest of the response!
+* **FastAPI Web Server**: Concurrent UI support via optimal multi-worker configurations.
+* **Unified Custom Wake Word**: Uses `openwakeword` for highly accurate "Hey BMO" detection.
+* **Extensible Python Architecture**: Easy modular system bridging hardware, APIs, and AI models.
 * **On-the-Fly Image Generation**: Ask BMO to show you a picture of anything, and it will generate and display the image directly on the screen (both Web and On-Device) using the free Pollinations.ai API!
 * **Fast Unified Routing (Optional Dual-Model)**: By default, all queries are routed through a single optimized model (`qwen2.5-instruct:1.5b`) for blazing-fast performance without NPU module swapping latency. Optionally, you can enable Dual-Model routing to send complex queries to a larger model.
 * **Service Management**: Run the web agent seamlessly in the background using the provided systemd service scripts.
@@ -111,13 +118,13 @@ sudo apt install git ffmpeg -y
 ### 2. Install hailo-ollama (Hailo-10H Support)
 This agent relies on `hailo-ollama` to run the brain on the NPU. Ensure you have installed the Hailo-10H software suite and the `hailo-ollama` server according to Hailo's official documentation.
 
-Once `hailo-ollama` is running, pull the default fast model using the API:
+Once `hailo-ollama` is running, pull the default conversational model using the API:
 ```bash
-curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2.5-instruct:1.5b", "stream": true }'
+curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "llama3.2:1b", "stream": true }'
 ```
-*(Optional: If you plan to enable Dual-Model routing for better reasoning on complex queries, also pull `llama3.2:3b`)*:
+*(Optional: If you plan to enable Vision features, also pull the Qwen2-VL vision model)*:
 ```bash
-curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "llama3.2:3b", "stream": true }'
+curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2-vl-instruct:2b", "stream": true }'
 ```
 
 ### 3. Setup & Installation
@@ -180,20 +187,20 @@ You can modify the models, URLs, and system prompts in core/config.py:
 
 ```python
 LLM_URL = "http://127.0.0.1:8000/api/chat"
-LLM_MODEL = "qwen2.5-instruct:1.5b"
-FAST_LLM_MODEL = "qwen2.5-instruct:1.5b"
-VISION_MODEL = "moondream"
+LLM_MODEL = "llama3.2:1b"
+FAST_LLM_MODEL = "llama3.2:1b"
+VISION_MODEL = "qwen2-vl-instruct:2b"
 ```
 
 ---
 
 ## 🧠 How Dual-Model Routing Works (Optional)
 
-By default, the agent uses a single fast model (`qwen2.5-instruct:1.5b`) to process all requests. This avoids the latency of swapping models in and out of the NPU memory.
+By default, the agent uses a single fast model (`llama3.2:1b`) to process all conversational requests. This avoids the latency of swapping models in and out of the NPU memory.
 
 If you want to handle more complex queries with better reasoning, you can enable Dual-Model routing in `core/config.py`:
 1. Change `LLM_MODEL` to a larger model, e.g., `"llama3.2:3b"`.
-2. Keep `FAST_LLM_MODEL = "qwen2.5-instruct:1.5b"`.
+2. Keep `FAST_LLM_MODEL = "llama3.2:1b"`.
 
 When this is enabled, the `core/llm.py` module analyzes your prompt before sending it to the LLM. 
 - If your prompt is **short** (<= 15 words) and does **not** contain complex keywords (like "explain", "code", "story", "how"), it is routed to the `FAST_LLM_MODEL`.

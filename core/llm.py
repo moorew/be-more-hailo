@@ -113,6 +113,84 @@ class Brain:
     def get_history(self):
         return self.history
 
+    def stream_think(self, user_text: str):
+        """
+        Send text to local LLM and yield full sentences as they are generated.
+        Useful for TTS chunking (speaking while generating).
+        """
+        self.history.append({"role": "user", "content": user_text})
+
+        # Simple heuristic to route to a faster model for simple chat
+        complex_keywords = ["explain", "story", "how", "why", "code", "write", "create", "analyze", "compare", "difference", "history", "long"]
+        words = user_text.lower().split()
+        
+        chosen_model = FAST_LLM_MODEL
+        if len(words) > 15 or any(kw in words for kw in complex_keywords):
+            chosen_model = LLM_MODEL
+
+        payload = {
+            "model": chosen_model,
+            "messages": self.history,
+            "stream": True,
+            "options": {
+                "temperature": 0.4
+            }
+        }
+
+        full_content = ""
+        buffer = ""
+        
+        try:
+            logger.info(f"Stream request to LLM ({chosen_model}): {LLM_URL}")
+            with requests.post(LLM_URL, json=payload, stream=True, timeout=180) as response:
+                if response.status_code == 200:
+                    for line in response.iter_lines():
+                        if line:
+                            try:
+                                data = json.loads(line)
+                                chunk = data.get("message", {}).get("content", "")
+                                if not chunk:
+                                    continue
+                                    
+                                # Replace smart quotes
+                                chunk = chunk.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
+                                
+                                buffer += chunk
+                                full_content += chunk
+                                
+                                # If buffer ends with punctuation or newline, yield it
+                                if any(buffer.endswith(punc) for punc in ['.', '!', '?', '\n']) or "\n\n" in buffer:
+                                    # Ensure BMO spelling before yielding
+                                    out_chunk = re.sub(r'\bBeemo\b', 'BMO', buffer, flags=re.IGNORECASE)
+                                    yield out_chunk
+                                    buffer = ""
+                                    
+                            except json.JSONDecodeError:
+                                pass
+                                
+                    # Yield any remaining buffer
+                    if buffer.strip():
+                        out_chunk = re.sub(r'\bBeemo\b', 'BMO', buffer, flags=re.IGNORECASE)
+                        yield out_chunk
+                        
+                    # Handle json actions at the very end if applicable
+                    json_match = re.search(r'\{.*?\}', full_content, re.DOTALL)
+                    if json_match and "action" in json_match.group(0):
+                        # For advanced tool use we won't yield the json action to TTS
+                        pass 
+                    
+                    self.history.append({"role": "assistant", "content": full_content})
+                        
+                else:
+                    logger.error(f"LLM Stream Error: {response.status_code} - {response.text}")
+                    yield "I'm having trouble thinking."
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Connection Error: {e}")
+            yield "Could not connect to my brain."
+        except Exception as e:
+            logger.error(f"Brain Exception: {e}")
+            yield "I'm having trouble right now."
+
     def set_history(self, new_history):
         # Ensure system prompt is always present and up to date
         if not new_history or new_history[0].get("role") != "system":

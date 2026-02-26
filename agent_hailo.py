@@ -353,8 +353,7 @@ class BotGUI:
                 # 4. LLM
                 self.set_state(BotStates.THINKING, "Thinking...")
 
-                response = self.chat_with_llm(user_text)
-                
+                # Stop the thinking sound loop
                 if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
                     try:
                         self.thinking_audio_process.terminate()
@@ -362,7 +361,38 @@ class BotGUI:
                         pass
                     self.thinking_audio_process = None
 
-                if '{"action": "take_photo"}' in response:
+                self.set_state(BotStates.SPEAKING, "...")
+                
+                full_response = ""
+                image_url = None
+                taking_photo = False
+                
+                for chunk in self.brain.stream_think(user_text):
+                    if not chunk.strip():
+                        continue
+                        
+                    full_response += chunk
+                    
+                    # Handle json actions
+                    if '{"action": "take_photo"}' in chunk:
+                        taking_photo = True
+                        break
+                        
+                    json_match = re.search(r'\{.*?\}', chunk, re.DOTALL)
+                    if json_match:
+                        try:
+                            action_data = json.loads(json_match.group(0))
+                            if action_data.get("action") == "display_image" and action_data.get("image_url"):
+                                image_url = action_data.get("image_url")
+                                chunk = chunk.replace(json_match.group(0), '').strip()
+                        except Exception as e:
+                            print(f"JSON Parse Error: {e}")
+                            
+                    if chunk.strip():
+                        self.set_state(BotStates.SPEAKING, chunk[:20] + "...")
+                        self.speak(chunk)
+
+                if taking_photo:
                     self.set_state(BotStates.CAPTURING, "Taking Photo...")
                     try:
                         # Use libcamera-still to capture a frame
@@ -383,22 +413,17 @@ class BotGUI:
                             except:
                                 pass
                             self.thinking_audio_process = None
+                            
+                        self.set_state(BotStates.SPEAKING, response[:20] + "...")
+                        self.speak(response)
+                        
                     except Exception as e:
                         print(f"Camera Error: {e}")
                         response = "I tried to take a photo, but my camera isn't working."
+                        self.set_state(BotStates.SPEAKING, response[:20] + "...")
+                        self.speak(response)
                 
-                # 5. Speak
-                image_url = None
-                json_match = re.search(r'\{.*?\}', response, re.DOTALL)
-                if json_match:
-                    try:
-                        action_data = json.loads(json_match.group(0))
-                        if action_data.get("action") == "display_image" and action_data.get("image_url"):
-                            image_url = action_data.get("image_url")
-                            response = response.replace(json_match.group(0), '').strip()
-                    except Exception as e:
-                        print(f"JSON Parse Error: {e}")
-
+                # 5. Display Image (if any)
                 if image_url:
                     self.set_state(BotStates.DISPLAY_IMAGE, "Showing Image...")
                     try:
@@ -413,11 +438,6 @@ class BotGUI:
                         self.background_label.config(image=self.current_display_image)
                     except Exception as e:
                         print(f"Image Download Error: {e}")
-                        self.set_state(BotStates.SPEAKING, response[:20] + "...")
-                else:
-                    self.set_state(BotStates.SPEAKING, response[:20] + "...")
-                
-                self.speak(response)
                 
                 self.set_state(BotStates.IDLE, "Ready")
 
