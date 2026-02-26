@@ -3,7 +3,7 @@
 
 <p align="center">
   <img src="bmo_irl.jpg" height="300" alt="BMO On-Device" />
-  <img src="bmo_web.png" height="300" alt="BMO Web Interface" />
+  <img src="bmo-web.png" height="300" alt="BMO Web Interface" />
 </p>
 
 The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) is incredible! It turns a Raspberry Pi into a fully functional, conversational AI agent. Unlike cloud-based assistants, this agent runs **100% locally** on your device. It listens for a wake word, processes speech, "thinks" using a local Large Language Model (LLM), and speaks back with a low-latency neural voice. This fork updates the build to work with the Hailo 10H in the Pi AI HAT 2+
