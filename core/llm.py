@@ -37,7 +37,7 @@ class Brain:
 
         try:
             logger.info(f"Sending request to LLM ({chosen_model}): {LLM_URL}")
-            response = requests.post(LLM_URL, json=payload, timeout=60)
+            response = requests.post(LLM_URL, json=payload, timeout=180)
             
             if response.status_code == 200:
                 data = response.json()
@@ -76,7 +76,7 @@ class Brain:
                                 "stream": False
                             }
                             
-                            summary_response = requests.post(LLM_URL, json=summary_payload, timeout=60)
+                            summary_response = requests.post(LLM_URL, json=summary_payload, timeout=180)
                             if summary_response.status_code == 200:
                                 content = summary_response.json().get("message", {}).get("content", "")
                             else:
