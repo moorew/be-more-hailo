@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,10 +11,11 @@
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #87CEEB; /* Adventure Time Sky Blue */
-            background-image: radial-gradient(#ffffff 15%, transparent 16%), radial-gradient(#ffffff 15%, transparent 16%);
-            background-size: 60px 60px;
-            background-position: 0 0, 30px 30px;
+            background-color: #60a5fa;
+            /* Adventure Time Sky Blue */
+            background-image: radial-gradient(#ffffff 20%, transparent 21%), radial-gradient(#ffffff 20%, transparent 21%);
+            background-size: 80px 80px;
+            background-position: 0 0, 40px 40px;
             color: #111;
             margin: 0;
             padding: 0;
@@ -23,15 +25,16 @@
         }
 
         #header {
-            background-color: #52c8b6; /* BMO Teal */
+            background-color: #54c8b6;
+            /* True BMO Teal */
             color: #111;
-            padding: 15px 20px;
+            padding: 8px 15px;
             display: flex;
             align-items: center;
             font-family: 'Press Start 2P', monospace;
-            font-size: 0.8em;
+            font-size: 0.7em;
             border-bottom: 4px solid #111;
-            box-shadow: 0 4px 0 rgba(0,0,0,0.2);
+            box-shadow: 0 4px 0 rgba(0, 0, 0, 0.2);
             z-index: 10;
         }
 
@@ -54,7 +57,8 @@
         .bmo-body {
             width: 320px;
             height: 450px;
-            background-color: #85c8b9;
+            background-color: #54c8b6;
+            /* True BMO Teal */
             border-radius: 20px;
             padding: 20px;
             box-sizing: border-box;
@@ -62,7 +66,7 @@
             flex-direction: column;
             align-items: center;
             border: 3px solid #111;
-            box-shadow: 10px 10px 0px rgba(0,0,0,0.15), inset -10px -10px 20px rgba(0,0,0,0.1);
+            box-shadow: 10px 10px 0px rgba(0, 0, 0, 0.15), inset -10px -10px 20px rgba(0, 0, 0, 0.1);
             position: relative;
         }
 
@@ -73,7 +77,7 @@
             border: 4px solid #111;
             border-radius: 15px;
             overflow: hidden;
-            box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
+            box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2);
             position: relative;
             display: flex;
             flex-direction: column;
@@ -103,7 +107,7 @@
             font-size: 10px;
             color: #111;
             text-align: center;
-            text-shadow: 1px 1px 0px rgba(255,255,255,0.5);
+            text-shadow: 1px 1px 0px rgba(255, 255, 255, 0.5);
             pointer-events: none;
             line-height: 1.4;
             max-height: 40px;
@@ -138,7 +142,7 @@
             background-color: #2e86c1;
             border: 2px solid #111;
             border-radius: 50%;
-            box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+            box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.2);
         }
 
         .bmo-dpad {
@@ -148,15 +152,47 @@
             display: grid;
             grid-template-columns: 20px 20px 20px;
             grid-template-rows: 20px 20px 20px;
-            filter: drop-shadow(3px 3px 0px rgba(0,0,0,0.2));
+            filter: drop-shadow(3px 3px 0px rgba(0, 0, 0, 0.2));
         }
 
-        .dpad-part { background-color: #f4d03f; border: 2px solid #111; }
-        .dpad-up { grid-column: 2; grid-row: 1; border-bottom: none; border-radius: 4px 4px 0 0; }
-        .dpad-down { grid-column: 2; grid-row: 3; border-top: none; border-radius: 0 0 4px 4px; }
-        .dpad-left { grid-column: 1; grid-row: 2; border-right: none; border-radius: 4px 0 0 4px; }
-        .dpad-right { grid-column: 3; grid-row: 2; border-left: none; border-radius: 0 4px 4px 0; }
-        .dpad-center { grid-column: 2; grid-row: 2; background-color: #f4d03f; }
+        .dpad-part {
+            background-color: #f4d03f;
+            border: 2px solid #111;
+        }
+
+        .dpad-up {
+            grid-column: 2;
+            grid-row: 1;
+            border-bottom: none;
+            border-radius: 4px 4px 0 0;
+        }
+
+        .dpad-down {
+            grid-column: 2;
+            grid-row: 3;
+            border-top: none;
+            border-radius: 0 0 4px 4px;
+        }
+
+        .dpad-left {
+            grid-column: 1;
+            grid-row: 2;
+            border-right: none;
+            border-radius: 4px 0 0 4px;
+        }
+
+        .dpad-right {
+            grid-column: 3;
+            grid-row: 2;
+            border-left: none;
+            border-radius: 0 4px 4px 0;
+        }
+
+        .dpad-center {
+            grid-column: 2;
+            grid-row: 2;
+            background-color: #f4d03f;
+        }
 
         .bmo-action-btns {
             position: absolute;
@@ -170,7 +206,7 @@
             position: absolute;
             top: 0;
             left: 0;
-            filter: drop-shadow(2px 2px 0px rgba(0,0,0,0.2));
+            filter: drop-shadow(2px 2px 0px rgba(0, 0, 0, 0.2));
         }
 
         .btn-green {
@@ -182,7 +218,7 @@
             background-color: #58d68d;
             border: 2px solid #111;
             border-radius: 50%;
-            box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+            box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.2);
         }
 
         .btn-pink {
@@ -194,7 +230,7 @@
             background-color: #f50057;
             border: 2px solid #111;
             border-radius: 50%;
-            box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
+            box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.2);
         }
 
         .bmo-pills {
@@ -211,13 +247,20 @@
             background-color: #2e86c1;
             border: 2px solid #111;
             border-radius: 10px;
-            box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+            box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.2);
         }
 
         /* Subtle breathing animation for idle state */
         @keyframes breathe {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.02); }
+
+            0%,
+            100% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.02);
+            }
         }
 
         .idle-animation {
@@ -228,7 +271,8 @@
             flex: 1;
             display: flex;
             flex-direction: column;
-            background-color: #fff9e6;
+            background-color: #fbf8cc;
+            /* Light pastel background */
         }
 
         #chat-history {
@@ -248,38 +292,45 @@
             border-radius: 15px;
             line-height: 1.4;
             border: 3px solid #111;
-            box-shadow: 4px 4px 0px rgba(0,0,0,0.15);
+            box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.15);
             font-weight: bold;
             color: #111;
         }
 
         .user-message {
             align-self: flex-end;
-            background-color: #00bfff;
+            background-color: #00a4e4;
+            /* Finn Blue */
+            color: white;
+            /* Ensure text is readable */
             border-bottom-right-radius: 0;
+            text-shadow: 1px 1px 0px rgba(0, 0, 0, 0.2);
         }
 
         .bmo-message {
             align-self: flex-start;
-            background-color: #c5e1a5;
+            background-color: #54c8b6;
+            /* BMO Teal */
             border-bottom-left-radius: 0;
         }
 
         .system-message {
             align-self: center;
-            background-color: #ffcc00;
+            background-color: #ff9f1c;
+            /* Jake Orange */
             color: #111;
             font-family: 'Press Start 2P', monospace;
             font-size: 0.7em;
             border-radius: 8px;
             border: 2px solid #111;
-            box-shadow: 2px 2px 0px rgba(0,0,0,0.15);
+            box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.15);
             padding: 8px 12px;
         }
 
         #input-container {
             padding: 20px;
-            background-color: #ffcc00;
+            background-color: #ff9f1c;
+            /* Jake orange */
             border-top: 4px solid #111;
             display: flex;
             gap: 10px;
@@ -296,7 +347,7 @@
             color: #111;
             font-size: 1em;
             font-weight: bold;
-            box-shadow: inset 2px 2px 0px rgba(0,0,0,0.1);
+            box-shadow: inset 2px 2px 0px rgba(0, 0, 0, 0.1);
         }
 
         #user-input:focus {
@@ -313,17 +364,17 @@
             cursor: pointer;
             font-family: 'Press Start 2P', monospace;
             font-size: 0.8em;
-            box-shadow: 4px 4px 0px rgba(0,0,0,0.2);
+            box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.2);
             transition: transform 0.1s, box-shadow 0.1s;
         }
 
         #send-btn:hover {
             background-color: #d81b60;
         }
-        
+
         #send-btn:active {
             transform: translate(2px, 2px);
-            box-shadow: 2px 2px 0px rgba(0,0,0,0.2);
+            box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.2);
         }
 
         #send-btn:disabled {
@@ -347,16 +398,16 @@
             transition: all 0.2s;
             width: 50px;
             height: 50px;
-            box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
+            box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.2);
         }
 
         #mic-btn:hover {
             background-color: #c0392b;
         }
-        
+
         #mic-btn:active {
             transform: translate(2px, 2px);
-            box-shadow: 1px 1px 0px rgba(0,0,0,0.2);
+            box-shadow: 1px 1px 0px rgba(0, 0, 0, 0.2);
         }
 
         #mic-btn.recording {
@@ -365,9 +416,17 @@
         }
 
         @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(231, 76, 60, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+            0% {
+                box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7);
+            }
+
+            70% {
+                box-shadow: 0 0 0 10px rgba(231, 76, 60, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(231, 76, 60, 0);
+            }
         }
 
         /* Loading indicator */
@@ -379,7 +438,7 @@
             border-radius: 15px;
             border-bottom-left-radius: 0;
             border: 3px solid #111;
-            box-shadow: 4px 4px 0px rgba(0,0,0,0.15);
+            box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.15);
             align-self: flex-start;
             width: fit-content;
         }
@@ -392,12 +451,25 @@
             animation: bounce 1.4s infinite ease-in-out both;
         }
 
-        .dot:nth-child(1) { animation-delay: -0.32s; }
-        .dot:nth-child(2) { animation-delay: -0.16s; }
+        .dot:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+
+        .dot:nth-child(2) {
+            animation-delay: -0.16s;
+        }
 
         @keyframes bounce {
-            0%, 80%, 100% { transform: scale(0); }
-            40% { transform: scale(1); }
+
+            0%,
+            80%,
+            100% {
+                transform: scale(0);
+            }
+
+            40% {
+                transform: scale(1);
+            }
         }
 
         /* Modal Styles */
@@ -409,7 +481,7 @@
             top: 0;
             width: 100%;
             height: 100%;
-            background-color: rgba(0,0,0,0.7);
+            background-color: rgba(0, 0, 0, 0.7);
             justify-content: center;
             align-items: center;
         }
@@ -420,7 +492,7 @@
             border-radius: 15px;
             width: 350px;
             border: 4px solid #111;
-            box-shadow: 8px 8px 0px rgba(0,0,0,0.3);
+            box-shadow: 8px 8px 0px rgba(0, 0, 0, 0.3);
             color: #111;
         }
 
@@ -429,7 +501,7 @@
             font-size: 1em;
             margin-bottom: 15px;
             color: #111;
-            text-shadow: 1px 1px 0px rgba(255,255,255,0.5);
+            text-shadow: 1px 1px 0px rgba(255, 255, 255, 0.5);
         }
 
         .modal-input {
@@ -442,7 +514,7 @@
             color: #111;
             font-weight: bold;
             box-sizing: border-box;
-            box-shadow: inset 2px 2px 0px rgba(0,0,0,0.1);
+            box-shadow: inset 2px 2px 0px rgba(0, 0, 0, 0.1);
         }
 
         .modal-buttons {
@@ -458,13 +530,13 @@
             cursor: pointer;
             font-family: 'Press Start 2P', monospace;
             font-size: 0.7em;
-            box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
+            box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.2);
             transition: transform 0.1s, box-shadow 0.1s;
         }
-        
+
         .btn:active {
             transform: translate(2px, 2px);
-            box-shadow: 1px 1px 0px rgba(0,0,0,0.2);
+            box-shadow: 1px 1px 0px rgba(0, 0, 0, 0.2);
         }
 
         .btn-primary {
@@ -481,12 +553,12 @@
         @media (max-width: 768px) {
             #header {
                 flex-direction: column;
-                gap: 10px;
+                gap: 5px;
                 padding: 10px;
-                font-size: 0.8em;
+                font-size: 0.7em;
             }
 
-            #header > div {
+            #header>div {
                 width: 100%;
                 justify-content: center !important;
                 flex-wrap: wrap;
@@ -506,7 +578,8 @@
             .bmo-body {
                 transform: scale(0.8);
                 transform-origin: top center;
-                margin-bottom: -90px; /* Compensate for scale */
+                margin-bottom: -90px;
+                /* Compensate for scale */
             }
 
             #chat-container {
@@ -520,14 +593,17 @@
         }
     </style>
 </head>
+
 <body>
     <!-- Pronunciation Modal -->
     <div id="pronunciation-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">Fix Pronunciation</div>
-            <p style="font-size: 0.9em; color: #333; margin-bottom: 15px; font-weight: bold;">Teach BMO how to say a word correctly.</p>
+            <p style="font-size: 0.9em; color: #333; margin-bottom: 15px; font-weight: bold;">Teach BMO how to say a
+                word correctly.</p>
             <input type="text" id="pronounce-word" class="modal-input" placeholder="Word (e.g., poutine)">
-            <input type="text" id="pronounce-phonetic" class="modal-input" placeholder="Phonetic Spelling (e.g., poo-teen)">
+            <input type="text" id="pronounce-phonetic" class="modal-input"
+                placeholder="Phonetic Spelling (e.g., poo-teen)">
             <div class="modal-buttons">
                 <button class="btn btn-secondary" onclick="closePronunciationModal()">Cancel</button>
                 <button class="btn btn-primary" onclick="savePronunciation()">Save</button>
@@ -539,7 +615,8 @@
     <div id="debug-modal" class="modal">
         <div class="modal-content" style="max-width: 600px; width: 90%;">
             <div class="modal-header">BMO Diagnostics</div>
-            <div id="debug-content" style="font-family: monospace; font-size: 0.8em; background: #111; color: #0f0; padding: 15px; border-radius: 8px; height: 300px; overflow-y: auto; margin-bottom: 15px; text-align: left; white-space: pre-wrap;">
+            <div id="debug-content"
+                style="font-family: monospace; font-size: 0.8em; background: #111; color: #0f0; padding: 15px; border-radius: 8px; height: 300px; overflow-y: auto; margin-bottom: 15px; text-align: left; white-space: pre-wrap;">
                 Loading diagnostics...
             </div>
             <div class="modal-buttons">
@@ -553,24 +630,32 @@
         <div style="flex: 1; text-align: center; text-shadow: 2px 2px 0px rgba(255,255,255,0.5);">
             🎮 BMO is Online! 🎮
         </div>
-        <div style="flex: 1; display: flex; justify-content: flex-end; align-items: center; gap: 10px; font-size: 0.8em; font-weight: normal; flex-wrap: wrap;">
-            <button class="btn btn-secondary" onclick="openDebugModal()">🛠️ Debug</button>
-            <button class="btn btn-secondary" onclick="openPronunciationModal()">🗣️ Fix Pronunciation</button>
-            <div id="hailo-status" style="display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,0.5); padding: 6px 10px; border-radius: 12px; border: 2px solid #111; box-shadow: 2px 2px 0px rgba(0,0,0,0.1);">
-                <div id="status-dot" style="width: 8px; height: 8px; border-radius: 50%; background-color: gray; transition: all 0.3s; border: 1px solid #111;"></div>
+        <div
+            style="flex: 1; display: flex; justify-content: flex-end; align-items: center; gap: 5px; font-size: 0.8em; font-weight: normal; flex-wrap: wrap;">
+            <button class="btn btn-secondary" onclick="openDebugModal()" style="padding: 4px 8px; font-size: 0.8em;">🛠️
+                Debug</button>
+            <button class="btn btn-secondary" onclick="openPronunciationModal()"
+                style="padding: 4px 8px; font-size: 0.8em;">🗣️ Fix Pronunciation</button>
+            <div id="hailo-status"
+                style="display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,0.5); padding: 4px 8px; border-radius: 8px; border: 2px solid #111; box-shadow: 2px 2px 0px rgba(0,0,0,0.1);">
+                <div id="status-dot"
+                    style="width: 6px; height: 6px; border-radius: 50%; background-color: gray; transition: all 0.3s; border: 1px solid #111;">
+                </div>
                 <span id="status-text">LLM: Checking...</span>
             </div>
-            <label for="hands-free-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,0.5); padding: 6px 10px; border-radius: 12px; border: 2px solid #111; box-shadow: 2px 2px 0px rgba(0,0,0,0.1);">
-                <input type="checkbox" id="hands-free-toggle" style="cursor: pointer;">
+            <label for="hands-free-toggle"
+                style="cursor: pointer; display: flex; align-items: center; gap: 3px; background: rgba(255,255,255,0.5); padding: 4px 8px; border-radius: 8px; border: 2px solid #111; box-shadow: 2px 2px 0px rgba(0,0,0,0.1);">
+                <input type="checkbox" id="hands-free-toggle" style="cursor: pointer; margin: 0;">
                 Hands-Free
             </label>
-            <label for="audio-toggle" style="cursor: pointer; display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,0.5); padding: 6px 10px; border-radius: 12px; border: 2px solid #111; box-shadow: 2px 2px 0px rgba(0,0,0,0.1);">
-                <input type="checkbox" id="audio-toggle" style="cursor: pointer;">
+            <label for="audio-toggle"
+                style="cursor: pointer; display: flex; align-items: center; gap: 3px; background: rgba(255,255,255,0.5); padding: 4px 8px; border-radius: 8px; border: 2px solid #111; box-shadow: 2px 2px 0px rgba(0,0,0,0.1);">
+                <input type="checkbox" id="audio-toggle" style="cursor: pointer; margin: 0;">
                 Pi Audio
             </label>
         </div>
     </div>
-    
+
     <div id="main-container">
         <!-- Hidden elements for webcam capture -->
         <video id="webcam" autoplay playsinline style="display:none;"></video>
@@ -580,7 +665,8 @@
             <div class="bmo-body">
                 <div class="bmo-screen-container">
                     <img id="bmo-face" src="" alt="BMO Face">
-                    <img id="bmo-display-image" src="" alt="Displayed Image" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; z-index:10; background-color:#c4d4b4; border-radius:20px;">
+                    <img id="bmo-display-image" src="" alt="Displayed Image"
+                        style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; z-index:10; background-color:#c4d4b4; border-radius:20px;">
                     <div id="bmo-transcript"></div>
                 </div>
                 <div class="bmo-disk-drive"></div>
@@ -596,7 +682,8 @@
                     <div class="bmo-action-btns">
                         <div class="btn-triangle">
                             <svg width="30" height="30" viewBox="0 0 30 30">
-                                <polygon points="15,2 28,28 2,28" fill="#5dade2" stroke="#111" stroke-width="2" stroke-linejoin="round"/>
+                                <polygon points="15,2 28,28 2,28" fill="#5dade2" stroke="#111" stroke-width="2"
+                                    stroke-linejoin="round" />
                             </svg>
                         </div>
                         <div class="btn-green"></div>
@@ -609,12 +696,12 @@
                 </div>
             </div>
         </div>
-        
+
         <div id="chat-container">
             <div id="chat-history">
                 <div class="message system-message">System initialized. Ready to chat.</div>
             </div>
-            
+
             <div id="input-container">
                 <button id="mic-btn" title="Click to talk">🎤</button>
                 <input type="text" id="user-input" placeholder="Type a message to BMO..." autocomplete="off">
@@ -710,7 +797,7 @@
 
         function initHandsFreeMode() {
             const handsFreeToggle = document.getElementById('hands-free-toggle');
-            
+
             handsFreeToggle.addEventListener('change', async (e) => {
                 if (e.target.checked) {
                     userInput.placeholder = "Hands-Free Mode: Say 'Hey Beemo'...";
@@ -729,7 +816,7 @@
                 // Connect to WebSocket
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 wakeWordSocket = new WebSocket(`${protocol}//${window.location.host}/api/wakeword`);
-                
+
                 wakeWordSocket.onopen = () => {
                     console.log("Wake Word WebSocket connected.");
                 };
@@ -740,7 +827,7 @@
                         console.log("Wake word detected by server!");
                         // Stop listening for wake word temporarily
                         stopWakeWordListener();
-                        
+
                         // Start recording the actual command
                         startRecording();
                     }
@@ -753,21 +840,21 @@
 
                 // Request microphone access
                 mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                
+
                 // Create AudioContext
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
                 const source = audioContext.createMediaStreamSource(mediaStream);
-                
+
                 // Create a ScriptProcessorNode to capture raw PCM data
                 // 4096 buffer size is a good balance between latency and performance
                 processor = audioContext.createScriptProcessor(4096, 1, 1);
-                
+
                 processor.onaudioprocess = (e) => {
                     if (!wakeWordSocket || wakeWordSocket.readyState !== WebSocket.OPEN) return;
-                    
+
                     // Get the raw float32 audio data from the microphone
                     const inputData = e.inputBuffer.getChannelData(0);
-                    
+
                     // Convert Float32 to Int16 (which openwakeword expects)
                     const int16Data = new Int16Array(inputData.length);
                     for (let i = 0; i < inputData.length; i++) {
@@ -776,15 +863,15 @@
                         // Convert to 16-bit integer
                         int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
                     }
-                    
+
                     // Send the binary chunk to the server
                     wakeWordSocket.send(int16Data.buffer);
                 };
-                
+
                 // Connect the nodes
                 source.connect(processor);
                 processor.connect(audioContext.destination); // Required for the processor to run
-                
+
             } catch (err) {
                 console.error("Error starting wake word listener:", err);
                 document.getElementById('hands-free-toggle').checked = false;
@@ -819,7 +906,7 @@
 
         async function startRecording() {
             if (isRecording) return;
-            
+
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
@@ -832,7 +919,7 @@
                 analyser.fftSize = 512;
                 vadSource.connect(analyser);
                 const dataArray = new Uint8Array(analyser.frequencyBinCount);
-                
+
                 let silenceStart = Date.now();
                 let hasSpoken = false;
 
@@ -876,7 +963,7 @@
 
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                     await processAudio(audioBlob);
-                    
+
                     // Stop all tracks to release microphone
                     stream.getTracks().forEach(track => track.stop());
                 };
@@ -901,10 +988,10 @@
 
         function startThinkingSound() {
             if (thinkingSoundInterval) clearInterval(thinkingSoundInterval);
-            
+
             // Play immediately
             currentThinkingSound = playRandomSound('thinking_sounds');
-            
+
             // We no longer loop the thinking sound to avoid audio clashes
             // It will just play once at the start of the request
         }
@@ -923,13 +1010,13 @@
 
         function stopRecording() {
             if (!isRecording || !mediaRecorder) return;
-            
+
             mediaRecorder.stop();
             isRecording = false;
             micBtn.classList.remove('recording');
             userInput.placeholder = "Processing audio...";
             setFaceState('thinking');
-            
+
             // Play ack sound as soon as thinking starts
             const ackAudio = playRandomSound('ack_sounds');
             if (ackAudio) {
@@ -951,14 +1038,14 @@
                 userInput.disabled = true;
                 sendBtn.disabled = true;
                 micBtn.disabled = true;
-                
+
                 const response = await fetch('/api/transcribe', {
                     method: 'POST',
                     body: formData
                 });
 
                 const data = await response.json();
-                
+
                 if (data.text && data.text.trim().length > 0) {
                     userInput.value = data.text;
                     sendMessage(true); // Automatically send the transcribed text, skip ack sound since it already played
@@ -1039,11 +1126,11 @@
         function playRandomSound(category, loop = false) {
             const sounds = soundFiles[category];
             if (!sounds || sounds.length === 0) return null;
-            
+
             const randomSound = sounds[Math.floor(Math.random() * sounds.length)];
             const audio = new Audio(randomSound);
             audio.loop = loop;
-            
+
             // Only play if hardware audio is NOT toggled, or if it's a UI sound we want to play anyway.
             // We'll play UI sounds in the browser regardless of the TTS toggle, so the user gets feedback.
             audio.play().catch(e => console.log("Audio play blocked by browser:", e));
@@ -1065,7 +1152,7 @@
 
             bmoFace.style.display = 'block';
             let frameIndex = 0;
-            
+
             // Show first frame immediately
             bmoFace.src = images[0];
 
@@ -1136,50 +1223,50 @@
         async function takePhotoAndSend(originalText) {
             // Hide any displayed image
             document.getElementById('bmo-display-image').style.display = 'none';
-            
+
             setFaceState('capturing');
             addMessage("Taking a photo...", 'system');
-            
+
             try {
                 const video = document.getElementById('webcam');
                 const canvas = document.getElementById('canvas');
-                
+
                 // Request camera access
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
                 video.srcObject = stream;
-                
+
                 // Wait for video to be ready
                 await new Promise((resolve) => {
                     video.onloadedmetadata = () => {
                         resolve();
                     };
                 });
-                
+
                 // Give the camera a moment to adjust exposure
                 await new Promise(r => setTimeout(r, 500));
-                
+
                 // Set canvas dimensions to match video
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
-                
+
                 // Draw frame to canvas
                 const context = canvas.getContext('2d');
                 context.drawImage(video, 0, 0, canvas.width, canvas.height);
-                
+
                 // Get base64 image
                 const imageData = canvas.toDataURL('image/jpeg', 0.8);
-                
+
                 // Stop camera tracks
                 stream.getTracks().forEach(track => track.stop());
-                
+
                 // Show the image in chat
                 const imgHtml = `<img src="${imageData}" style="max-width: 100%; border-radius: 10px; margin-top: 10px;">`;
                 addMessage(`Here is what I see:<br>${imgHtml}`, 'user', true);
-                
+
                 // Send to backend
                 setFaceState('thinking');
                 showTypingIndicator();
-                
+
                 // Play ack sound, then thinking sound
                 const ackAudio = playRandomSound('ack_sounds');
                 if (ackAudio) {
@@ -1204,17 +1291,17 @@
                         image: imageData
                     })
                 });
-                
+
                 const data = await response.json();
                 removeTypingIndicator();
-                
+
                 if (data.error) {
                     addMessage(`Error: ${data.error}`, 'system');
                     setFaceState('error');
                 } else {
                     let responseText = data.response;
                     let imageUrl = null;
-                    
+
                     // Check for display_image action
                     const jsonMatch = responseText.match(/\{.*?\}/s);
                     if (jsonMatch) {
@@ -1234,7 +1321,7 @@
                     updateTranscript(responseText);
                     conversationHistory = data.history;
                     setFaceState('speaking');
-                    
+
                     if (imageUrl) {
                         const displayImg = document.getElementById('bmo-display-image');
                         displayImg.src = imageUrl;
@@ -1244,7 +1331,7 @@
                     if (currentAudio) {
                         currentAudio.pause();
                     }
-                    
+
                     if (data.audio_url && !audioToggle.checked) {
                         currentAudio = new Audio(data.audio_url);
                         currentAudio.onended = () => {
@@ -1274,7 +1361,7 @@
                         }, 3000);
                     }
                 }
-                
+
             } catch (err) {
                 console.error("Camera error:", err);
                 addMessage("Could not access the camera. Make sure you are using HTTPS or localhost.", 'system');
@@ -1299,7 +1386,7 @@
             addMessage(text, 'user');
             showTypingIndicator();
             setFaceState('thinking');
-            
+
             if (!skipAckSound) {
                 // Play ack sound, then thinking sound
                 const ackAudio = playRandomSound('ack_sounds');
@@ -1345,7 +1432,7 @@
                 } else {
                     let responseText = data.response;
                     let imageUrl = null;
-                    
+
                     // Check for display_image action
                     const jsonMatch = responseText.match(/\{.*?\}/s);
                     if (jsonMatch) {
@@ -1364,10 +1451,10 @@
                     addMessage(responseText, 'bmo');
                     updateTranscript(responseText);
                     conversationHistory = data.history;
-                    
+
                     // Handle Audio and Speaking Animation
                     setFaceState('speaking');
-                    
+
                     if (imageUrl) {
                         const displayImg = document.getElementById('bmo-display-image');
                         displayImg.src = imageUrl;
@@ -1444,7 +1531,7 @@
         }
 
         // Close modal if clicking outside of it
-        window.onclick = function(event) {
+        window.onclick = function (event) {
             const pModal = document.getElementById('pronunciation-modal');
             const dModal = document.getElementById('debug-modal');
             if (event.target == pModal) {
@@ -1468,7 +1555,7 @@
         async function refreshDebugInfo() {
             const content = document.getElementById('debug-content');
             content.innerHTML = 'Fetching diagnostics...';
-            
+
             try {
                 const response = await fetch('/api/debug');
                 if (response.ok) {
@@ -1476,22 +1563,22 @@
                     let html = `=== BMO Diagnostics ===\n\n`;
                     html += `Time: ${new Date().toISOString()}\n`;
                     html += `Status: ${data.status}\n\n`;
-                    
+
                     html += `--- Hailo NPU ---\n`;
                     html += `Status: ${data.hailo.status}\n`;
                     if (data.hailo.error) html += `Error: ${data.hailo.error}\n`;
-                    
+
                     html += `\n--- System ---\n`;
                     html += `CPU Usage: ${data.system.cpu_percent}%\n`;
                     html += `Memory: ${data.system.memory_percent}%\n`;
-                    
+
                     html += `\n--- Recent Logs ---\n`;
                     if (data.logs && data.logs.length > 0) {
                         html += data.logs.join('\n');
                     } else {
                         html += `No recent errors.`;
                     }
-                    
+
                     content.innerHTML = html;
                 } else {
                     content.innerHTML = `Error fetching diagnostics: ${response.statusText}`;
@@ -1535,4 +1622,5 @@
         init();
     </script>
 </body>
+
 </html>
