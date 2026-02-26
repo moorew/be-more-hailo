@@ -25,7 +25,7 @@ The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) i
 
 Because of the new modular design, the project can be run in two different ways depending on your needs:
 
-### 1. On-Device Mode (gent_hailo.py)
+### 1. On-Device Mode (`agent_hailo.py`)
 This is the traditional "robot" mode. You plug a screen, microphone, and speaker directly into the Raspberry Pi.
 - **Input**: Uses sounddevice and openwakeword to constantly listen for the wake word ("Hey BMO") via the physical microphone.
 - **Processing**: Uses the shared core/ modules to transcribe audio, query the LLM, and generate speech.
@@ -202,7 +202,7 @@ This software is a generic framework. You can give it a new personality by repla
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Credits
-The BMO project is 100% the brainchild of @brenpoly. They did the hard work in their original project, I just vibe-coded some updates for new hardware. Nothing would have been possible without their initual hard work. Thank you for making this, and for sharing it with the world.
+The BMO project is 100% the brainchild of @brenpoly. They did the hard work in their original project, I just vibe-coded some updates for new hardware. Nothing would have been possible without their inital hard work. Thank you for making this, and for sharing it with the world.
 
 ## ⚖️ Legal Disclaimer (just in case!)
 **"BMO"** and **"Adventure Time"** are trademarks of **Cartoon Network** (Warner Bros. Discovery).
