@@ -6,7 +6,7 @@
   <img src="bmo_web.png" width="45%" alt="BMO Web Interface" />
 </p>
 
-The original project is incredible! It turns a Raspberry Pi into a fully functional, conversational AI agent. Unlike cloud-based assistants, this agent runs **100% locally** on your device. It listens for a wake word, processes speech, "thinks" using a local Large Language Model (LLM), and speaks back with a low-latency neural voice. This fork updates the build to work with the Hailo 10H in the Pi AI HAT 2+
+The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) is incredible! It turns a Raspberry Pi into a fully functional, conversational AI agent. Unlike cloud-based assistants, this agent runs **100% locally** on your device. It listens for a wake word, processes speech, "thinks" using a local Large Language Model (LLM), and speaks back with a low-latency neural voice. This fork updates the build to work with the Hailo 10H in the Pi AI HAT 2+
 
 **Major Upgrade:** This fork has been completely revamped to support the **Hailo-10H NPU** for lightning-fast local AI inference, introduces a **headless web service** alongside the original on-device GUI, and features a unified "core" architecture!
 
@@ -18,7 +18,7 @@ The original project is incredible! It turns a Raspberry Pi into a fully functio
   * **Web Version (web_app.py)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
 * **Unified core Architecture**: Both the on-device GUI and the web app share the exact same brain! The logic for LLMs, Text-to-Speech (TTS), and Speech-to-Text (STT) has been extracted into a shared core/ module. Any improvements made to core/ instantly benefit both interfaces.
 * **On-the-Fly Image Generation**: Ask BMO to show you a picture of anything, and it will generate and display the image directly on the screen (both Web and On-Device) using the free Pollinations.ai API!
-* **Fast Unified Routing**: All queries are routed through a single optimized model (`qwen2.5-instruct:1.5b`) to provide blazing fast performance on the Raspberry Pi without NPU module swapping latency!
+* **Fast Unified Routing (Optional Dual-Model)**: By default, all queries are routed through a single optimized model (`qwen2.5-instruct:1.5b`) for blazing-fast performance without NPU module swapping latency. Optionally, you can enable Dual-Model routing to send complex queries to a larger model.
 * **Service Management**: Run the web agent seamlessly in the background using the provided systemd service scripts.
 
 ## 🧠 How It Works: On-Device vs Web
@@ -31,7 +31,7 @@ This is the traditional "robot" mode. You plug a screen, microphone, and speaker
 - **Processing**: Uses the shared core/ modules to transcribe audio, query the LLM, and generate speech.
 - **Output**: Plays audio directly through the Pi's speakers via ALSA/sounddevice and updates the Tkinter GUI with animated faces.
 
-### 2. Web Mode (web_app.py)
+### 2. Web Mode (`web_app.py`)
 This is the "headless" mode. The Pi sits on your network without needing a screen or microphone attached.
 - **Input**: You open the web interface on your phone or PC. You hold a button to record audio, which is sent to the Pi via WebSockets.
 - **Processing**: Uses the **exact same** core/ modules to transcribe the audio, query the LLM, and generate speech.
@@ -41,7 +41,19 @@ This is the "headless" mode. The Pi sits on your network without needing a scree
 
 ## 🌐 Secure Remote Access with Tailscale
 
-To access BMO's web interface or SSH into the Pi from anywhere in the world, without the security risks of opening ports on your router, I recommend using **[Tailscale](https://tailscale.com/)**. Tailscale creates a secure, zero-config private mesh network (VPN) between your devices. Once installed on the Raspberry Pi and your personal devices, you can securely access the web UI by simply navigating to your Pi's Tailscale IP or MagicDNS hostname (e.g., `https://bmo.your-tailnet.ts.net:8080`) from your phone, tablet, or laptop, no matter where you are. It is free to use!
+To access BMO's web interface securely from anywhere, and **vital for using the microphone in modern web browsers**, I recommend using **[Tailscale](https://tailscale.com/)**. 
+
+**Why Tailscale for the Web Interface?**
+Modern web browsers (Chrome, Safari, iOS, Android) block access to the microphone unless the website is served over a secure HTTPS (SSL) connection. By default, running the Pi on your local network uses standard HTTP, which means the browser won't let BMO hear you over the web interface.
+
+Tailscale solves this by providing a secure VPN and automatic SSL routing for your devices:
+1. Install Tailscale on your Raspberry Pi and the device you're browsing from.
+2. Enable [Tailscale HTTPS Certificates](https://tailscale.com/kb/1153/enabling-https/) in your Tailscale admin console.
+3. On your Pi, run the following command to securely proxy to your web app via HTTPS:
+   ```bash
+   tailscale serve --bg --https=443 localhost:8080
+   ```
+4. Now you can securely access the web UI with full microphone support by navigating to your Pi's Tailscale hostname (e.g., `https://bmo.your-tailnet.ts.net`) from anywhere in the world.
 
 _Disclaimer: I work for Tailscale, but it's still great!_
 
@@ -57,7 +69,7 @@ _Disclaimer: I work for Tailscale, but it's still great!_
 
 ## 📂 Project Structure
 
-```	ext
+```text
 be-more-agent/
 ├── agent_hailo.py             # The On-Device GUI application
 ├── web_app.py                 # The FastAPI web server application
@@ -90,12 +102,13 @@ sudo apt install git ffmpeg -y
 ### 2. Install hailo-ollama (Hailo-10H Support)
 This agent relies on `hailo-ollama` to run the brain on the NPU. Ensure you have installed the Hailo-10H software suite and the `hailo-ollama` server according to Hailo's official documentation.
 
-Once `hailo-ollama` is running, pull the required models using the API. 
-*(Note: We highly recommend using `llama3.2:3b` for complex queries as it reduces hallucination significantly compared to smaller models. `qwen2.5-instruct:1.5b` handles fast routing!)*
-
+Once `hailo-ollama` is running, pull the default fast model using the API:
+```bash
+curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2.5-instruct:1.5b", "stream": true }'
+```
+*(Optional: If you plan to enable Dual-Model routing for better reasoning on complex queries, also pull `llama3.2:3b`)*:
 ```bash
 curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "llama3.2:3b", "stream": true }'
-curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2.5-instruct:1.5b", "stream": true }'
 ```
 
 ### 3. Setup & Installation
@@ -148,7 +161,7 @@ To have the web agent start automatically when the Pi boots:
 
 ---
 
-## ⚙️ Configuration (core/config.py)
+## ⚙️ Configuration
 
 You can modify the models, URLs, and system prompts in core/config.py:
 
@@ -161,21 +174,27 @@ VISION_MODEL = "moondream"
 
 ---
 
-## 🧠 How Dual-Model Routing Works
+## 🧠 How Dual-Model Routing Works (Optional)
 
-To provide the fastest possible responses, the core/llm.py module analyzes your prompt before sending it to the LLM. 
-- If your prompt is **short** (<= 15 words) and does **not** contain complex keywords (like "explain", "code", "story", "how"), it is routed to the FAST_LLM_MODEL.
-- If your prompt is **long** or requires deep reasoning, it is routed to the primary LLM_MODEL.
+By default, the agent uses a single fast model (`qwen2.5-instruct:1.5b`) to process all requests. This avoids the latency of swapping models in and out of the NPU memory.
 
-This ensures snappy conversational replies while retaining the ability to handle complex tasks!
+If you want to handle more complex queries with better reasoning, you can enable Dual-Model routing in `core/config.py`:
+1. Change `LLM_MODEL` to a larger model, e.g., `"llama3.2:3b"`.
+2. Keep `FAST_LLM_MODEL = "qwen2.5-instruct:1.5b"`.
+
+When this is enabled, the `core/llm.py` module analyzes your prompt before sending it to the LLM. 
+- If your prompt is **short** (<= 15 words) and does **not** contain complex keywords (like "explain", "code", "story", "how"), it is routed to the `FAST_LLM_MODEL`.
+- If your prompt is **long** or requires deep reasoning, it is routed to the primary `LLM_MODEL`.
+
+*Note: Swapping between two models on the Hailo-10H can introduce a few seconds of latency on the first query after a swap.*
 
 ---
 
 ## 🎨 Customizing Your Character
 
 This software is a generic framework. You can give it a new personality by replacing the assets:
-1.  **Faces:** The script looks for PNG sequences in aces/[state]/. It will loop through all images found in the folder.
-2.  **Sounds:** Put multiple .wav files in the sounds/[category]/ folders. The robot will pick one at random each time (e.g., different "thinking" hums or "error" buzzes).
+1.  **Faces:** The script looks for PNG sequences in `faces/[state]/`. It will loop through all images found in the folder.
+2.  **Sounds:** Put multiple .wav files in the `sounds/[category]/` folders. The robot will pick one at random each time (e.g., different "thinking" hums or "error" buzzes).
 
 ---
 
