@@ -6,6 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BMO is Online!</title>
     <link rel="icon" type="image/png" href="/favicon.png">
+
+    <!-- Include Marked.js for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
 
@@ -295,6 +299,43 @@
             box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.15);
             font-weight: bold;
             color: #111;
+        }
+
+        /* Format Markdown inside chat messages */
+        .message p {
+            margin: 0 0 10px 0;
+        }
+
+        .message p:last-child {
+            margin-bottom: 0;
+        }
+
+        .message ul,
+        .message ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+
+        .message li {
+            margin-bottom: 5px;
+        }
+
+        .message pre {
+            background-color: rgba(0, 0, 0, 0.1);
+            padding: 10px;
+            border-radius: 8px;
+            overflow-x: auto;
+            border: 2px solid rgba(0, 0, 0, 0.2);
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+
+        .message code {
+            background-color: rgba(0, 0, 0, 0.1);
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.9em;
         }
 
         .user-message {
@@ -1177,16 +1218,63 @@
             }
         }
 
-        function updateTranscript(text) {
+        let captionInterval = null;
+
+        function updateTranscript(text, speakingDuration = 2000) {
             const transcriptEl = document.getElementById('bmo-transcript');
-            if (text) {
-                // Strip emojis for the transcript display since the font doesn't support them
-                const cleanText = text.replace(/[^\x00-\x7F\xC0-\xFF\u0100-\u017F\u0180-\u024F\u1E00-\u1EFF\u2018-\u201F\u2028-\u202F]/g, '');
-                transcriptEl.textContent = cleanText;
-                transcriptEl.style.display = '-webkit-box';
-            } else {
+
+            // Clear previous interval if running
+            if (captionInterval) {
+                clearInterval(captionInterval);
+                captionInterval = null;
+            }
+
+            if (!text) {
                 transcriptEl.textContent = '';
                 transcriptEl.style.display = 'none';
+                return;
+            }
+
+            transcriptEl.style.display = '-webkit-box';
+
+            // Strip emojis and Markdown characters, keep raw words
+            let cleanText = text.replace(/[^\x00-\x7F\xC0-\xFF\u0100-\u017F\u0180-\u024F\u1E00-\u1EFF\u2018-\u201F\u2028-\u202F]/g, '');
+            // Strip common markdown characters like *, _, #, and `
+            cleanText = cleanText.replace(/[*_#`~>|-]/g, '');
+
+            const words = cleanText.split(/\s+/).filter(w => w.length > 0);
+
+            if (words.length === 0) {
+                transcriptEl.textContent = '';
+                return;
+            }
+
+            // Estimate how long each word takes to say based on the total audio/speaking duration
+            const msPerWord = speakingDuration / words.length;
+            // Group words into 3-word chunks
+            const chunks = [];
+            for (let i = 0; i < words.length; i += 3) {
+                chunks.push(words.slice(i, i + 3).join(' '));
+            }
+
+            let chunkIndex = 0;
+            // The ms interval is the time it takes to say 3 words
+            const intervalTime = msPerWord * 3;
+
+            // Show first chunk instantly
+            transcriptEl.textContent = chunks[0];
+            chunkIndex++;
+
+            if (chunks.length > 1) {
+                captionInterval = setInterval(() => {
+                    if (chunkIndex >= chunks.length) {
+                        clearInterval(captionInterval);
+                        captionInterval = null;
+                        return;
+                    }
+                    transcriptEl.textContent = chunks[chunkIndex];
+                    chunkIndex++;
+                }, intervalTime);
             }
         }
 
@@ -1317,8 +1405,13 @@
                         }
                     }
 
-                    addMessage(responseText, 'bmo');
-                    updateTranscript(responseText);
+                    // Use marked.js to render Markdown into HTML
+                    addMessage(marked.parse(responseText), 'bmo', true);
+
+                    // Start the rolling captions
+                    const estDuration = Math.min(Math.max(responseText.length * 50, 2000), 8000);
+                    updateTranscript(responseText, estDuration); // Pass fallback duration in case no audio plays
+
                     conversationHistory = data.history;
                     setFaceState('speaking');
 
@@ -1334,6 +1427,14 @@
 
                     if (data.audio_url && !audioToggle.checked) {
                         currentAudio = new Audio(data.audio_url);
+
+                        // We need the duration for accurate captions. Audio metadata load gets that.
+                        currentAudio.onloadedmetadata = () => {
+                            const durationMs = currentAudio.duration * 1000;
+                            // Restart the transcript with the exact exact accurate audio length
+                            updateTranscript(responseText, durationMs);
+                        };
+
                         currentAudio.onended = () => {
                             setFaceState('idle');
                             updateTranscript('');
@@ -1448,8 +1549,13 @@
                         }
                     }
 
-                    addMessage(responseText, 'bmo');
-                    updateTranscript(responseText);
+                    // Parse Markdown response with Marked.js
+                    addMessage(marked.parse(responseText), 'bmo', true);
+
+                    // Start the rolling captions
+                    const estDuration = Math.min(Math.max(responseText.length * 50, 2000), 8000);
+                    updateTranscript(responseText, estDuration); // Pass fallback duration in case no audio plays
+
                     conversationHistory = data.history;
 
                     // Handle Audio and Speaking Animation
@@ -1468,6 +1574,13 @@
                     if (data.audio_url && !audioToggle.checked) {
                         // Play audio in browser
                         currentAudio = new Audio(data.audio_url);
+
+                        // Attach metadata listener to set accurate caption timing
+                        currentAudio.onloadedmetadata = () => {
+                            const durationMs = currentAudio.duration * 1000;
+                            updateTranscript(responseText, durationMs);
+                        };
+
                         currentAudio.onended = () => {
                             setFaceState('idle');
                             updateTranscript('');
