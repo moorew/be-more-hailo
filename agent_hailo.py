@@ -60,6 +60,7 @@ class BotStates:
     CAPTURING = "capturing"
     WARMUP = "warmup"
     DISPLAY_IMAGE = "display_image"
+    SCREENSAVER = "screensaver"
 
 class BotGUI:
     BG_WIDTH, BG_HEIGHT = 800, 480 
@@ -76,6 +77,7 @@ class BotGUI:
         self.thinking_sound_active = threading.Event()
         self.tts_active = threading.Event()
         self.current_state = BotStates.WARMUP
+        self.last_state_change = time.time()
         
         # Audio State
         self.current_audio_process = None
@@ -108,6 +110,7 @@ class BotGUI:
         if state != self.current_state:
             self.current_state = state
             self.current_frame = 0
+            self.last_state_change = time.time()
             print(f"[STATE] {state.upper()}: {msg}")
         if msg:
             self.status_label.config(text=msg)
@@ -138,24 +141,56 @@ class BotGUI:
 
     def load_animations(self):
         base = "faces"
+        all_face_paths = []
         for state in [BotStates.IDLE, BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.ERROR]:
             path = os.path.join(base, state)
             self.animations[state] = []
             if os.path.exists(path):
                 files = sorted([f for f in os.listdir(path) if f.lower().endswith('.png')])
                 for f in files:
-                    img = Image.open(os.path.join(path, f)).resize((self.BG_WIDTH, self.BG_HEIGHT))
+                    img_path = os.path.join(path, f)
+                    img = Image.open(img_path).resize((self.BG_WIDTH, self.BG_HEIGHT))
                     self.animations[state].append(ImageTk.PhotoImage(img))
+                    
+        # Load screensaver frames (all images recursively, excluding 'warmup')
+        self.animations[BotStates.SCREENSAVER] = []
+        for root, dirs, files in os.walk(base):
+            if "warmup" in root:
+                continue
+            for f in files:
+                if f.lower().endswith('.png'):
+                    img_path = os.path.join(root, f)
+                    try:
+                        img = Image.open(img_path).resize((self.BG_WIDTH, self.BG_HEIGHT))
+                        self.animations[BotStates.SCREENSAVER].append(ImageTk.PhotoImage(img))
+                    except Exception as e:
+                        print(f"Failed to load screensaver image {f}: {e}")
+        
+        # Shuffle screensaver sequence so it's fresh each run
+        random.shuffle(self.animations[BotStates.SCREENSAVER])
     
     def update_animation(self):
         if self.current_state == BotStates.DISPLAY_IMAGE:
             # Don't animate, just wait
             self.master.after(500, self.update_animation)
             return
-            
+
+        # Check for screensaver trigger
+        if self.current_state == BotStates.IDLE and (time.time() - self.last_state_change) > 60:
+            self.set_state(BotStates.SCREENSAVER, "Screensaver...")
+
+        # If entering listening from screensaver, immediately break out
+        if self.current_state == BotStates.LISTENING and self.current_frame > 0 and 'screensaver' in str(self.animations.get(self.current_state, [])):
+            self.current_frame = 0 # reset cleanly
+
         frames = self.animations.get(self.current_state, []) or self.animations.get(BotStates.IDLE, [])
         if frames:
             self.current_frame = (self.current_frame + 1) % len(frames)
+            
+            # Re-shuffle screensaver when it loops completely
+            if self.current_state == BotStates.SCREENSAVER and self.current_frame == 0:
+                random.shuffle(self.animations[BotStates.SCREENSAVER])
+                
             self.background_label.config(image=frames[self.current_frame])
         
         # Match web UI animation speeds
@@ -166,6 +201,8 @@ class BotGUI:
             speed = 500
         elif self.current_state == BotStates.LISTENING:
             speed = 400
+        elif self.current_state == BotStates.SCREENSAVER:
+            speed = 5000 # 5 seconds per image like old script
 
         self.master.after(speed, self.update_animation)
 
