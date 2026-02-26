@@ -7,6 +7,8 @@ cd "$BASE_DIR"
 # Activate virtual environment if it exists
 if [ -d "venv" ]; then
     source venv/bin/activate
+    # Ensure requirements are up to date
+    pip install -r requirements.txt > /dev/null 2>&1
 fi
 
 # Ensure model is available
