@@ -16,6 +16,7 @@ piper/
 *.onnx
 *.bin
 *.tflite
+*.hef
 
 # Exception: Un-comment the line below if you WANT to share your custom wake word
 # !wakeword.onnx

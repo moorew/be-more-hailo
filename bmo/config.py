@@ -8,6 +8,6 @@ WAKE_WORD_MODEL = "./wakeword.onnx"
 LLM_URL = "http://127.0.0.1:8000/api/chat"
 LLM_MODEL = "llama3.2:1b"
 
-WHISPER_MODEL = "./models/whisper-small.hef"
+WHISPER_MODEL = "./models/Whisper-Base.hef"
 PIPER_CMD = "./piper/piper"
 PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"

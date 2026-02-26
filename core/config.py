@@ -59,7 +59,7 @@ PIPER_CMD = "./piper/piper"
 PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
 
 # STT Settings (Hailo Whisper)
-WHISPER_MODEL = "./models/whisper-small.hef"
+WHISPER_MODEL = "./models/Whisper-Base.hef"
 
 # Audio Settings
 MIC_DEVICE_INDEX = 1

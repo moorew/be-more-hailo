@@ -94,7 +94,7 @@ be-more-agent/
 ├── wakeword.onnx              # OpenWakeWord model (The "Ear")
 ├── requirements.txt           # Python dependencies
 ├── models/                    # Hardware Accelerated NN weights
-│   └── whisper-small.hef      # (Download Manually) - Hailo STT model
+│   └── Whisper-Base.hef       # Hailo STT model
 ├── piper/                     # Piper TTS engine & voice models
 ├── sounds/                    # Sound effects folder
 └── faces/                     # Face images folder
@@ -130,12 +130,9 @@ curl -sSL https://raw.githubusercontent.com/moorew/be-more-hailo/main/setup.sh |
 cd be-more-agent
 ```
 
-> [!CAUTION]
-> **Hailo Whisper Model Required!**
-> Because this fork runs speech recognition entirely on the Hailo 10H NPU, you must manually download the compiled `.hef` model for Whisper.
-> 1. Create a `models/` folder in the project (`mkdir models`)
-> 2. Download `whisper-small.hef` (or `whisper-base.hef`) from the official Hailo Model Zoo.
-> 3. Place the `.hef` file in `be-more-agent/models/` and ensure your `core/config.py` is pointing to it!
+> [!NOTE]
+> **Hailo Whisper Model Automation**
+> Because this fork runs speech recognition entirely on the Hailo 10H NPU, it requires a compiled `.hef` model for Whisper. The `setup.sh` script automatically downloads `Whisper-Base.hef` from the GitHub Releases page of this repository and places it in the `models/` directory for you!
 
 **Manual Setup:**
 If you prefer to configure it manually:

@@ -63,7 +63,8 @@ cd ..
 
 # Make directory for Whisper
 mkdir -p models
-echo -e "${RED}⚠️  IMPORTANT: You must manually download 'whisper-small.hef' from the Hailo Model Zoo and place it in the 'models/' directory!${NC}"
+echo -e "${YELLOW}Downloading Whisper-Base.hef from GitHub Releases...${NC}"
+wget -nc -O models/Whisper-Base.hef https://github.com/moorew/be-more-hailo/releases/latest/download/Whisper-Base.hef
 
 # 6. Install Python Libraries
 echo -e "${YELLOW}[6/7] Installing Python Libraries...${NC}"

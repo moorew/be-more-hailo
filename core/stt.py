@@ -26,7 +26,7 @@ def get_inferencer():
         
         if not os.path.exists(WHISPER_MODEL):
             logger.error(f"Whisper HEF model not found at: {WHISPER_MODEL}")
-            logger.error("Please download whisper-small.hef (or base) and place it in the models directory.")
+            logger.error("Please ensure Whisper-Base.hef is in the models directory.")
             return None
             
         logger.info(f"Loading Hailo Whisper model from {WHISPER_MODEL}...")
