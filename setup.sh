@@ -76,14 +76,19 @@ source venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 
-# Manually install hailo-whisper to bypass strict scipy/torch versions that break on Pi
-if [ ! -d "hailo-whisper" ]; then
-    echo -e "${YELLOW}Cloning hailo-whisper to relax strict dependencies...${NC}"
-    git clone https://github.com/hailocs/hailo-whisper.git
+# Manually extract hailo_whisper to bypass setuptools packaging errors on Pi
+if [ ! -d "hailo_whisper" ]; then
+    echo -e "${YELLOW}Extracting hailo-whisper natively to bypass setuptools...${NC}"
+    git clone https://github.com/hailocs/hailo-whisper.git tmp_whisper
+    mv tmp_whisper/hailo_whisper .
+    
+    # Change == to >= in its requirements so pip can find valid pre-compiled wheels
+    sed -i 's/==/>=/g' tmp_whisper/requirements.txt
+    pip install -r tmp_whisper/requirements.txt
+    
+    # Cleanup
+    rm -rf tmp_whisper
 fi
-# Change == to >= in its requirements so pip can find valid pre-compiled wheels for Python 3.13
-sed -i 's/==/>=/g' hailo-whisper/requirements.txt
-pip install ./hailo-whisper
 
 # 7. Pull AI Models
 echo -e "${YELLOW}[7/7] Checking AI Models...${NC}"
