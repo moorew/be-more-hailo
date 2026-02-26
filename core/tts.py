@@ -47,8 +47,8 @@ def clean_text_for_speech(text: str) -> str:
     text = re.sub(r'\{.*?\}', '', text, flags=re.DOTALL)
     # Remove asterisks used for emphasis or actions (e.g., *beep boop*)
     text = text.replace('*', '')
-    # Remove other common markdown like bold/italics
-    text = re.sub(r'[_~`]', '', text)
+    # Remove other common markdown like bold/italics, headers, and list bullets
+    text = re.sub(r'[_~`#\-]', '', text)
     # Remove URLs
     text = re.sub(r'http[s]?://\S+', '', text)
     # Remove emojis and other symbols (keep ASCII, common punctuation, and accents)
