@@ -20,13 +20,13 @@ The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) i
    - Generative Chat (`Llama 3.2 1B`) via `hailo-ollama`
    - Vision Integration (`Qwen2-VL 2B`) via `hailo-ollama`
    - Speech-to-Text (`Whisper`) natively accelerated via `hailo-whisper`
-* **Blazing Fast TTS Streaming**: Uses Piper (`en_GB-semaine-medium`). BMO utilizes sentence-chunk buffering, so he begins speaking the first sentence *while* the NPU is still thinking about the rest of the response!
+* **Blazing Fast TTS Streaming**: Uses Piper (`en_GB-semaine-medium`). BMO utilizes sentence-chunk buffering, so BMO begins speaking the first sentence *while* the NPU is still thinking about the rest of the response!
 * **FastAPI Web Server**: Concurrent UI support via optimal multi-worker configurations.
 * **Unified Custom Wake Word**: Uses `openwakeword` for highly accurate "Hey BMO" detection.
 * **Extensible Python Architecture**: Easy modular system bridging hardware, APIs, and AI models.
 * **On-the-Fly Image Generation**: Ask BMO to show you a picture of anything, and it will generate and display the image directly on the screen (both Web and On-Device) using the free Pollinations.ai API!
 * **Optional Gemini Integration**: You can securely add a Google Gemini API key to route specific queries to the cloud! Just say "Hey Gemini" or "BMO Gem" to temporarily switch brains. This is great for tasks that require deep reasoning or smart home control!
-* **Fast Unified Routing (Optional Dual-Model)**: By default, all queries are routed through a single optimized model (`qwen2.5-instruct:1.5b`) for blazing-fast performance without NPU module swapping latency. Optionally, you can enable Dual-Model routing to send complex queries to a larger model.
+* **Fast Unified Routing (Optional Dual-Model)**: By default, all queries are routed through a single optimized model (`Llama 3.2 1B`) for blazing-fast performance without NPU module swapping latency. Optionally, you can enable Dual-Model routing to send complex queries to a larger model.
 * **Service Management**: Run the web agent seamlessly in the background using the provided systemd service scripts.
 
 ## 🧠 How It Works: On-Device vs Web
@@ -41,7 +41,7 @@ This is the traditional "robot" mode. You plug a screen, microphone, and speaker
 
 ### 2. Web Mode (`web_app.py`)
 This is the "headless" mode. The Pi sits on your network without needing a screen or microphone attached.
-- **Input**: You open the web interface on your phone or PC. You hold a button to record audio, which is sent to the Pi via WebSockets.
+- **Input**: You open the web interface on your phone or PC. You press or hold a button to record audio, which is sent to the Pi via WebSockets.
 - **Processing**: Uses the **exact same** core/ modules to transcribe the audio, query the LLM, and generate speech.
 - **Output**: The generated audio file and text response are sent back over the WebSocket and played in your browser.
 
