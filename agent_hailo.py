@@ -258,21 +258,26 @@ class BotGUI:
         filename = "input.wav"
         frames = []
         silent_chunks = 0
-        MAX_SILENCE_CHUNKS = 40 # approx 2 seconds of silence
+        has_spoken = False
 
         def callback(indata, frames_count, time, status):
-            nonlocal silent_chunks
+            nonlocal silent_chunks, has_spoken
             vol = np.linalg.norm(indata) * 10 
             frames.append(indata.copy())
             if vol < 50000: # Silence threshold
                 silent_chunks += 1
             else:
                 silent_chunks = 0
+                has_spoken = True
             
         try:
             with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', callback=callback):
-                while silent_chunks < MAX_SILENCE_CHUNKS and not self.stop_event.is_set():
+                while not self.stop_event.is_set():
                     sd.sleep(50)
+                    if not has_spoken and silent_chunks > 100:
+                        break
+                    if has_spoken and silent_chunks > 40:
+                        break
                     if len(frames) > (MIC_SAMPLE_RATE * 10 / 512): # Max 10 seconds approx
                         break 
         except Exception as e:
