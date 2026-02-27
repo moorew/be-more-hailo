@@ -90,7 +90,7 @@ class BotGUI:
         self.background_label = tk.Label(master, bg='black')
         self.background_label.place(x=0, y=0, width=self.BG_WIDTH, height=self.BG_HEIGHT)
         
-        self.status_label = tk.Label(master, text="Initializing...", font=('Arial', 16), fg='white', bg='black')
+        self.status_label = tk.Label(master, text="Initializing...", font=('Courier New', 16, 'bold'), fg='white', bg='black')
         self.status_label.place(relx=0.5, rely=0.9, anchor=tk.S)
 
         self.animations = {}
@@ -182,6 +182,14 @@ class BotGUI:
         # If entering listening from screensaver, immediately break out
         if self.current_state == BotStates.LISTENING and self.current_frame > 0 and 'screensaver' in str(self.animations.get(self.current_state, [])):
             self.current_frame = 0 # reset cleanly
+
+        # Hide text status label during screensaver
+        if self.current_state == BotStates.SCREENSAVER:
+            if self.status_label.winfo_ismapped():
+                self.status_label.place_forget()
+        else:
+            if not self.status_label.winfo_ismapped():
+                self.status_label.place(relx=0.5, rely=0.9, anchor=tk.S)
 
         frames = self.animations.get(self.current_state, []) or self.animations.get(BotStates.IDLE, [])
         if frames:
@@ -341,7 +349,7 @@ class BotGUI:
                 print(f"User Transcribed: {user_text}")
                 
                 if len(user_text) < 2:
-                    self.set_state(BotStates.IDLE, "Unknown Input")
+                    self.set_state(BotStates.IDLE, "Ready")
                     if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
                         try:
                             self.thinking_audio_process.terminate()
