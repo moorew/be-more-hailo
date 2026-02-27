@@ -25,7 +25,6 @@ The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) i
 * **Unified Custom Wake Word**: Uses `openwakeword` for highly accurate "Hey BMO" detection.
 * **Extensible Python Architecture**: Easy modular system bridging hardware, APIs, and AI models.
 * **On-the-Fly Image Generation**: Ask BMO to show you a picture of anything, and it will generate and display the image directly on the screen (both Web and On-Device) using the free Pollinations.ai API!
-* **Optional Gemini Integration**: You can securely add a Google Gemini API key to route specific queries to the cloud! Just say "Hey Gemini" or "BMO Gem" to temporarily switch brains. This is great for tasks that require deep reasoning or smart home control!
 * **Fast Unified Routing (Optional Dual-Model)**: By default, all queries are routed through a single optimized model (`Llama 3.2 1B`) for blazing-fast performance without NPU module swapping latency. Optionally, you can enable Dual-Model routing to send complex queries to a larger model.
 * **Service Management**: Run the web agent seamlessly in the background using the provided systemd service scripts.
 
@@ -191,27 +190,6 @@ LLM_MODEL = "llama3.2:1b"
 FAST_LLM_MODEL = "llama3.2:1b"
 VISION_MODEL = "qwen2-vl-instruct:2b"
 ```
-
-### 🧠 Optional Gemini Cloud Integration
-While BMO is designed to be 100% local, sometimes you might want the power of a giant cloud model for things like **smart home control**, complex coding questions, or deep reasoning. 
-
-You can configure BMO to intercept specific queries and route them to Google's Gemini API instead of your local NPU!
-
-**To enable this feature:**
-1. Create a file named `.env` in the root of your project directory.
-2. Add your Gemini API key like this:
-   ```env
-   GEMINI_API_KEY=your_api_key_here
-   GEMINI_MODEL=gemini-2.5-flash
-   ```
-3. Restart BMO.
-
-Now, whenever you start your sentence with one of these trigger words, BMO will temporarily use Gemini's brain:
-- `"Hey Gemini, turn off the living room lights."`
-- `"BMO Gem, what is the meaning of life?"`
-- `"Gemini,..."`
-
-The conversation history smoothly syncs back and forth, meaning BMO will remember what you talked about with Gemini even when you switch back to local mode!
 
 ---
 
