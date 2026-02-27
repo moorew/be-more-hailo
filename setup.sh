@@ -80,14 +80,12 @@ pip install -r requirements.txt
 if [ ! -d "hailo_whisper" ]; then
     echo -e "${YELLOW}Extracting hailo-whisper natively to bypass setuptools...${NC}"
     git clone https://github.com/hailocs/hailo-whisper.git tmp_whisper
-    mv tmp_whisper/hailo_whisper .
+    # The whole repo acts as the package, so we just rename the cloned root folder
+    mv tmp_whisper hailo_whisper
     
     # Change == to >= in its requirements so pip can find valid pre-compiled wheels
-    sed -i 's/==/>=/g' tmp_whisper/requirements.txt
-    pip install -r tmp_whisper/requirements.txt
-    
-    # Cleanup
-    rm -rf tmp_whisper
+    sed -i 's/==/>=/g' hailo_whisper/requirements.txt
+    pip install -r hailo_whisper/requirements.txt
 fi
 
 # 7. Pull AI Models
