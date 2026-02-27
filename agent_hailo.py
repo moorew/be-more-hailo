@@ -264,7 +264,7 @@ class BotGUI:
             nonlocal silent_chunks
             vol = np.linalg.norm(indata) * 10 
             frames.append(indata.copy())
-            if vol < 50: # Silence threshold
+            if vol < 50000: # Silence threshold
                 silent_chunks += 1
             else:
                 silent_chunks = 0
