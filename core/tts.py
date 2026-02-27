@@ -67,7 +67,7 @@ def play_audio_on_hardware(text: str):
     """Plays audio directly out of the Pi's speakers using Piper and aplay."""
     try:
         clean_text = clean_text_for_speech(text)
-        if not clean_text:
+        if not clean_text or not any(c.isalnum() for c in clean_text):
             return
             
         logger.info(f"Playing audio on hardware: {clean_text[:30]}...")
@@ -82,7 +82,7 @@ def generate_audio_file(text: str, filename: str) -> str:
     """Generates a WAV file using Piper for the browser to play."""
     try:
         clean_text = clean_text_for_speech(text)
-        if not clean_text:
+        if not clean_text or not any(c.isalnum() for c in clean_text):
             return None
             
         logger.info(f"Generating audio file: {filename}")
