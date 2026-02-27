@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Global inferencer to avoid reloading the HEF model for every sentence
 _vdevice = None
 _speech2text = None
-_SHARED_VDEVICE_GROUP_ID = "hailo_shared_vdevice"
+_SHARED_VDEVICE_GROUP_ID = "SHARED"
 
 def get_inferencer():
     global _vdevice, _speech2text
