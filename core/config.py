@@ -10,9 +10,9 @@ load_dotenv()
 # To offload to your Linux server, change this to: "http://blackbox.clevercode.ts.net:11434/api/chat"
 # Make sure Ollama is running on the blackbox server and listening on 0.0.0.0
 LLM_URL = "http://127.0.0.1:8000/api/chat"
-LLM_MODEL = "llama3.2:1b" # Native Hailo model for all queries
-FAST_LLM_MODEL = "llama3.2:1b" # Unify models to prevent NPU swap crashing
-VISION_MODEL = "qwen2-vl-instruct:2b" # Fast, small vision model for Pi
+LLM_MODEL = "llama3.2:3b" # Native Hailo model for all queries
+FAST_LLM_MODEL = "llama3.2:3b" # Unify models to prevent NPU swap crashing
+VISION_MODEL = "moondream:latest" # Fast, small vision model for Pi
 
 # Gemini Settings
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") # Add your Gemini API key to a .env file
