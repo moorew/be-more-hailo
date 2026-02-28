@@ -18,6 +18,44 @@ class Brain:
         """
         self.history.append({"role": "user", "content": user_text})
 
+        lower_text = user_text.lower()
+
+        # Pre-LLM camera check — same logic as stream_think
+        camera_keywords = [
+            "take a photo", "take a picture", "take photo", "take picture",
+            "look at", "what do you see", "what can you see", "use your camera",
+            "photograph", "snap a photo",
+        ]
+        if any(kw in lower_text for kw in camera_keywords):
+            action = '{"action": "take_photo"}'
+            self.history.append({"role": "assistant", "content": action})
+            return action
+
+        # Pre-LLM web search — same logic as stream_think
+        realtime_keywords = [
+            "weather", "forecast", "temperature", "tonight", "tomorrow",
+            "news", "latest", "right now", "score", "stocks", "bitcoin",
+            "crypto", "price of", "happening", "recently", "live",
+        ]
+        question_markers = [
+            "what", "who", "when", "where", "find", "search", "tell me",
+            "look up", "check", "is there", "did", "?",
+        ]
+        has_realtime_kw = any(kw in lower_text for kw in realtime_keywords)
+        has_question = any(q in lower_text for q in question_markers)
+        if has_realtime_kw and has_question:
+            try:
+                search_result = search_web(user_text)
+                if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR") and len(search_result) > 50:
+                    self.history[-1]["content"] = (
+                        f"{user_text}\n\n"
+                        f"[Web search results for context: {search_result}]\n\n"
+                        "Please use the search context above to answer conversationally as BMO. "
+                        "Do not say you cannot access the internet."
+                    )
+            except Exception as e:
+                logger.warning(f"Pre-LLM web search failed: {e}")
+
         # Simple heuristic to route to a faster model for simple chat
         complex_keywords = ["explain", "story", "how", "why", "code", "write", "create", "analyze", "compare", "difference", "history", "long"]
         words = user_text.lower().split()

@@ -14,7 +14,7 @@ import subprocess
 
 # Import our new unified core modules
 from core.llm import Brain
-from core.tts import play_audio_on_hardware, generate_audio_file, add_pronunciation, load_pronunciations
+from core.tts import play_audio_on_hardware, generate_audio_file, add_pronunciation, load_pronunciations, clean_text_for_speech
 from core.stt import transcribe_audio
 from core.config import LLM_URL, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
 
@@ -132,28 +132,35 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
         logger.info("Received image for vision analysis.")
         content = brain.analyze_image(request.image, user_text)
     else:
-        # Get response from LLM
+        # Get response from LLM (includes keyword-triggered search and camera detection)
         content = brain.think(user_text)
     
     # Check if there was an error
     if content.startswith("Error:") or content.startswith("Could not connect") or content.startswith("I'm having trouble"):
         return {"error": content, "history": brain.get_history()}
+
+    # Strip markdown formatting — the model sometimes emits bold/headers/lists
+    # that look like raw code in the chat UI and break TTS.
+    clean_content = clean_text_for_speech(content)
+    if not clean_content:
+        clean_content = content  # fallback to raw if cleaning strips everything
         
     audio_url = None
     
     if play_on_hardware:
         # Play on Pi speakers in the background so we don't block the UI response
-        background_tasks.add_task(play_audio_on_hardware, content)
+        background_tasks.add_task(play_audio_on_hardware, clean_content)
     else:
         # Generate a WAV file for the browser to play
         filename = f"response_{uuid.uuid4().hex[:8]}.wav"
-        audio_url = generate_audio_file(content, filename)
+        audio_url = generate_audio_file(clean_content, filename)
         
     return {
-        "response": content, 
+        "response": clean_content, 
         "history": brain.get_history(),
         "audio_url": audio_url
     }
+
 
 @app.post("/api/transcribe")
 async def transcribe(audio: UploadFile = File(...)):
