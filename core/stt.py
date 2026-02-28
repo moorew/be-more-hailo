@@ -41,7 +41,13 @@ def transcribe_audio(audio_filepath: str) -> str:
         
         # Clean hallucinated whispers from silence
         lowered = output.lower()
-        if lowered in ["[silence]", "(silence)", "you", "thanks for watching!", "[blank_audio]"]:
+        hallucinations = [
+            "[silence]", "(silence)", "you", "thanks for watching!", 
+            "[blank_audio]", "thank you.", "thank you", "thanks."
+        ]
+        
+        # If output is purely punctuation/noise (no letters or numbers) or a known hallucination
+        if lowered in hallucinations or not re.search(r'[a-zA-Z0-9]', lowered):
             return ""
 
         return output
