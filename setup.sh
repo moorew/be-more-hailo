@@ -76,7 +76,17 @@ source venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 
-
+# Manually extract hailo_whisper to bypass setuptools packaging errors on Pi
+if [ ! -d "hailo_whisper" ]; then
+    echo -e "${YELLOW}Extracting hailo-whisper natively to bypass setuptools...${NC}"
+    git clone https://github.com/hailocs/hailo-whisper.git tmp_whisper
+    # The whole repo acts as the package, so we just rename the cloned root folder
+    mv tmp_whisper hailo_whisper
+    
+    # Change == to >= in its requirements so pip can find valid pre-compiled wheels
+    sed -i 's/==/>=/g' hailo_whisper/requirements.txt
+    pip install -r hailo_whisper/requirements.txt
+fi
 
 # 7. Pull AI Models
 echo -e "${YELLOW}[7/8] Checking AI Models...${NC}"

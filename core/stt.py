@@ -1,56 +1,90 @@
-import subprocess
 import logging
 import os
 import re
-from .config import WHISPER_CMD, WHISPER_MODEL
+import soundfile as sf
+import librosa
+import numpy as np
+from .config import WHISPER_MODEL
+
+try:
+    from hailo_whisper import HailoWhisper
+except ImportError:
+    HailoWhisper = None
+    print("WARNING: hailo-whisper is not installed. STT will fail.")
 
 logger = logging.getLogger(__name__)
 
+# Global inferencer to avoid reloading the HEF model for every sentence
+_inferencer = None
+
+def get_inferencer():
+    global _inferencer
+    if _inferencer is None:
+        if HailoWhisper is None:
+            logger.error("hailo-whisper library is missing!")
+            return None
+        
+        if not os.path.exists(WHISPER_MODEL):
+            logger.error(f"Whisper HEF model not found at: {WHISPER_MODEL}")
+            logger.error("Please ensure Whisper-Base.hef is in the models directory.")
+            return None
+            
+        logger.info(f"Loading Hailo Whisper model from {WHISPER_MODEL}...")
+        try:
+            _inferencer = HailoWhisper(WHISPER_MODEL)
+            logger.info("Hailo Whisper model loaded successfully on the NPU.")
+        except Exception as e:
+            logger.error(f"Failed to load Hailo Whisper model: {e}")
+            return None
+            
+    return _inferencer
+
 def transcribe_audio(audio_filepath: str) -> str:
     """
-    Converts any audio file to 16kHz WAV and runs whisper.cpp to transcribe it.
+    Transcribes the audio file using the Hailo-10H NPU via hailo-whisper.
     """
     if not os.path.exists(audio_filepath):
         logger.error(f"Audio file not found: {audio_filepath}")
         return ""
 
-    temp_wav = f"{audio_filepath}_16k.wav"
+    inferencer = get_inferencer()
+    if inferencer is None:
+        return ""
 
     try:
-        # 1. Convert audio to 16kHz mono WAV (required by whisper.cpp)
-        logger.info(f"Converting {audio_filepath} to 16kHz WAV...")
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", audio_filepath, "-ar", "16000", "-ac", "1", temp_wav],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-
-        # 2. Run whisper.cpp
-        logger.info("Running whisper.cpp transcription...")
-        cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", temp_wav, "-nt"]
-
-        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode("utf-8").strip()
-
-        # 3. Clean up output (remove timestamps like [00:00:00.000 --> 00:00:02.000] or [BLANK_AUDIO])
-        output = re.sub(r'\[.*?\]', '', output).strip()
-
-        # Fix common misspellings of BMO
-        output = re.sub(r'\b[Bb]emo\b', 'BMO', output)
-        output = re.sub(r'\b[Bb]eemo\b', 'BMO', output)
-
-        return output
-
-    except subprocess.CalledProcessError as e:
-        logger.error(f"FFmpeg or Whisper process failed: {e}")
-        return ""
-    except Exception as e:
-        logger.error(f"Transcription Error: {e}")
-        return ""
-    finally:
-        # Clean up the temporary 16k wav file
+        logger.info(f"Loading and resampling {audio_filepath} to 16kHz for NPU inference...")
+        # Load and convert to 16kHz mono explicitly using librosa
+        audio_data, _ = librosa.load(audio_filepath, sr=16000, mono=True)
+        
+        # Write back to a clean 16k wav temp file since HailoWhisper transcribe() takes a file path
+        temp_wav = f"{audio_filepath}_16k.wav"
+        sf.write(temp_wav, audio_data, 16000)
+        
+        logger.info("Transcribing audio on the Hailo NPU...")
+        result = inferencer.transcribe(temp_wav)
+        
+        # Clean up temp file
         if os.path.exists(temp_wav):
             try:
                 os.remove(temp_wav)
             except Exception as e:
                 logger.warning(f"Could not remove temp file {temp_wav}: {e}")
+            
+        # Parse the result
+        if isinstance(result, dict) and 'text' in result:
+            output = result['text'].strip()
+        else:
+            output = str(result).strip()
+
+        # Clean up tags or timestamp brackets that may leak
+        output = re.sub(r'\[.*?\]', '', output).strip()
+
+        # Fix capitalization of BMO
+        output = re.sub(r'\b[Bb]emo\b', 'BMO', output)
+        output = re.sub(r'\b[Bb]eemo\b', 'BMO', output)
+
+        return output
+
+    except Exception as e:
+        logger.error(f"Hailo Transcription Error: {e}")
+        return ""
