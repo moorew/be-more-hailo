@@ -402,7 +402,7 @@ class BotGUI:
                             print(f"JSON Parse Error: {e}")
                             
                     if chunk.strip():
-                        self.set_state(BotStates.SPEAKING, chunk[:20] + "...")
+                        self.set_state(BotStates.SPEAKING, "Speaking...")
                         self.speak(chunk)
 
                 if taking_photo:

@@ -65,6 +65,10 @@ SYSTEM_PROMPT = get_system_prompt()
 # TTS Settings
 PIPER_CMD = "./piper/piper"
 PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
+# ALSA output device for hardware audio playback (aplay -D).
+# Use 'plughw:3,0' for the USB speaker on this Pi.
+# To find the correct device, run: aplay -l
+ALSA_DEVICE = os.environ.get("ALSA_DEVICE", "plughw:3,0")
 
 # STT Settings (CPU whisper.cpp)
 WHISPER_CMD = "./whisper.cpp/build/bin/whisper-cli"
