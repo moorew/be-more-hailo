@@ -66,8 +66,9 @@ SYSTEM_PROMPT = get_system_prompt()
 PIPER_CMD = "./piper/piper"
 PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
 
-# STT Settings (Hailo Whisper NPU)
-WHISPER_MODEL = "./models/Whisper-Base.hef"
+# STT Settings (Whisper.cpp)
+WHISPER_CMD = "./whisper.cpp/build/bin/whisper-cli"
+WHISPER_MODEL = "./whisper.cpp/models/ggml-base.en.bin"
 
 # Audio Settings
 MIC_DEVICE_INDEX = 1
