@@ -456,7 +456,16 @@ class BotGUI:
                     if taking_photo:
                         self.set_state(BotStates.CAPTURING, "Taking Photo...")
                         try:
-                            subprocess.run(['libcamera-still', '-o', 'temp.jpg', '--width', '640', '--height', '480', '--nopreview', '-t', '1000'], check=True)
+                            # Try libcamera-still (older) or rpicam-still (newer Pi OS)
+                            cam_cmd = None
+                            for candidate in ['libcamera-still', 'rpicam-still']:
+                                r = subprocess.run(['which', candidate], capture_output=True)
+                                if r.returncode == 0:
+                                    cam_cmd = candidate
+                                    break
+                            if cam_cmd is None:
+                                raise FileNotFoundError("No camera command found (libcamera-still / rpicam-still)")
+                            subprocess.run([cam_cmd, '-o', 'temp.jpg', '--width', '640', '--height', '480', '--nopreview', '-t', '1000'], check=True)
                             import base64
                             with open('temp.jpg', 'rb') as img_file:
                                 b64_string = base64.b64encode(img_file.read()).decode('utf-8')
@@ -471,6 +480,10 @@ class BotGUI:
                                 self.thinking_audio_process = None
                             self.set_state(BotStates.SPEAKING, "Speaking...")
                             self.speak(response)
+                        except FileNotFoundError as e:
+                            print(f"Camera Error: {e}")
+                            self.speak("Hmm, BMO doesn't seem to have a camera connected right now. I can't take a photo!")
+
                         except Exception as e:
                             print(f"Camera Error: {e}")
                             self.speak("I tried to take a photo, but my camera isn't working.")

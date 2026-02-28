@@ -120,6 +120,27 @@ class Brain:
         """
         self.history.append({"role": "user", "content": user_text})
 
+        # Pre-LLM keyword check: if the question likely needs real-time info,
+        # do the web search now rather than relying on the model to emit JSON.
+        realtime_keywords = [
+            "weather", "forecast", "temperature", "today", "tonight", "tomorrow",
+            "current", "news", "latest", "right now", "score", "stocks", "bitcoin",
+            "crypto", "price of", "happening", "recently", "live",
+        ]
+        lower_text = user_text.lower()
+        needs_search = any(kw in lower_text for kw in realtime_keywords)
+        if needs_search:
+            try:
+                search_result = search_web(user_text)
+                if search_result:
+                    # Inject search result as context for the LLM to summarise
+                    self.history.append({
+                        "role": "system",
+                        "content": f"[SEARCH RESULT]: {search_result}\nUse this information to answer the user's question conversationally as BMO."
+                    })
+            except Exception as e:
+                logger.warning(f"Pre-LLM web search failed: {e}")
+
         # Simple heuristic to route to a faster model for simple chat
         complex_keywords = ["explain", "story", "how", "why", "code", "write", "create", "analyze", "compare", "difference", "history", "long"]
         words = user_text.lower().split()
@@ -127,6 +148,7 @@ class Brain:
         chosen_model = FAST_LLM_MODEL
         if len(words) > 15 or any(kw in words for kw in complex_keywords):
             chosen_model = LLM_MODEL
+
 
         payload = {
             "model": chosen_model,
