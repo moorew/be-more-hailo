@@ -306,16 +306,14 @@ class BotGUI:
         """
         After BMO responds, listen briefly for a follow-up question.
         Returns audio filepath if speech was detected, or None if silence.
-        This lets users have a natural conversation without re-saying 'Hey BMO'.
         """
         print("Listening for follow-up...")
         frames = []
         silent_chunks = 0
         has_spoken = False
-        max_chunks = timeout_sec * (MIC_SAMPLE_RATE // 1280)  # ~chunks per second
-        chunk_count = 0
+        deadline = time.time() + timeout_sec
 
-        def callback(indata, frames_count, time, status):
+        def callback(indata, frames_count, time_info, status):
             nonlocal silent_chunks, has_spoken
             vol = np.linalg.norm(indata) * 10
             frames.append(indata.copy())
@@ -326,15 +324,15 @@ class BotGUI:
                 has_spoken = True
 
         try:
-            with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', callback=callback):
+            with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX,
+                                channels=1, dtype='int16', callback=callback):
                 while not self.stop_event.is_set():
-                    sd.sleep(50)
-                    chunk_count += 1
-                    # If user has spoken and gone quiet, record is done
-                    if has_spoken and silent_chunks > 30:
+                    sd.sleep(100)
+                    # If speech detected and gone quiet — done
+                    if has_spoken and silent_chunks > 20:
                         break
-                    # Timeout: no speech detected in the window
-                    if chunk_count > max_chunks * 20 and not has_spoken:
+                    # Hard timeout — no speech at all
+                    if time.time() > deadline and not has_spoken:
                         return None
         except Exception as e:
             print(f"Follow-up listen error: {e}")
@@ -351,6 +349,7 @@ class BotGUI:
             wf.setframerate(MIC_SAMPLE_RATE)
             wf.writeframes(audio_data.tobytes())
         return filename
+
 
     # --- MAIN LOOP ---
     def main_loop(self):
