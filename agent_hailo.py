@@ -305,16 +305,26 @@ class BotGUI:
     def record_followup(self, timeout_sec=8):
         """
         After BMO responds, listen briefly for a follow-up question.
-        Returns audio filepath if speech was detected, or None if silence.
+        Returns audio filepath if speech was detected within timeout_sec, or None.
+
+        Notes:
+        - A 1-second ignore window at the start lets the echo of BMO's own voice
+          die down before we start watching for human speech.
+        - A hard cap (max_deadline) ensures we always exit even if the mic
+          keeps picking up ambient noise and has_spoken stays True.
         """
         print("Listening for follow-up...")
         frames = []
         silent_chunks = 0
         has_spoken = False
-        deadline = time.time() + timeout_sec
+        ignore_until = time.time() + 1.0          # ignore first second (echo die-down)
+        deadline = time.time() + timeout_sec       # give up if no speech by here
+        max_deadline = time.time() + timeout_sec + 8  # hard cap regardless
 
         def callback(indata, frames_count, time_info, status):
             nonlocal silent_chunks, has_spoken
+            if time.time() < ignore_until:
+                return  # still in echo dead-zone — ignore all audio
             vol = np.linalg.norm(indata) * 10
             frames.append(indata.copy())
             if vol < 50000:
@@ -328,11 +338,15 @@ class BotGUI:
                                 channels=1, dtype='int16', callback=callback):
                 while not self.stop_event.is_set():
                     sd.sleep(100)
-                    # If speech detected and gone quiet — done
-                    if has_spoken and silent_chunks > 20:
+                    now = time.time()
+                    # Human speech detected and gone quiet — we have a follow-up
+                    if has_spoken and silent_chunks > 40:
                         break
-                    # Hard timeout — no speech at all
-                    if time.time() > deadline and not has_spoken:
+                    # No speech in the listen window — give up quietly
+                    if now > deadline and not has_spoken:
+                        return None
+                    # Hard cap — always exit (catches lingering echo)
+                    if now > max_deadline:
                         return None
         except Exception as e:
             print(f"Follow-up listen error: {e}")
@@ -349,6 +363,7 @@ class BotGUI:
             wf.setframerate(MIC_SAMPLE_RATE)
             wf.writeframes(audio_data.tobytes())
         return filename
+
 
 
     # --- MAIN LOOP ---
