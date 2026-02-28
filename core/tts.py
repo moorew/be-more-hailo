@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import json
-from .config import PIPER_CMD, PIPER_MODEL
+from .config import PIPER_CMD, PIPER_MODEL, ALSA_DEVICE
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,8 @@ def clean_text_for_speech(text: str) -> str:
     """Removes markdown and special characters that shouldn't be spoken."""
     # Remove JSON blocks
     text = re.sub(r'\{.*?\}', '', text, flags=re.DOTALL)
+    # Replace newlines with spaces to prevent shell line breaks during Piper TTS
+    text = text.replace('\n', ' ').replace('\r', ' ')
     # Remove asterisks used for emphasis or actions (e.g., *beep boop*)
     text = text.replace('*', '')
     # Remove other common markdown like bold/italics, headers, and list bullets
@@ -73,7 +75,7 @@ def play_audio_on_hardware(text: str):
         logger.info(f"Playing audio on hardware: {clean_text[:30]}...")
         # Escape single quotes in text to prevent shell injection
         safe_text = clean_text.replace("'", "'\\''")
-        piper_cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_raw | aplay -r 22050 -f S16_LE -t raw"
+        piper_cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_raw | aplay -D {ALSA_DEVICE} -r 22050 -f S16_LE -t raw"
         subprocess.run(piper_cmd, shell=True, check=True)
     except Exception as e:
         logger.error(f"Hardware TTS Error: {e}")

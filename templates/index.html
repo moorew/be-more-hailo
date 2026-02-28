@@ -797,7 +797,13 @@
             // Try to play greeting sound (might be blocked by browser autoplay policy)
             const greetingAudio = playRandomSound('greeting_sounds');
             if (greetingAudio) {
-                setFaceState('speaking');
+                // We default to idle. Only switch to speaking if audio PLAYS successfully.
+                setFaceState('idle'); 
+                
+                greetingAudio.onplay = () => {
+                    setFaceState('speaking');
+                };
+                
                 greetingAudio.onended = () => {
                     setFaceState('idle');
                 };
@@ -1097,6 +1103,11 @@
                     } else {
                         console.log("No speech detected in audio.");
                     }
+                    
+                    // Crucial fix: Reset state if no speech was detected
+                    setFaceState('idle');
+                    removeTypingIndicator();
+                    
                     // Restart wake word listener if hands-free is on
                     if (document.getElementById('hands-free-toggle').checked) {
                         startWakeWordListener();

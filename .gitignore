@@ -44,3 +44,12 @@ test_audio.wav
 .DS_Store
 Thumbs.db
 ehthumbs.db
+
+# --- Debug / Temp files (created during dev/testing) ---
+test_*.py
+*.log
+payload.json
+pull.json
+setup_remote.sh
+tmp_hailo_whisper/
+whisper.cpp/build/
