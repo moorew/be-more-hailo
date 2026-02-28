@@ -356,7 +356,16 @@ class BotGUI:
             return None
 
         filename = "followup.wav"
-        audio_data = np.concatenate(frames)
+        try:
+            # Filter out any empty arrays from the callback race before concatenating
+            valid_frames = [f for f in frames if f is not None and len(f) > 0]
+            if not valid_frames:
+                return None
+            audio_data = np.concatenate(valid_frames)
+        except Exception as e:
+            print(f"Follow-up audio concat error: {e}")
+            return None
+
         with wave.open(filename, 'w') as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)

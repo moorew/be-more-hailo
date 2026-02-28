@@ -120,24 +120,42 @@ class Brain:
         """
         self.history.append({"role": "user", "content": user_text})
 
+        lower_text = user_text.lower()
+
+        # Pre-LLM camera check: if user asks to take a photo / look at something,
+        # emit the action JSON directly without calling the LLM.
+        # This is more reliable than hoping the small model emits the right JSON.
+        camera_keywords = [
+            "take a photo", "take a picture", "take photo", "take picture",
+            "look at", "what do you see", "what can you see", "use your camera",
+            "photograph", "snap a photo",
+        ]
+        if any(kw in lower_text for kw in camera_keywords):
+            action = '{"action": "take_photo"}'
+            self.history.append({"role": "assistant", "content": action})
+            yield action
+            return
+
         # Pre-LLM keyword check: if the question likely needs real-time info,
         # do the web search now rather than relying on the model to emit JSON.
         realtime_keywords = [
-            "weather", "forecast", "temperature", "today", "tonight", "tomorrow",
-            "current", "news", "latest", "right now", "score", "stocks", "bitcoin",
+            "weather", "forecast", "temperature", "tonight", "tomorrow",
+            "news", "latest", "right now", "score", "stocks", "bitcoin",
             "crypto", "price of", "happening", "recently", "live",
         ]
-        lower_text = user_text.lower()
         needs_search = any(kw in lower_text for kw in realtime_keywords)
         if needs_search:
             try:
                 search_result = search_web(user_text)
                 if search_result:
-                    # Inject search result as context for the LLM to summarise
-                    self.history.append({
-                        "role": "system",
-                        "content": f"[SEARCH RESULT]: {search_result}\nUse this information to answer the user's question conversationally as BMO."
-                    })
+                    # Inline the result into the user message so the model can't ignore it.
+                    # Using role='system' mid-conversation is unreliable with small models.
+                    self.history[-1]["content"] = (
+                        f"{user_text}\n\n"
+                        f"[Web search results for context: {search_result}]\n\n"
+                        "Please use the search context above to answer conversationally as BMO. "
+                        "Do not say you cannot access the internet."
+                    )
             except Exception as e:
                 logger.warning(f"Pre-LLM web search failed: {e}")
 
@@ -148,6 +166,7 @@ class Brain:
         chosen_model = FAST_LLM_MODEL
         if len(words) > 15 or any(kw in words for kw in complex_keywords):
             chosen_model = LLM_MODEL
+
 
 
         payload = {

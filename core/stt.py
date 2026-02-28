@@ -51,11 +51,18 @@ def transcribe_audio(audio_filepath: str) -> str:
             "[blank_audio]", "thank you.", "thank you", "thanks."
         ]
         
+        # Whisper often hallucinates sound descriptions when mic picks up silence or
+        # ambient audio — e.g. "(eerie music)", "(background music)", "[SOUND]".
+        # Reject any output that is entirely inside parentheses or brackets.
+        is_parenthetical = bool(re.match(r'^\s*[\(\[].*[\)\]]\s*$', output.strip()))
+        
         # If output is purely punctuation/noise (no letters or numbers) or a known hallucination
-        if lowered in hallucinations or not re.search(r'[a-zA-Z0-9]', lowered):
+        if is_parenthetical or lowered in hallucinations or not re.search(r'[a-zA-Z0-9]', lowered):
+            logger.info(f"Whisper hallucination filtered: {repr(output)}")
             return ""
 
         return output
+
 
     except subprocess.CalledProcessError as e:
         logger.error(f"FFmpeg or Whisper CPU process failed: {e}")
