@@ -30,10 +30,11 @@ def transcribe_audio(audio_filepath: str) -> str:
         cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", temp_wav, "-nt"]
         logger.info(f"Running whisper.cpp transcription on the CPU... CMD: {' '.join(cmd)}")
         try:
-            output = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode("utf-8").strip()
+            # stderr=DEVNULL: whisper prints verbose debug/timing info to stderr.
+            # We only want the clean transcript from stdout.
+            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode("utf-8").strip()
         except subprocess.CalledProcessError as e:
-            output_err = e.output.decode("utf-8") if e.output else "No output"
-            logger.error(f"Whisper CPU process failed: {e}. Output: {output_err}")
+            logger.error(f"Whisper CPU process failed with exit code {e.returncode}")
             return ""
 
         # 3. Clean up output (remove timestamps like [00:00:00.000 --> 00:00:02.000] or [BLANK_AUDIO])

@@ -302,6 +302,56 @@ class BotGUI:
         print(f"Speaking: {text}")
         play_audio_on_hardware(text)
 
+    def record_followup(self, timeout_sec=8):
+        """
+        After BMO responds, listen briefly for a follow-up question.
+        Returns audio filepath if speech was detected, or None if silence.
+        This lets users have a natural conversation without re-saying 'Hey BMO'.
+        """
+        print("Listening for follow-up...")
+        frames = []
+        silent_chunks = 0
+        has_spoken = False
+        max_chunks = timeout_sec * (MIC_SAMPLE_RATE // 1280)  # ~chunks per second
+        chunk_count = 0
+
+        def callback(indata, frames_count, time, status):
+            nonlocal silent_chunks, has_spoken
+            vol = np.linalg.norm(indata) * 10
+            frames.append(indata.copy())
+            if vol < 50000:
+                silent_chunks += 1
+            else:
+                silent_chunks = 0
+                has_spoken = True
+
+        try:
+            with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', callback=callback):
+                while not self.stop_event.is_set():
+                    sd.sleep(50)
+                    chunk_count += 1
+                    # If user has spoken and gone quiet, record is done
+                    if has_spoken and silent_chunks > 30:
+                        break
+                    # Timeout: no speech detected in the window
+                    if chunk_count > max_chunks * 20 and not has_spoken:
+                        return None
+        except Exception as e:
+            print(f"Follow-up listen error: {e}")
+            return None
+
+        if not has_spoken or not frames:
+            return None
+
+        filename = "followup.wav"
+        audio_data = np.concatenate(frames)
+        with wave.open(filename, 'w') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(MIC_SAMPLE_RATE)
+            wf.writeframes(audio_data.tobytes())
+        return filename
+
     # --- MAIN LOOP ---
     def main_loop(self):
         time.sleep(1) # Let UI settle
@@ -446,6 +496,34 @@ class BotGUI:
 
                 self.set_state(BotStates.IDLE, "Ready")
 
+                # Conversation follow-up: listen briefly for a natural reply
+                self.set_state(BotStates.LISTENING, "Still listening...")
+                followup_wav = self.record_followup(timeout_sec=8)
+                if followup_wav:
+                    self.set_state(BotStates.THINKING, "Transcribing...")
+                    threading.Thread(target=play_thinking_sequence, daemon=True).start()
+                    user_text = self.transcribe(followup_wav)
+                    print(f"Follow-up Transcribed: {user_text}")
+                    if len(user_text) >= 2:
+                        self.set_state(BotStates.THINKING, "Thinking...")
+                        if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+                            try:
+                                self.thinking_audio_process.terminate()
+                            except:
+                                pass
+                            self.thinking_audio_process = None
+                        try:
+                            for chunk in self.brain.stream_think(user_text):
+                                if chunk.strip():
+                                    self.set_state(BotStates.SPEAKING, "Speaking...")
+                                    self.speak(chunk)
+                        except Exception as e:
+                            print(f"Follow-up LLM error: {e}")
+                        self.set_state(BotStates.IDLE, "Ready")
+                    else:
+                        self.set_state(BotStates.IDLE, "Waiting...")
+                else:
+                    self.set_state(BotStates.IDLE, "Waiting...")
 
 if __name__ == "__main__":
     root = tk.Tk()
