@@ -47,6 +47,8 @@ ehthumbs.db
 
 # --- Debug / Temp files (created during dev/testing) ---
 test_*.py
+list_devices.py
+install_*.sh
 *.log
 payload.json
 pull.json
