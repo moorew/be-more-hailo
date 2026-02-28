@@ -45,6 +45,8 @@ def clean_text_for_speech(text: str) -> str:
     """Removes markdown and special characters that shouldn't be spoken."""
     # Remove JSON blocks
     text = re.sub(r'\{.*?\}', '', text, flags=re.DOTALL)
+    # Replace newlines with spaces to prevent shell line breaks during Piper TTS
+    text = text.replace('\n', ' ').replace('\r', ' ')
     # Remove asterisks used for emphasis or actions (e.g., *beep boop*)
     text = text.replace('*', '')
     # Remove other common markdown like bold/italics, headers, and list bullets
