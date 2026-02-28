@@ -1,5 +1,8 @@
 import logging
-from duckduckgo_search import DDGS
+try:
+    from ddgs import DDGS  # new package name (pip install ddgs)
+except ImportError:
+    from duckduckgo_search import DDGS  # fallback for older installs
 
 logger = logging.getLogger(__name__)
 

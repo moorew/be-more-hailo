@@ -138,16 +138,26 @@ class Brain:
 
         # Pre-LLM keyword check: if the question likely needs real-time info,
         # do the web search now rather than relying on the model to emit JSON.
+        # Require at least one realtime keyword AND the text to look like a question
+        # (contains 'what', 'who', 'when', 'find', 'search', '?', etc.) to avoid
+        # false triggers on casual phrases like 'how are you doing today'.
         realtime_keywords = [
             "weather", "forecast", "temperature", "tonight", "tomorrow",
             "news", "latest", "right now", "score", "stocks", "bitcoin",
             "crypto", "price of", "happening", "recently", "live",
         ]
-        needs_search = any(kw in lower_text for kw in realtime_keywords)
+        question_markers = [
+            "what", "who", "when", "where", "find", "search", "tell me",
+            "look up", "check", "is there", "did", "?",
+        ]
+        has_realtime_kw = any(kw in lower_text for kw in realtime_keywords)
+        has_question = any(q in lower_text for q in question_markers)
+        needs_search = has_realtime_kw and has_question
         if needs_search:
             try:
                 search_result = search_web(user_text)
-                if search_result:
+                # Only inject if we got a real result (not empty/error sentinel)
+                if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR") and len(search_result) > 50:
                     # Inline the result into the user message so the model can't ignore it.
                     # Using role='system' mid-conversation is unreliable with small models.
                     self.history[-1]["content"] = (

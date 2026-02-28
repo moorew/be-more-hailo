@@ -4,7 +4,8 @@ scipy
 openwakeword
 onnxruntime
 ollama
-duckduckgo-search
+ddgs
+
 Pillow
 fastapi
 python-multipart
