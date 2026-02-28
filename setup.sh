@@ -1,111 +1,142 @@
 #!/bin/bash
 
-# Define colors for output
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-echo -e "${GREEN}🤖 Pi Local Assistant Setup Script${NC}"
+echo -e "${GREEN}BMO Agent Setup${NC}"
 
-# 1. Install System Dependencies (The "Hidden" Requirements)
-echo -e "${YELLOW}[1/8] Installing System Tools (apt)...${NC}"
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. System packages
+# ─────────────────────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[1/9] Installing system packages...${NC}"
 sudo apt update
-sudo apt install -y python3-tk libasound2-dev libportaudio2 libatlas-base-dev cmake build-essential espeak-ng git curl
+sudo apt install -y \
+    python3-tk libasound2-dev libportaudio2 libatlas-base-dev \
+    cmake build-essential git curl ffmpeg \
+    libcamera-apps python3-libcamera  # Camera support (rpicam-still / libcamera-still)
 
-# 2. Clone Repository (if run via curl outside repo)
-echo -e "${YELLOW}[2/8] Checking for Repository...${NC}"
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Clone repository (if run via curl outside the repo)
+# ─────────────────────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[2/9] Checking repository...${NC}"
 if [ ! -f "requirements.txt" ] || [ ! -f "agent_hailo.py" ]; then
     if [ -d "be-more-agent" ]; then
-        echo -e "${YELLOW}Directory 'be-more-agent' already exists. Entering it...${NC}"
+        echo "Directory 'be-more-agent' already exists. Entering it..."
         cd be-more-agent
     else
-        echo -e "${YELLOW}Downloading be-more-agent repository...${NC}"
         git clone https://github.com/moorew/be-more-hailo.git be-more-agent
         cd be-more-agent
     fi
-    # Make scripts executable
     chmod +x *.sh
 fi
 
-# 3. Create Folders
-echo -e "${YELLOW}[3/8] Creating Folders...${NC}"
-mkdir -p piper
-mkdir -p sounds/greeting_sounds
-mkdir -p sounds/thinking_sounds
-mkdir -p sounds/ack_sounds
-mkdir -p sounds/error_sounds
-mkdir -p faces/idle
-mkdir -p faces/listening
-mkdir -p faces/thinking
-mkdir -p faces/speaking
-mkdir -p faces/error
-mkdir -p faces/warmup
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Create asset folders
+# ─────────────────────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[3/9] Creating asset folders...${NC}"
+mkdir -p piper models
+mkdir -p sounds/greeting_sounds sounds/thinking_sounds sounds/ack_sounds sounds/error_sounds
+mkdir -p faces/idle faces/listening faces/thinking faces/speaking faces/error faces/warmup
 
-# 4. Download Piper (Architecture Check)
-echo -e "${YELLOW}[4/8] Setting up Piper TTS...${NC}"
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Piper TTS engine
+# ─────────────────────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[4/9] Setting up Piper TTS...${NC}"
 ARCH=$(uname -m)
 if [ "$ARCH" == "aarch64" ]; then
-    # FIXED: Using the specific 2023.11.14-2 release known to work on Pi
-    wget -O piper.tar.gz https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_aarch64.tar.gz
-    tar -xvf piper.tar.gz -C piper --strip-components=1
+    wget -q -O piper.tar.gz https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_aarch64.tar.gz
+    tar -xf piper.tar.gz -C piper --strip-components=1
     rm piper.tar.gz
 else
-    echo -e "${RED}⚠️  Not on Raspberry Pi (aarch64). Skipping Piper download.${NC}"
+    echo -e "${RED}Not on aarch64 — skipping Piper download.${NC}"
 fi
 
-# 5. Download Voice Model
-echo -e "${YELLOW}[5/8] Downloading Voice Model & STT pre-reqs...${NC}"
-cd piper
-wget -nc -O en_GB-semaine-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium/en_GB-semaine-medium.onnx
-wget -nc -O en_GB-semaine-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium/en_GB-semaine-medium.onnx.json
-cd ..
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Piper voice model
+# ─────────────────────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[5/9] Downloading voice model...${NC}"
+BASE_VOICE="https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium"
+wget -nc -q -O piper/en_GB-semaine-medium.onnx      "$BASE_VOICE/en_GB-semaine-medium.onnx"
+wget -nc -q -O piper/en_GB-semaine-medium.onnx.json "$BASE_VOICE/en_GB-semaine-medium.onnx.json"
 
-# Make directory for Whisper
-mkdir -p models
-echo -e "${YELLOW}Downloading Whisper-Base.hef from GitHub Releases...${NC}"
-wget -nc -O models/Whisper-Base.hef https://github.com/moorew/be-more-hailo/releases/latest/download/Whisper-Base.hef
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. whisper.cpp (CPU-based STT)
+# ─────────────────────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[6/9] Building whisper.cpp for CPU STT...${NC}"
+if [ ! -f "whisper.cpp/build/bin/whisper-cli" ]; then
+    if [ ! -d "whisper.cpp" ]; then
+        git clone https://github.com/ggerganov/whisper.cpp.git
+    fi
+    cmake -B whisper.cpp/build -S whisper.cpp -DCMAKE_BUILD_TYPE=Release
+    cmake --build whisper.cpp/build --config Release -j$(nproc)
+fi
 
-# 6. Install Python Libraries
-echo -e "${YELLOW}[6/8] Installing Python Libraries...${NC}"
-# Check if venv exists, if not create it
+# Download Whisper base.en model
+if [ ! -f "models/ggml-base.en.bin" ]; then
+    echo -e "${YELLOW}Downloading Whisper base.en model...${NC}"
+    wget -q -O models/ggml-base.en.bin \
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. Python environment and dependencies
+# ─────────────────────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[7/9] Installing Python dependencies...${NC}"
 if [ ! -d "venv" ]; then
     python3 -m venv venv
 fi
 source venv/bin/activate
-pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
+pip install --upgrade pip setuptools wheel -q
+pip install -r requirements.txt -q
 
-# Manually extract hailo_whisper to bypass setuptools packaging errors on Pi
-if [ ! -d "hailo_whisper" ]; then
-    echo -e "${YELLOW}Extracting hailo-whisper natively to bypass setuptools...${NC}"
-    git clone https://github.com/hailocs/hailo-whisper.git tmp_whisper
-    # The whole repo acts as the package, so we just rename the cloned root folder
-    mv tmp_whisper hailo_whisper
-    
-    # Change == to >= in its requirements so pip can find valid pre-compiled wheels
-    sed -i 's/==/>=/g' hailo_whisper/requirements.txt
-    pip install -r hailo_whisper/requirements.txt
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. Pull AI models via hailo-ollama
+# ─────────────────────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[8/9] Pulling AI models via hailo-ollama...${NC}"
+OLLAMA_URL="http://localhost:8000/api"
+
+echo "  Pulling LLM: qwen2.5-instruct:1.5b..."
+curl -sf "$OLLAMA_URL/pull" \
+    -H 'Content-Type: application/json' \
+    -d '{"model": "qwen2.5-instruct:1.5b", "stream": false}' \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print('  Done.' if d.get('status')=='success' else f'  Warning: {d}')" \
+    2>/dev/null || echo -e "${RED}  Could not reach hailo-ollama at $OLLAMA_URL. Start it first if needed.${NC}"
+
+echo "  Pulling Vision model: qwen2-vl-instruct:2b (optional, for camera features)..."
+curl -sf "$OLLAMA_URL/pull" \
+    -H 'Content-Type: application/json' \
+    -d '{"model": "qwen2-vl-instruct:2b", "stream": false}' \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print('  Done.' if d.get('status')=='success' else f'  Warning: {d}')" \
+    2>/dev/null || echo "  Skipping vision model (hailo-ollama not reachable)."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8b. Camera check
+# ─────────────────────────────────────────────────────────────────────────────
+echo -e "${YELLOW}Checking camera availability...${NC}"
+if command -v libcamera-still &>/dev/null || command -v rpicam-still &>/dev/null; then
+    echo -e "${GREEN}  Camera tools found. Vision features are enabled.${NC}"
+else
+    echo -e "${YELLOW}  Camera tools not found in PATH."
+    echo -e "  If you have a Pi Camera connected, run: sudo apt install -y libcamera-apps${NC}"
 fi
 
-# 7. Pull AI Models
-echo -e "${YELLOW}[7/8] Checking AI Models...${NC}"
-echo -e "${YELLOW}Pulling Hailo-10H optimized models via hailo-ollama API...${NC}"
-curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2.5-instruct:1.5b", "stream": false }'
-echo -e "${GREEN}Models pulled successfully!${NC}"
-
-# 7. OpenWakeWord Model (Added this back so the user has a default)
+# Wake word model
 if [ ! -f "wakeword.onnx" ]; then
-    echo -e "${YELLOW}Downloading default 'Hey Jarvis' wake word...${NC}"
-    curl -L -o wakeword.onnx https://github.com/dscripka/openWakeWord/raw/main/openwakeword/resources/models/hey_jarvis_v0.1.onnx
+    echo -e "${YELLOW}Downloading default wake word model (Hey Jarvis)...${NC}"
+    curl -sL -o wakeword.onnx \
+        https://github.com/dscripka/openWakeWord/raw/main/openwakeword/resources/models/hey_jarvis_v0.1.onnx
 fi
 
-# 8. Create Desktop Shortcut
-echo -e "${YELLOW}[8/8] Creating Desktop Shortcut...${NC}"
-cat << EOF > ~/Desktop/BMO.desktop
+# ─────────────────────────────────────────────────────────────────────────────
+# 9. Desktop shortcut
+# ─────────────────────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[9/9] Creating desktop shortcut...${NC}"
+cat <<EOF > ~/Desktop/BMO.desktop
 [Desktop Entry]
 Name=BMO
-Comment=Launch Be More Agent
+Comment=Launch BMO Agent
 Exec=bash -c 'cd "$PWD" && ./start_agent.sh'
 Icon=$PWD/static/favicon.png
 Terminal=true
@@ -113,10 +144,7 @@ Type=Application
 Categories=Utility;Application;
 EOF
 chmod +x ~/Desktop/BMO.desktop
-
-# Also place in applications menu
 mkdir -p ~/.local/share/applications/
 cp ~/Desktop/BMO.desktop ~/.local/share/applications/
-echo -e "${GREEN}Desktop shortcut created!${NC}"
 
-echo -e "${GREEN}✨ Setup Complete! To start BMO, you can now click the 'BMO' icon on your desktop, or run './start_agent.sh' / './start_web.sh' from the terminal.${NC}"
+echo -e "${GREEN}Setup complete. Run './start_agent.sh' for on-device mode or './start_web.sh' for the web interface.${NC}"

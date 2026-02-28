@@ -1,160 +1,125 @@
-﻿# Be More Agent 🤖 (Hailo-10H & Web Edition)
-**A Customizable, Offline-First AI Agent for Raspberry Pi**
+﻿# Be More Agent — Hailo-10H Edition
 
 <p align="center">
   <img src="bmo_irl.jpg" height="300" alt="BMO On-Device" />
   <img src="bmo-web.png" height="300" alt="BMO Web Interface" />
 </p>
 
-The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) is incredible! It turns a Raspberry Pi into a fully functional, conversational AI agent. Unlike cloud-based assistants, this agent runs **100% locally** on your device. It listens for a wake word, processes speech, "thinks" using a local Large Language Model (LLM), and speaks back with a low-latency neural voice. This fork updates the build to work with the Hailo 10H in the Pi AI HAT 2+
+A fork of [@brenpoly's be-more-agent](https://github.com/brenpoly/be-more-agent) project, updated to run on the **Raspberry Pi 5** with the **Hailo-10H AI HAT+**. The agent listens for a wake word, transcribes speech, queries a local LLM, and speaks its response — all on-device, with no cloud services required.
 
-**Major Upgrade:** This fork has been completely revamped to support the **Hailo-10H NPU** for lightning-fast local AI inference, introduces a **headless web service** alongside the original on-device GUI, and features a unified "core" architecture!
-
-## ✨ What's New in this Version (vs Original)
-
-* **Hybrid NPU/CPU Pipeline**: The heavy LLMs and Vision Models run exceptionally fast on the Hailo-10H NPU (via `hailo-ollama`). However, this fork processes **Speech-to-Text inference on the CPU** using the wildly efficient `whisper.cpp`, avoiding NPU PCIe bus bottlenecks and ensuring 100% stable 16kHz transcription!
-* **Dual Interfaces (On-Device GUI & Web App)**: 
-  * **On-Device (`agent_hailo.py`)**: The classic Tkinter-based GUI that displays reactive faces on an attached screen (HDMI/DSI) and listens via a physical USB microphone.
-  * **Web Version (`web_app.py`)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
-* **Hailo 10H NPU Power**: Designed specifically for the Raspberry Pi 5 AI Hat+ (Hailo 10H).
-   - Generative Chat (`Qwen2.5-Instruct 1.5B`) via `hailo-ollama`
-   - Vision Integration (`Qwen2-VL 2B`) via `hailo-ollama`
-   - Speech-to-Text (`Whisper Base`) via `whisper.cpp` on the CPU
-* **Blazing Fast TTS Streaming**: Uses Piper (`en_GB-semaine-medium`). BMO utilizes sentence-chunk buffering, so BMO begins speaking the first sentence *while* the NPU is still thinking about the rest of the response!
-* **FastAPI Web Server**: Concurrent UI support via optimal multi-worker configurations.
-* **Unified Custom Wake Word**: Uses `openwakeword` for highly accurate "Hey BMO" detection.
-* **Extensible Python Architecture**: Easy modular system bridging hardware, APIs, and AI models.
-* **On-the-Fly Image Generation**: Ask BMO to show you a picture of anything, and it will generate and display the image directly on the screen (both Web and On-Device) using the free Pollinations.ai API!
-* **Fast Unified Routing (Optional Dual-Model)**: By default, all queries are routed through a single optimized model (`Qwen2.5-Instruct 1.5B`) for blazing-fast performance without NPU module swapping latency. Optionally, you can enable Dual-Model routing to send complex queries to a larger model.
-* **Service Management**: Run the web agent seamlessly in the background using the provided systemd service scripts.
-
-## 🧠 How It Works: On-Device vs Web
-
-Because of the new modular design, the project can be run in two different ways depending on your needs:
-
-### 1. On-Device Mode (`agent_hailo.py`)
-This is the traditional "robot" mode. You plug a screen, microphone, and speaker directly into the Raspberry Pi.
-- **Input**: Uses sounddevice and openwakeword to constantly listen for the wake word ("Hey BMO") via the physical microphone.
-- **Processing**: Uses the shared core/ modules to transcribe audio, query the LLM, and generate speech.
-- **Output**: Plays audio directly through the Pi's speakers via ALSA/sounddevice and updates the Tkinter GUI with animated faces.
-
-### 2. Web Mode (`web_app.py`)
-This is the "headless" mode. The Pi sits on your network without needing a screen or microphone attached.
-- **Input**: You open the web interface on your phone or PC. You press or hold a button to record audio, which is sent to the Pi via WebSockets.
-- **Processing**: Uses the **exact same** core/ modules to transcribe the audio, query the LLM, and generate speech.
-- **Output**: The generated audio file and text response are sent back over the WebSocket and played in your browser.
-
-**The Shared core/**: Whether you ask a question via the physical microphone or the web browser, the request is routed through core/llm.py. This means features like **Dual-Model Routing** (picking the 1B or 3B model based on prompt complexity) work identically across both platforms!
-
-### 3. Web UI Controls
-When using the web interface, the top header bar includes several tools to customize your experience:
-- **🛠️ Debug**: Opens a dark-mode diagnostic window displaying the conversation history and internal system logs.
-- **🗣️ Fix Pronunciation**: Allows you to override Piper TTS by providing a phonetic spelling for specific difficult words.
-- **LLM Status**: A live indicator that checks the `hailo-ollama` API to let you know if the AI is still loading, computing, or ready.
-- **Hands-Free Toggle**: Normally, you have to click and hold the microphone button to talk. Checking this box allows BMO to listen continuously for the "Hey BMO" wake word, then automatically records your next sentence! 
-- **Pi Audio Toggle**: Reroutes BMO's audio responses to play physically through the speakers plugged into your Raspberry Pi instead of playing back in your web browser.
-
-## 🌐 Secure Remote Access with Tailscale
-
-To access BMO's web interface securely from anywhere, and **vital for using the microphone in modern web browsers**, I recommend using **[Tailscale](https://tailscale.com/)**. 
-
-**Why Tailscale for the Web Interface?**
-Modern web browsers (Chrome, Safari, iOS, Android) block access to the microphone unless the website is served over a secure HTTPS (SSL) connection. By default, running the Pi on your local network uses standard HTTP, which means the browser won't let BMO hear you over the web interface.
-
-Tailscale solves this by providing a secure VPN and automatic SSL routing for your devices:
-1. Install Tailscale on your Raspberry Pi and the device you're browsing from.
-2. Enable [Tailscale HTTPS Certificates](https://tailscale.com/kb/1153/enabling-https/) in your Tailscale admin console.
-3. On your Pi, run the following command to securely proxy to your web app via HTTPS:
-   ```bash
-   tailscale serve --bg --https=443 localhost:8080
-   ```
-4. Now you can securely access the web UI with full microphone support by navigating to your Pi's Tailscale hostname (e.g., `https://bmo.your-tailnet.ts.net`) from anywhere in the world.
-
-_Disclaimer: I work for Tailscale, but it's still great!_
-
-## 🛠️ Hardware Requirements
-
-* **Raspberry Pi 5** (Recommended)
-* **Hailo-10H AI Accelerator** (Optional but highly recommended for speed)
-* USB Microphone & Speaker (For On-Device mode)
-* LCD Screen (DSI or HDMI) (For On-Device mode)
-* Raspberry Pi Camera Module (Optional for vision features)
+This fork adds a headless **web interface**, a shared `core/` module layer used by both interfaces, and updated support for the Hailo NPU hardware.
 
 ---
 
-## 📂 Project Structure
+## What runs where
 
-```text
+| Component | Where it runs | Notes |
+|-----------|--------------|-------|
+| LLM (`qwen2.5-instruct:1.5b`) | Hailo-10H NPU | via `hailo-ollama` |
+| Vision (`qwen2-vl-instruct:2b`) | Hailo-10H NPU | optional; requires camera |
+| STT (Whisper base.en) | CPU | via `whisper.cpp`; NPU path causes PCIe timeouts |
+| TTS (Piper) | CPU | streams sentence-by-sentence while LLM generates |
+| Wake word (openWakeWord) | CPU | "Hey BMO" custom model |
+
+STT runs on the CPU by design. Pushing 16kHz audio arrays through the Hailo PCIe bus caused consistent 15+ second timeouts during development. `whisper.cpp` on the quad-core ARM is fast enough and keeps the NPU free for inference.
+
+---
+
+## Interfaces
+
+### On-Device (`agent_hailo.py`)
+Runs on the Pi with a screen, USB microphone, and USB speaker attached. Displays animated faces via a Tkinter GUI and handles the full wake word → record → transcribe → respond → speak loop locally.
+
+After each response, BMO stays in "Still listening..." mode for 8 seconds so you can continue a conversation without re-saying the wake word.
+
+### Web (`web_app.py`)
+A FastAPI server with a browser-based UI. You hold a button to record audio, which is sent to the Pi over WebSockets. The Pi transcribes, queries the LLM, and sends back a response audio file for playback in your browser.
+
+The web interface includes:
+- **Debug panel** — shows conversation history and server logs
+- **Pronunciation override** — corrects how Piper pronounces specific words
+- **LLM status indicator** — shows whether the NPU model is ready
+- **Hands-free mode** — enables wake word detection so you don't need to hold the button
+- **Pi Audio toggle** — routes audio to the Pi's physical speaker instead of browser playback
+
+---
+
+## Secure remote access
+
+Modern browsers block microphone access unless the page is served over HTTPS. For the web interface, [Tailscale](https://tailscale.com/) provides a simple solution:
+
+1. Install Tailscale on the Pi and your client device
+2. Enable [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https/) in the Tailscale admin console
+3. On the Pi, run:
+   ```bash
+   tailscale serve --bg --https=443 localhost:8080
+   ```
+4. Access the web UI at `https://<your-pi-hostname>.ts.net`
+
+---
+
+## Hardware
+
+- Raspberry Pi 5 (4GB or 8GB recommended)
+- Hailo-10H AI HAT+ (required for NPU features)
+- USB microphone and speaker (for on-device mode)
+- HDMI or DSI display (for on-device GUI)
+- Raspberry Pi Camera Module (optional, for vision/photo features)
+
+---
+
+## Project structure
+
+```
 be-more-agent/
-├── agent_hailo.py             # The On-Device GUI application
-├── web_app.py                 # The FastAPI web server application
-├── core/                      # Shared modular brain components
-│   ├── llm.py                 # LLM inference and dual-model routing
-│   ├── tts.py                 # Text-to-Speech (Piper)
-│   ├── stt.py                 # Speech-to-Text (Whisper)
-│   └── config.py              # System configuration
-├── templates/                 # HTML templates for the Web UI
-├── static/                    # CSS, JS, and Favicon for the Web UI
-├── setup_services.sh          # Script to install systemd services
-├── start_web.sh               # Script to launch the web server
-├── start_agent.sh             # Script to launch the on-device GUI
-├── wakeword.onnx              # OpenWakeWord model (The "Ear")
-├── requirements.txt           # Python dependencies
-├── models/                    # Hardware Accelerated NN weights
-│   └── Whisper-Base.hef       # Hailo STT model
-├── piper/                     # Piper TTS engine & voice models
-├── sounds/                    # Sound effects folder
-└── faces/                     # Face images folder
-```
-### Why Run Whisper on the CPU instead of the NPU?
-While the BMO agent offloads Large Language Models (`qwen2.5-instruct`) and Vision Language Models (`qwen2-vl-instruct`) directly onto the Hailo-10H NPU for incredible performance, the Whisper STT inference remains strictly on the CPU via `whisper.cpp`.
-
-During development, we discovered that trying to push the required 16-bit 16kHz audio arrays into the `hailo_platform.genai` C++ layer regularly saturated the PCIe bandwidth on the Pi AI HAT+ 2, resulting in crippling 15+ second timeouts and silent application hangs. Rather than fighting hardware bottlenecks, processing Whisper (`ggml-base.en.bin`) on the quad-core ARMs is lightning-fast and leaves the NPU cache entirely dedicated to generating conversational intelligence.
-
-### Dependencies
-*   **Required System Logs / Packages**:
-    ```bash
-    sudo apt update
-    sudo apt install ffmpeg libportaudio2
-    ```
-
-## 🚀 Installation
-
-### 1. Prerequisites
-Ensure your Raspberry Pi OS is up to date.
-```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install git -y
+├── agent_hailo.py          # On-device GUI application
+├── web_app.py              # FastAPI web server
+├── core/
+│   ├── config.py           # All configuration (models, devices, paths)
+│   ├── llm.py              # LLM inference, web search, conversation history
+│   ├── tts.py              # Text-to-speech via Piper
+│   └── stt.py              # Speech-to-text via whisper.cpp
+├── templates/              # Jinja2 HTML templates for the web UI
+├── static/                 # CSS, JS, favicon
+├── setup.sh                # Automated installation script
+├── setup_services.sh       # Installs systemd background services
+├── start_web.sh            # Starts the web server
+├── start_agent.sh          # Starts the on-device GUI
+├── requirements.txt        # Python dependencies
+├── wakeword.onnx           # OpenWakeWord model
+├── piper/                  # Piper TTS engine and voice model
+├── models/                 # Whisper model weights
+├── whisper.cpp/            # Compiled whisper.cpp STT binary
+└── faces/ sounds/          # GUI assets
 ```
 
-### 2. Install hailo-ollama (Hailo-10H Support)
-This agent relies on `hailo-ollama` to run the brain on the NPU. Ensure you have installed the Hailo-10H software suite and the `hailo-ollama` server according to Hailo's official documentation.
+---
 
-Once `hailo-ollama` is running, pull the default conversational model using the API:
-```bash
-curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2.5-instruct:1.5b", "stream": false }'
-```
-*(Optional: If you plan to enable Vision features, also pull the Qwen2-VL vision model)*:
-```bash
-curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2-vl-instruct:2b", "stream": false }'
-```
+## Installation
 
-### 3. Setup & Installation
+### Prerequisites
 
-**Single Command Installation:**
-You can download and install everything in one go. The script will install system dependencies, clone the repository, download Piper TTS, and set up the Python environment:
+- Raspberry Pi OS (64-bit, current stable)
+- `hailo-ollama` installed and running — follow [Hailo's documentation](https://github.com/hailo-ai/hailo-ollama) for setup
+
+### Automated install
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/moorew/be-more-hailo/main/setup.sh | bash
 cd be-more-agent
 ```
 
-> [!NOTE]
-> **whisper.cpp STT Setup**
-> This fork runs speech recognition on the CPU using `whisper.cpp`. The `setup.sh` script automatically clones and compiles `whisper.cpp` and downloads the `ggml-base.en.bin` model into the `models/` directory for you. No NPU model is required for STT.
+The script will:
+- Install system packages including `libcamera-apps` for camera support
+- Download and extract the Piper TTS engine
+- Clone and compile `whisper.cpp`
+- Download the `ggml-base.en` Whisper model
+- Create a Python virtual environment and install dependencies
+- Pull `qwen2.5-instruct:1.5b` (LLM) and `qwen2-vl-instruct:2b` (vision) via `hailo-ollama`
+- Check camera availability and report if tools are missing
 
-**Manual Setup:**
-If you prefer to configure it manually:
+### Manual install
+
 ```bash
 git clone https://github.com/moorew/be-more-hailo.git be-more-agent
 cd be-more-agent
@@ -162,91 +127,110 @@ chmod +x *.sh
 ./setup.sh
 ```
 
-### 4. Running the Agent
+---
 
-**To run the Web Server:**
+## Running
 
-```
+**Web server:**
+```bash
 source venv/bin/activate
 ./start_web.sh
 ```
+Open `http://<YOUR_PI_IP>:8080` in a browser (or your Tailscale HTTPS address for microphone access).
 
-Then, open your browser and navigate to `http://<YOUR_PI_IP>:8080` (or `https://` if you have SSL certificates configured).
-
-**To run the On-Device GUI:**
-```
+**On-device GUI:**
+```bash
 source venv/bin/activate
 ./start_agent.sh
 ```
 
-**To test LLM speed via CLI (No GUI/Web):**
-```
-source venv/bin/activate
-python cli_chat.py
-```
-
-### 5. Run as a Background Service (Optional)
-To have the web agent start automatically when the Pi boots:
-```
+**Background services (auto-start on boot):**
+```bash
 ./setup_services.sh
 ```
+Then manage with `sudo systemctl start|stop|restart bmo-web` or `bmo-ollama`.
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
-You can modify the models, URLs, system prompts, and ALSA audio device in `core/config.py`:
+All settings are in `core/config.py`. The most commonly changed values:
 
 ```python
-# LLM - the model pulled via hailo-ollama
-LLM_MODEL = "qwen2.5-instruct:1.5b"
-FAST_LLM_MODEL = "qwen2.5-instruct:1.5b"
-VISION_MODEL = "qwen2-vl-instruct:2b"
+# LLM models (must be pulled via hailo-ollama)
+LLM_MODEL       = "qwen2.5-instruct:1.5b"
+FAST_LLM_MODEL  = "qwen2.5-instruct:1.5b"
+VISION_MODEL    = "qwen2-vl-instruct:2b"
 
-# Audio output - find your device with: aplay -l
-# USB speakers are typically plughw:3,0 on a Pi 5 with a USB mic/speaker combo
-ALSA_DEVICE = "plughw:3,0"
+# Audio device for local hardware playback (run `aplay -l` to find yours)
+# The USB speaker is typically on a different card from the mic — check both.
+ALSA_DEVICE = "plughw:UACDemoV10,0"
+
+# Microphone device index (run `python3 -c "import sounddevice as sd; print(sd.query_devices())"`)
+MIC_DEVICE_INDEX = 1
+MIC_SAMPLE_RATE  = 48000
+
+# STT binary and model
+WHISPER_CMD   = "./whisper.cpp/build/bin/whisper-cli"
+WHISPER_MODEL = "./models/ggml-base.en.bin"
 ```
 
-You can also override these at runtime using environment variables:
+Environment variables override any of these at runtime:
 ```bash
-export ALSA_DEVICE="plughw:2,0"  # If your USB speaker is on a different card
-export LLM_MODEL="qwen2.5-instruct:1.5b"
+export ALSA_DEVICE="plughw:2,0"
 ```
 
 ---
 
-## 🧠 How Dual-Model Routing Works (Optional)
+## Dual-model routing (optional)
 
-By default, the agent uses a single fast model (`qwen2.5-instruct:1.5b`) to process all conversational requests. This avoids the latency of swapping models in and out of the NPU memory.
+By default, all queries go to a single model (`qwen2.5-instruct:1.5b`). To route longer or more complex queries to a larger model:
 
-If you want to handle more complex queries with better reasoning, you can enable Dual-Model routing in `core/config.py`:
-1. Change `LLM_MODEL` to a larger model (if you've pulled one), e.g., `"llama3.2:3b"`.
-2. Keep `FAST_LLM_MODEL = "qwen2.5-instruct:1.5b"`.
+1. Pull the larger model via `hailo-ollama`
+2. Set `LLM_MODEL` to the larger model name in `core/config.py`
+3. Keep `FAST_LLM_MODEL` pointing to `qwen2.5-instruct:1.5b`
 
-When this is enabled, the `core/llm.py` module analyzes your prompt before sending it to the LLM. 
-- If your prompt is **short** (<= 15 words) and does **not** contain complex keywords (like "explain", "code", "story", "how"), it is routed to the `FAST_LLM_MODEL`.
-- If your prompt is **long** or requires deep reasoning, it is routed to the primary `LLM_MODEL`.
+Short, simple prompts (under 15 words, no complex keywords) stay on the fast model. Longer or more complex ones are routed to `LLM_MODEL`.
 
-*Note: Swapping between two models on the Hailo-10H can introduce a few seconds of latency on the first query after a swap.*
+Note: swapping models on the Hailo-10H takes a few seconds on the first query after a switch.
 
 ---
 
-## 🎨 Customizing Your Character
+## Camera and vision
 
-This software is a generic framework. You can give it a new personality by replacing the assets:
-1.  **Faces:** The script looks for PNG sequences in `faces/[state]/`. It will loop through all images found in the folder.
-2.  **Sounds:** Put multiple .wav files in the `sounds/[category]/` folders. The robot will pick one at random each time (e.g., different "thinking" hums or "error" buzzes).
+If you have a Raspberry Pi Camera Module connected:
+
+1. Enable the camera interface in `raspi-config`
+2. Install camera tools if not already present:
+   ```bash
+   sudo apt install -y libcamera-apps
+   ```
+3. Ask BMO to take a photo or look at something — the agent captures a frame with `rpicam-still` or `libcamera-still` and sends it to the vision model (`qwen2-vl-instruct:2b`) on the NPU
+
+If no camera is found, BMO will say so rather than crashing.
 
 ---
 
-## 📄 License
-This project is licensed under the MIT License - see the LICENSE file for details.
+## Customisation
+
+**Personality:** Edit the system prompt returned by `get_system_prompt()` in `core/config.py`.
+
+**Faces:** Place PNG sequences in `faces/<state>/`. The GUI loops through all images in each folder.
+
+**Sounds:** Put `.wav` files in `sounds/<category>/`. BMO picks one at random per event.
+
+**Wake word:** Replace `wakeword.onnx` with any OpenWakeWord-compatible model.
+
+---
 
 ## Credits
-The BMO project is 100% the brainchild of @brenpoly. They did the hard work in their original project, I just vibe-coded some updates for new hardware. Nothing would have been possible without their inital hard work. Thank you for making this, and for sharing it with the world.
 
-## ⚖️ Legal Disclaimer (just in case!)
-**"BMO"** and **"Adventure Time"** are trademarks of **Cartoon Network** (Warner Bros. Discovery).
-This project is a **fan creation** built for educational and hobbyist purposes only. It is **not** affiliated with, endorsed by, or connected to Cartoon Network or the official Adventure Time brand in any way.
+The original project is entirely the work of [@brenpoly](https://github.com/brenpoly/be-more-agent). This fork adds Hailo NPU support, the web interface, and various fixes — but the core concept and character are theirs.
 
+**"BMO"** and **"Adventure Time"** are trademarks of Cartoon Network (Warner Bros. Discovery). This is a fan project for personal and educational use only, not affiliated with or endorsed by Cartoon Network.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
