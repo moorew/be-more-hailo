@@ -41,7 +41,9 @@ def get_inferencer():
             params.group_id = _SHARED_VDEVICE_GROUP_ID
             _vdevice = VDevice(params)
             
-            _speech2text = Speech2Text(_vdevice, WHISPER_MODEL)
+            abs_model_path = os.path.abspath(WHISPER_MODEL)
+            logger.info(f"Resolved HEF absolute path: {abs_model_path}")
+            _speech2text = Speech2Text(_vdevice, abs_model_path)
             logger.info("Hailo Whisper model loaded successfully on the NPU.")
         except Exception as e:
             logger.error(f"Failed to load Hailo Whisper model: {e}")
