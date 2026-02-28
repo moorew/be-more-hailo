@@ -12,14 +12,14 @@ The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) i
 
 ## ✨ What's New in this Version (vs Original)
 
-* **Full Hailo-10H Accelerator Pipeline**: Not only do the LLMs and Vision Models run on the NPU (via Ollama), but this fork now exclusively uses `hailo-whisper` to process **Speech-to-Text directly on the Hailo NPU** for near-instant 16kHz transcription!
+* **Full Hailo-10H Accelerator Pipeline**: Not only do the LLMs and Vision Models run on the NPU (via Ollama), but this fork now exclusively uses the native `hailo_platform.genai` API to process **Speech-to-Text directly on the Hailo NPU** for near-instant 16kHz transcription!
 * **Dual Interfaces (On-Device GUI & Web App)**: 
   * **On-Device (`agent_hailo.py`)**: The classic Tkinter-based GUI that displays reactive faces on an attached screen (HDMI/DSI) and listens via a physical USB microphone.
   * **Web Version (`web_app.py`)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
 * **Hailo 10H NPU Power**: Designed specifically for the Raspberry Pi 5 AI Hat+ (Hailo 10H).
    - Generative Chat (`Llama 3.2 1B`) via `hailo-ollama`
    - Vision Integration (`Qwen2-VL 2B`) via `hailo-ollama`
-   - Speech-to-Text (`Whisper`) natively accelerated via `hailo-whisper`
+   - Speech-to-Text (`Whisper`) natively accelerated via `hailo_platform.genai`
 * **Blazing Fast TTS Streaming**: Uses Piper (`en_GB-semaine-medium`). BMO utilizes sentence-chunk buffering, so BMO begins speaking the first sentence *while* the NPU is still thinking about the rest of the response!
 * **FastAPI Web Server**: Concurrent UI support via optimal multi-worker configurations.
 * **Unified Custom Wake Word**: Uses `openwakeword` for highly accurate "Hey BMO" detection.
