@@ -37,7 +37,7 @@ from duckduckgo_search import DDGS
 from core.llm import Brain
 from core.tts import play_audio_on_hardware
 from core.stt import transcribe_audio
-from core.config import MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
+from core.config import MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE
 
 # =========================================================================
 # 1. HARDWARE CONFIGURATION
@@ -134,7 +134,7 @@ class BotGUI:
             return None
         sound_file = random.choice(sounds)
         try:
-            return subprocess.Popen(['aplay', '-q', sound_file])
+            return subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', sound_file])
         except Exception as e:
             print(f"Error playing sound {sound_file}: {e}")
             return None
@@ -374,85 +374,78 @@ class BotGUI:
                         pass
                     self.thinking_audio_process = None
 
-                self.set_state(BotStates.SPEAKING, "...")
-                
-                full_response = ""
-                image_url = None
-                taking_photo = False
-                
-                for chunk in self.brain.stream_think(user_text):
-                    if not chunk.strip():
-                        continue
-                        
-                    full_response += chunk
+                try:
+                    full_response = ""
+                    image_url = None
+                    taking_photo = False
                     
-                    # Handle json actions
-                    if '{"action": "take_photo"}' in chunk:
-                        taking_photo = True
-                        break
-                        
-                    json_match = re.search(r'\{.*?\}', chunk, re.DOTALL)
-                    if json_match:
-                        try:
-                            action_data = json.loads(json_match.group(0))
-                            if action_data.get("action") == "display_image" and action_data.get("image_url"):
-                                image_url = action_data.get("image_url")
-                                chunk = chunk.replace(json_match.group(0), '').strip()
-                        except Exception as e:
-                            print(f"JSON Parse Error: {e}")
+                    for chunk in self.brain.stream_think(user_text):
+                        if not chunk.strip():
+                            continue
                             
-                    if chunk.strip():
-                        self.set_state(BotStates.SPEAKING, "Speaking...")
-                        self.speak(chunk)
-
-                if taking_photo:
-                    self.set_state(BotStates.CAPTURING, "Taking Photo...")
-                    try:
-                        # Use libcamera-still to capture a frame
-                        subprocess.run(['libcamera-still', '-o', 'temp.jpg', '--width', '640', '--height', '480', '--nopreview', '-t', '1000'], check=True)
+                        full_response += chunk
                         
-                        # Convert to base64
-                        import base64
-                        with open('temp.jpg', 'rb') as img_file:
-                            b64_string = base64.b64encode(img_file.read()).decode('utf-8')
+                        # Handle json actions
+                        if '{"action": "take_photo"}' in chunk:
+                            taking_photo = True
+                            break
                             
-                        # Send to vision model
-                        self.set_state(BotStates.THINKING, "Analyzing...")
-                        threading.Thread(target=play_thinking_sequence, daemon=True).start()
-                        response = self.brain.analyze_image(b64_string, user_text)
-                        if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+                        json_match = re.search(r'\{.*?\}', chunk, re.DOTALL)
+                        if json_match:
                             try:
-                                self.thinking_audio_process.terminate()
-                            except:
-                                pass
-                            self.thinking_audio_process = None
-                            
-                        self.set_state(BotStates.SPEAKING, response[:20] + "...")
-                        self.speak(response)
-                        
-                    except Exception as e:
-                        print(f"Camera Error: {e}")
-                        response = "I tried to take a photo, but my camera isn't working."
-                        self.set_state(BotStates.SPEAKING, response[:20] + "...")
-                        self.speak(response)
-                
-                # 5. Display Image (if any)
-                if image_url:
-                    self.set_state(BotStates.DISPLAY_IMAGE, "Showing Image...")
-                    try:
-                        # Download and display image
-                        req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
-                        with urllib.request.urlopen(req) as u:
-                            raw_data = u.read()
-                        
-                        from io import BytesIO
-                        img = Image.open(BytesIO(raw_data)).resize((self.BG_WIDTH, self.BG_HEIGHT))
-                        self.current_display_image = ImageTk.PhotoImage(img)
-                        self.background_label.config(image=self.current_display_image)
-                    except Exception as e:
-                        print(f"Image Download Error: {e}")
-                
+                                action_data = json.loads(json_match.group(0))
+                                if action_data.get("action") == "display_image" and action_data.get("image_url"):
+                                    image_url = action_data.get("image_url")
+                                    chunk = chunk.replace(json_match.group(0), '').strip()
+                            except Exception as e:
+                                print(f"JSON Parse Error: {e}")
+                                
+                        if chunk.strip():
+                            self.set_state(BotStates.SPEAKING, "Speaking...")
+                            self.speak(chunk)
+
+                    if taking_photo:
+                        self.set_state(BotStates.CAPTURING, "Taking Photo...")
+                        try:
+                            subprocess.run(['libcamera-still', '-o', 'temp.jpg', '--width', '640', '--height', '480', '--nopreview', '-t', '1000'], check=True)
+                            import base64
+                            with open('temp.jpg', 'rb') as img_file:
+                                b64_string = base64.b64encode(img_file.read()).decode('utf-8')
+                            self.set_state(BotStates.THINKING, "Analyzing...")
+                            threading.Thread(target=play_thinking_sequence, daemon=True).start()
+                            response = self.brain.analyze_image(b64_string, user_text)
+                            if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+                                try:
+                                    self.thinking_audio_process.terminate()
+                                except:
+                                    pass
+                                self.thinking_audio_process = None
+                            self.set_state(BotStates.SPEAKING, "Speaking...")
+                            self.speak(response)
+                        except Exception as e:
+                            print(f"Camera Error: {e}")
+                            self.speak("I tried to take a photo, but my camera isn't working.")
+                    
+                    # 5. Display Image (if any)
+                    if image_url:
+                        self.set_state(BotStates.DISPLAY_IMAGE, "Showing Image...")
+                        try:
+                            req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
+                            with urllib.request.urlopen(req) as u:
+                                raw_data = u.read()
+                            from io import BytesIO
+                            img = Image.open(BytesIO(raw_data)).resize((self.BG_WIDTH, self.BG_HEIGHT))
+                            self.current_display_image = ImageTk.PhotoImage(img)
+                            self.background_label.config(image=self.current_display_image)
+                        except Exception as e:
+                            print(f"Image Download Error: {e}")
+
+                except Exception as e:
+                    print(f"ERROR in LLM/TTS pipeline: {e}")
+                    traceback.print_exc()
+
                 self.set_state(BotStates.IDLE, "Ready")
+
 
 if __name__ == "__main__":
     root = tk.Tk()
