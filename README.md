@@ -12,20 +12,20 @@ The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) i
 
 ## ✨ What's New in this Version (vs Original)
 
-* **Hybrid NPU/CPU Pipeline**: The heavy LLMs and Vision Models run exceptionally fast on the Hailo-10H NPU (via Ollama). However, this fork processes **Speech-to-Text inference on the CPU** using the wildly efficient `whisper.cpp`, avoiding NPU PCIe bus bottlenecks and ensuring 100% stable 16kHz transcription!
+* **Hybrid NPU/CPU Pipeline**: The heavy LLMs and Vision Models run exceptionally fast on the Hailo-10H NPU (via `hailo-ollama`). However, this fork processes **Speech-to-Text inference on the CPU** using the wildly efficient `whisper.cpp`, avoiding NPU PCIe bus bottlenecks and ensuring 100% stable 16kHz transcription!
 * **Dual Interfaces (On-Device GUI & Web App)**: 
   * **On-Device (`agent_hailo.py`)**: The classic Tkinter-based GUI that displays reactive faces on an attached screen (HDMI/DSI) and listens via a physical USB microphone.
   * **Web Version (`web_app.py`)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
 * **Hailo 10H NPU Power**: Designed specifically for the Raspberry Pi 5 AI Hat+ (Hailo 10H).
-   - Generative Chat (`Llama 3.2 1B`) via `hailo-ollama`
+   - Generative Chat (`Qwen2.5-Instruct 1.5B`) via `hailo-ollama`
    - Vision Integration (`Qwen2-VL 2B`) via `hailo-ollama`
-   - Speech-to-Text (`Whisper`) natively accelerated via `whisper.cpp` (CPU)
+   - Speech-to-Text (`Whisper Base`) via `whisper.cpp` on the CPU
 * **Blazing Fast TTS Streaming**: Uses Piper (`en_GB-semaine-medium`). BMO utilizes sentence-chunk buffering, so BMO begins speaking the first sentence *while* the NPU is still thinking about the rest of the response!
 * **FastAPI Web Server**: Concurrent UI support via optimal multi-worker configurations.
 * **Unified Custom Wake Word**: Uses `openwakeword` for highly accurate "Hey BMO" detection.
 * **Extensible Python Architecture**: Easy modular system bridging hardware, APIs, and AI models.
 * **On-the-Fly Image Generation**: Ask BMO to show you a picture of anything, and it will generate and display the image directly on the screen (both Web and On-Device) using the free Pollinations.ai API!
-* **Fast Unified Routing (Optional Dual-Model)**: By default, all queries are routed through a single optimized model (`Llama 3.2 1B`) for blazing-fast performance without NPU module swapping latency. Optionally, you can enable Dual-Model routing to send complex queries to a larger model.
+* **Fast Unified Routing (Optional Dual-Model)**: By default, all queries are routed through a single optimized model (`Qwen2.5-Instruct 1.5B`) for blazing-fast performance without NPU module swapping latency. Optionally, you can enable Dual-Model routing to send complex queries to a larger model.
 * **Service Management**: Run the web agent seamlessly in the background using the provided systemd service scripts.
 
 ## 🧠 How It Works: On-Device vs Web
@@ -107,7 +107,7 @@ be-more-agent/
 └── faces/                     # Face images folder
 ```
 ### Why Run Whisper on the CPU instead of the NPU?
-While the BMO agent offloads massive Large Language Models (`llama3.2`) and Vision Language Models (`moondream`) directly onto the Hailo-10H NPU for incredible performance, the Whisper STT inference remains strictly on the CPU via `whisper.cpp`.
+While the BMO agent offloads Large Language Models (`qwen2.5-instruct`) and Vision Language Models (`qwen2-vl-instruct`) directly onto the Hailo-10H NPU for incredible performance, the Whisper STT inference remains strictly on the CPU via `whisper.cpp`.
 
 During development, we discovered that trying to push the required 16-bit 16kHz audio arrays into the `hailo_platform.genai` C++ layer regularly saturated the PCIe bandwidth on the Pi AI HAT+ 2, resulting in crippling 15+ second timeouts and silent application hangs. Rather than fighting hardware bottlenecks, processing Whisper (`ggml-base.en.bin`) on the quad-core ARMs is lightning-fast and leaves the NPU cache entirely dedicated to generating conversational intelligence.
 
@@ -132,11 +132,11 @@ This agent relies on `hailo-ollama` to run the brain on the NPU. Ensure you have
 
 Once `hailo-ollama` is running, pull the default conversational model using the API:
 ```bash
-curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "llama3.2:1b", "stream": true }'
+curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2.5-instruct:1.5b", "stream": false }'
 ```
 *(Optional: If you plan to enable Vision features, also pull the Qwen2-VL vision model)*:
 ```bash
-curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2-vl-instruct:2b", "stream": true }'
+curl --silent http://localhost:8000/api/pull -H 'Content-Type: application/json' -d '{ "model": "qwen2-vl-instruct:2b", "stream": false }'
 ```
 
 ### 3. Setup & Installation
@@ -150,8 +150,8 @@ cd be-more-agent
 ```
 
 > [!NOTE]
-> **Hailo Whisper Model Automation**
-> Because this fork runs speech recognition entirely on the Hailo 10H NPU, it requires a compiled `.hef` model for Whisper. The `setup.sh` script automatically downloads `Whisper-Base.hef` from the GitHub Releases page of this repository and places it in the `models/` directory for you!
+> **whisper.cpp STT Setup**
+> This fork runs speech recognition on the CPU using `whisper.cpp`. The `setup.sh` script automatically clones and compiles `whisper.cpp` and downloads the `ggml-base.en.bin` model into the `models/` directory for you. No NPU model is required for STT.
 
 **Manual Setup:**
 If you prefer to configure it manually:
@@ -195,23 +195,34 @@ To have the web agent start automatically when the Pi boots:
 
 ## ⚙️ Configuration
 
-You can modify the models, URLs, and system prompts in core/config.py:
+You can modify the models, URLs, system prompts, and ALSA audio device in `core/config.py`:
 
 ```python
-LLM_MODEL = "llama3.2:1b"
-FAST_LLM_MODEL = "llama3.2:1b"
+# LLM - the model pulled via hailo-ollama
+LLM_MODEL = "qwen2.5-instruct:1.5b"
+FAST_LLM_MODEL = "qwen2.5-instruct:1.5b"
 VISION_MODEL = "qwen2-vl-instruct:2b"
+
+# Audio output - find your device with: aplay -l
+# USB speakers are typically plughw:3,0 on a Pi 5 with a USB mic/speaker combo
+ALSA_DEVICE = "plughw:3,0"
+```
+
+You can also override these at runtime using environment variables:
+```bash
+export ALSA_DEVICE="plughw:2,0"  # If your USB speaker is on a different card
+export LLM_MODEL="qwen2.5-instruct:1.5b"
 ```
 
 ---
 
 ## 🧠 How Dual-Model Routing Works (Optional)
 
-By default, the agent uses a single fast model (`llama3.2:1b`) to process all conversational requests. This avoids the latency of swapping models in and out of the NPU memory.
+By default, the agent uses a single fast model (`qwen2.5-instruct:1.5b`) to process all conversational requests. This avoids the latency of swapping models in and out of the NPU memory.
 
 If you want to handle more complex queries with better reasoning, you can enable Dual-Model routing in `core/config.py`:
-1. Change `LLM_MODEL` to a larger model, e.g., `"llama3.2:3b"`.
-2. Keep `FAST_LLM_MODEL = "llama3.2:1b"`.
+1. Change `LLM_MODEL` to a larger model (if you've pulled one), e.g., `"llama3.2:3b"`.
+2. Keep `FAST_LLM_MODEL = "qwen2.5-instruct:1.5b"`.
 
 When this is enabled, the `core/llm.py` module analyzes your prompt before sending it to the LLM. 
 - If your prompt is **short** (<= 15 words) and does **not** contain complex keywords (like "explain", "code", "story", "how"), it is routed to the `FAST_LLM_MODEL`.
