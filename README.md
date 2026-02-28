@@ -12,14 +12,14 @@ The [original project by @brenpoly](https://github.com/brenpoly/be-more-agent) i
 
 ## ✨ What's New in this Version (vs Original)
 
-* **Full Hailo-10H Accelerator Pipeline**: Not only do the LLMs and Vision Models run on the NPU (via Ollama), but this fork now exclusively uses the native `hailo_platform.genai` API to process **Speech-to-Text directly on the Hailo NPU** for near-instant 16kHz transcription!
+* **Hybrid NPU/CPU Pipeline**: The heavy LLMs and Vision Models run exceptionally fast on the Hailo-10H NPU (via Ollama). However, this fork processes **Speech-to-Text inference on the CPU** using the wildly efficient `whisper.cpp`, avoiding NPU PCIe bus bottlenecks and ensuring 100% stable 16kHz transcription!
 * **Dual Interfaces (On-Device GUI & Web App)**: 
   * **On-Device (`agent_hailo.py`)**: The classic Tkinter-based GUI that displays reactive faces on an attached screen (HDMI/DSI) and listens via a physical USB microphone.
   * **Web Version (`web_app.py`)**: A responsive, mobile-friendly web interface using FastAPI and WebSockets. Interact with your agent from your phone, tablet, or PC browser!
 * **Hailo 10H NPU Power**: Designed specifically for the Raspberry Pi 5 AI Hat+ (Hailo 10H).
    - Generative Chat (`Llama 3.2 1B`) via `hailo-ollama`
    - Vision Integration (`Qwen2-VL 2B`) via `hailo-ollama`
-   - Speech-to-Text (`Whisper`) natively accelerated via `hailo_platform.genai`
+   - Speech-to-Text (`Whisper`) natively accelerated via `whisper.cpp` (CPU)
 * **Blazing Fast TTS Streaming**: Uses Piper (`en_GB-semaine-medium`). BMO utilizes sentence-chunk buffering, so BMO begins speaking the first sentence *while* the NPU is still thinking about the rest of the response!
 * **FastAPI Web Server**: Concurrent UI support via optimal multi-worker configurations.
 * **Unified Custom Wake Word**: Uses `openwakeword` for highly accurate "Hey BMO" detection.
@@ -106,13 +106,25 @@ be-more-agent/
 ├── sounds/                    # Sound effects folder
 └── faces/                     # Face images folder
 ```
+### Why Run Whisper on the CPU instead of the NPU?
+While the BMO agent offloads massive Large Language Models (`llama3.2`) and Vision Language Models (`moondream`) directly onto the Hailo-10H NPU for incredible performance, the Whisper STT inference remains strictly on the CPU via `whisper.cpp`.
+
+During development, we discovered that trying to push the required 16-bit 16kHz audio arrays into the `hailo_platform.genai` C++ layer regularly saturated the PCIe bandwidth on the Pi AI HAT+ 2, resulting in crippling 15+ second timeouts and silent application hangs. Rather than fighting hardware bottlenecks, processing Whisper (`ggml-base.en.bin`) on the quad-core ARMs is lightning-fast and leaves the NPU cache entirely dedicated to generating conversational intelligence.
+
+### Dependencies
+*   **Required System Logs / Packages**:
+    ```bash
+    sudo apt update
+    sudo apt install ffmpeg libportaudio2
+    ```
+
 ## 🚀 Installation
 
 ### 1. Prerequisites
 Ensure your Raspberry Pi OS is up to date.
-```
+```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install git ffmpeg -y
+sudo apt install git -y
 ```
 
 ### 2. Install hailo-ollama (Hailo-10H Support)
