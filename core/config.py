@@ -66,10 +66,12 @@ SYSTEM_PROMPT = get_system_prompt()
 PIPER_CMD = "./piper/piper"
 PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
 # ALSA output device for hardware audio playback (aplay -D).
-# Uses the stable card NAME (not number) so it survives reboots.
-# Run 'aplay -l' to see your devices. The name is shown in brackets e.g. [USB Audio Device]
-# Then use: plughw:Device,0  (where "Device" matches the name without spaces)
-ALSA_DEVICE = os.environ.get("ALSA_DEVICE", "plughw:Device,0")
+# The USB combo device (mic+speaker) exposes two ALSA cards:
+#   card 2: UACDemoV10 -> speaker/playback output
+#   card 3: Device     -> microphone/capture input (held by sounddevice while agent runs)
+# Use the playback card (UACDemoV10) so aplay doesn't conflict with the mic stream.
+# Run 'aplay -l' to check your device names if this changes.
+ALSA_DEVICE = os.environ.get("ALSA_DEVICE", "plughw:UACDemoV10,0")
 
 # STT Settings (CPU whisper.cpp)
 WHISPER_CMD = "./whisper.cpp/build/bin/whisper-cli"
