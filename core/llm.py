@@ -43,16 +43,19 @@ class Brain:
         ]
         has_realtime_kw = any(kw in lower_text for kw in realtime_keywords)
         has_question = any(q in lower_text for q in question_markers)
+        search_injected = False
         if has_realtime_kw and has_question:
             try:
                 search_result = search_web(user_text)
                 if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR") and len(search_result) > 50:
+                    # Strip the verbose "SEARCH RESULTS for '...':" header from search.py
+                    clean_result = re.sub(r"^SEARCH RESULTS for '.*?':\n?", "", search_result).strip()
+                    # Inject as a tight [LIVE DATA] block — clearer than the previous format
                     self.history[-1]["content"] = (
-                        f"{user_text}\n\n"
-                        f"[Web search results for context: {search_result}]\n\n"
-                        "Please use the search context above to answer conversationally as BMO. "
-                        "Do not say you cannot access the internet."
+                        f"[LIVE DATA: {clean_result}] "
+                        f"Using only the above live data, answer in one or two sentences as BMO: {user_text}"
                     )
+                    search_injected = True
             except Exception as e:
                 logger.warning(f"Pre-LLM web search failed: {e}")
 
@@ -69,7 +72,8 @@ class Brain:
             "messages": self.history,
             "stream": False,
             "options": {
-                "temperature": 0.4
+                "temperature": 0.4,
+                "num_predict": 120,  # cap tokens to prevent runaway verbosity
             }
         }
 
@@ -136,7 +140,17 @@ class Brain:
                 content = re.sub(r'\bBeemo\b', 'BMO', content, flags=re.IGNORECASE)
 
                 self.history.append({"role": "assistant", "content": content})
+
+                # Clean injected search context from history so it doesn't
+                # accumulate and confuse the model on future turns.
+                if search_injected:
+                    for msg in reversed(self.history):
+                        if msg.get("role") == "user" and msg.get("content", "").startswith("[LIVE DATA:"):
+                            msg["content"] = user_text
+                            break
+
                 return content
+
             else:
                 logger.error(f"LLM Error: {response.status_code} - {response.text}")
                 return f"Error: {response.status_code}"
@@ -191,19 +205,19 @@ class Brain:
         has_realtime_kw = any(kw in lower_text for kw in realtime_keywords)
         has_question = any(q in lower_text for q in question_markers)
         needs_search = has_realtime_kw and has_question
+        search_injected = False
         if needs_search:
             try:
                 search_result = search_web(user_text)
                 # Only inject if we got a real result (not empty/error sentinel)
                 if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR") and len(search_result) > 50:
-                    # Inline the result into the user message so the model can't ignore it.
-                    # Using role='system' mid-conversation is unreliable with small models.
+                    # Strip verbose "SEARCH RESULTS for '...':" prefix from search.py
+                    clean_result = re.sub(r"^SEARCH RESULTS for '.*?':\n?", "", search_result).strip()
                     self.history[-1]["content"] = (
-                        f"{user_text}\n\n"
-                        f"[Web search results for context: {search_result}]\n\n"
-                        "Please use the search context above to answer conversationally as BMO. "
-                        "Do not say you cannot access the internet."
+                        f"[LIVE DATA: {clean_result}] "
+                        f"Using only the above live data, answer in one or two sentences as BMO: {user_text}"
                     )
+                    search_injected = True
             except Exception as e:
                 logger.warning(f"Pre-LLM web search failed: {e}")
 
@@ -222,7 +236,8 @@ class Brain:
             "messages": self.history,
             "stream": True,
             "options": {
-                "temperature": 0.4
+                "temperature": 0.4,
+                "num_predict": 120,  # cap tokens to prevent runaway verbosity
             }
         }
 
@@ -269,7 +284,16 @@ class Brain:
                         pass 
                     
                     self.history.append({"role": "assistant", "content": full_content})
+
+                    # Clean injected search context from history so it doesn't
+                    # accumulate and confuse the model on future turns.
+                    if search_injected:
+                        for msg in reversed(self.history):
+                            if msg.get("role") == "user" and msg.get("content", "").startswith("[LIVE DATA:"):
+                                msg["content"] = user_text
+                                break
                         
+
                 else:
                     logger.error(f"LLM Stream Error: {response.status_code} - {response.text}")
                     yield "I'm having trouble thinking."
