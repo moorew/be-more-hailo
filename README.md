@@ -5,7 +5,7 @@
   <img src="bmo-web.png" height="300" alt="BMO Web Interface" />
 </p>
 
-A fork of [@brenpoly's be-more-agent](https://github.com/brenpoly/be-more-agent) project, updated to run on the **Raspberry Pi 5** with the **Hailo-10H AI HAT+**. The agent listens for a wake word, transcribes speech, queries a local LLM, and speaks its response — all on-device, with no cloud services required.
+A fork of [@brenpoly's be-more-agent](https://github.com/brenpoly/be-more-agent) project, updated to run on the **Raspberry Pi 5** with the **Raspberry Pi AI HAT 2+** (Hailo-10H). The agent listens for a wake word, transcribes speech, queries a local LLM, and speaks its response — all on-device, with no cloud services required.
 
 This fork adds a headless **web interface**, a shared `core/` module layer used by both interfaces, and updated support for the Hailo NPU hardware.
 
@@ -46,7 +46,7 @@ The web interface includes:
 
 ## Secure remote access
 
-Modern browsers block microphone access unless the page is served over HTTPS. For the web interface, [Tailscale](https://tailscale.com/) provides a simple solution:
+Modern browsers block microphone access on any page not served over HTTPS — which means you can't use the web interface's voice features over a plain local IP. The cleanest solution I've found is [Tailscale](https://tailscale.com/). It creates a private encrypted network between your devices, and with HTTPS certificates enabled, you get a proper `*.ts.net` address with a real certificate. No port forwarding, no dynamic DNS, no fiddling.
 
 1. Install Tailscale on the Pi and your client device
 2. Enable [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https/) in the Tailscale admin console
@@ -56,12 +56,14 @@ Modern browsers block microphone access unless the page is served over HTTPS. Fo
    ```
 4. Access the web UI at `https://<your-pi-hostname>.ts.net`
 
+You can then access BMO from any device on your Tailnet — phone, laptop, anywhere — with full microphone support, without it being exposed to the internet.
+
 ---
 
 ## Hardware
 
 - Raspberry Pi 5 (4GB or 8GB recommended)
-- Hailo-10H AI HAT+ (required for NPU features)
+- Raspberry Pi AI HAT 2+ (Hailo-10H, required for NPU features)
 - USB microphone and speaker (for on-device mode)
 - HDMI or DSI display (for on-device GUI)
 - Raspberry Pi Camera Module (optional, for vision/photo features)
