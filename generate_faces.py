@@ -36,15 +36,19 @@ def draw_arc_eye(draw, cx, cy, radius, start, end):
     bbox = [cx - radius, cy - radius, cx + radius, cy + radius]
     draw.arc(bbox, start, end, fill=LINE_COLOR, width=width)
     
-    # PIL doesn't round arc ends, so we manually draw circles at the start/end bounds
+    # PIL draws arc stroke widths *inward* from the bounding box.
+    # Therefore, the centerline of the stroke is at `radius - (width / 2.0)`
     import math
-    r = width / 2.0 # Perfect radius to snap the ends flush without a gap
+    r = width / 2.0 # Radius of the end cap
+    effective_radius = radius - r # Centerline of the arc
+    
     s_rad = math.radians(start)
     e_rad = math.radians(end)
-    sx = cx + radius * math.cos(s_rad)
-    sy = cy + radius * math.sin(s_rad)
-    ex = cx + radius * math.cos(e_rad)
-    ey = cy + radius * math.sin(e_rad)
+    sx = cx + effective_radius * math.cos(s_rad)
+    sy = cy + effective_radius * math.sin(s_rad)
+    ex = cx + effective_radius * math.cos(e_rad)
+    ey = cy + effective_radius * math.sin(e_rad)
+    
     draw.ellipse([sx - r, sy - r, sx + r, sy + r], fill=LINE_COLOR)
     draw.ellipse([ex - r, ey - r, ex + r, ey + r], fill=LINE_COLOR)
 
@@ -178,10 +182,10 @@ def gen_speaking(base_dir="faces/speaking"):
     # Animated mouth opening and closing
     heights = [15, 35, 60, 45, 25, 55, 30]
     for i, h in enumerate(heights):
-        # Speaking BMO has fully open circular eyes, not U-shapes
+        # Speaking BMO has fully open circular eyes, matching the idle eye radius
         def draw_spk(d, hm=h):
-            draw_circle_eye(d, LEFT_EYE_X, EYE_Y, 12)
-            draw_circle_eye(d, RIGHT_EYE_X, EYE_Y, 12)
+            draw_circle_eye(d, LEFT_EYE_X, EYE_Y, EYE_R - 1) # matching size exactly
+            draw_circle_eye(d, RIGHT_EYE_X, EYE_Y, EYE_R - 1)
             draw_mouth(d, "speaking", hm)
         create_face(f"{base_dir}/speaking_{i:02d}.png", draw_spk)
 
