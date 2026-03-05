@@ -675,9 +675,12 @@ class BotGUI:
                                 f"Just muse to yourself in 1 sentence.\n\n"
                                 f"Info: {search_result[:300]}"
                             )
-                            # Use brain.think() for a single response
+                            # Use a temporary brain instance so we don't pollute the main conversation history
+                            # and cause the LLM context to bloat over time.
+                            from core.llm import Brain
+                            temp_brain = Brain()
                             response = ""
-                            for chunk in self.brain.stream_think(thought_prompt):
+                            for chunk in temp_brain.stream_think(thought_prompt):
                                 response += chunk
                             phrase = response.strip()[:200]  # Cap length
                             print(f"[SCREENSAVER] BMO muses: {phrase}")
