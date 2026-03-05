@@ -11,9 +11,9 @@ SCALE = 4
 LINE_WIDTH = 8
 LEFT_EYE_X = 217
 RIGHT_EYE_X = 581
-EYE_Y = 197 # Shifted down by +4 to match original exact placement
+EYE_Y = 195 # Tuned: original center Y=199.7, was 201.7 at 197, now -2 → 195
 EYE_R = 18
-MOUTH_Y = 305 # Shifted down by +4
+MOUTH_Y = 302 # Tuned: original center Y=301.5, was 304.5 at 305, now -3 → 302
 MOUTH_W = 97
 
 def ensure_dir(path):
