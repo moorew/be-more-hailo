@@ -28,7 +28,11 @@ def draw_circle_eye(draw, cx, cy, radius):
     draw.ellipse(bbox, fill=LINE_COLOR)
 
 def draw_line(draw, x1, y1, x2, y2, width=LINE_WIDTH):
-    draw.line([(x1, y1), (x2, y2)], fill=LINE_COLOR, width=width)
+    draw.line([(x1, y1), (x2, y2)], fill=LINE_COLOR, width=width, joint="curve")
+    # To get rounded caps, we also need to draw circles at the endpoints
+    r = width // 2
+    draw.ellipse([x1 - r, y1 - r, x1 + r, y1 + r], fill=LINE_COLOR)
+    draw.ellipse([x2 - r, y2 - r, x2 + r, y2 + r], fill=LINE_COLOR)
 
 def draw_regular_eyes(draw, blink=0.0):
     # blink: 0.0 = open, 1.0 = closed
@@ -73,6 +77,20 @@ def draw_sad_eyes(draw):
     draw_line(draw, 220, 220, 260, 180)
     draw_line(draw, 540, 180, 580, 220)
 
+def draw_dizzy_eyes(draw):
+    # Swirls or X's. Let's do X's for simplicity and style
+    # Left X
+    draw_line(draw, 220, 180, 260, 220)
+    draw_line(draw, 220, 220, 260, 180)
+    # Right X
+    draw_line(draw, 540, 180, 580, 220)
+    draw_line(draw, 540, 220, 580, 180)
+
+def draw_cheeky_eyes(draw):
+    # One open, one winking (line)
+    draw_circle_eye(draw, 240, 200, 15)
+    draw_line(draw, 540, 200, 580, 200)
+
 def draw_mouth(draw, type="straight", open_amount=0):
     if type == "straight":
         draw_line(draw, 360, 300, 440, 300)
@@ -89,6 +107,14 @@ def draw_mouth(draw, type="straight", open_amount=0):
         # Oval mouth
         h = max(10, min(50, open_amount))
         draw.ellipse([360, 300 - h//2, 440, 300 + h//2], fill=None, outline=LINE_COLOR, width=LINE_WIDTH)
+    elif type == "tongue":
+        # straight line with a U underneath for tongue
+        draw_line(draw, 360, 300, 440, 300)
+        draw_arc_eye(draw, 420, 300, 15, 0, 180)
+    elif type == "wavy":
+        # squiggly mouth for dizzy
+        draw_arc_eye(draw, 380, 300, 20, 180, 360)
+        draw_arc_eye(draw, 420, 300, 20, 0, 180)
 
 
 # GENERATORS
@@ -155,6 +181,24 @@ def gen_thinking(base_dir="faces/thinking"):
             d.ellipse([380 + off, 240, 400 + off, 260], fill=LINE_COLOR)
         create_face(f"{base_dir}/thinking_{i:02d}.png", draw_think)
 
+def gen_dizzy(base_dir="faces/dizzy"):
+    ensure_dir(base_dir)
+    for i in range(1, 5):
+        # alternate wavy mouth direction to make it look like it's shaking
+        def draw_dizzy1(d):
+            draw_dizzy_eyes(d)
+            draw_arc_eye(d, 380, 300, 20, 180, 360)
+            draw_arc_eye(d, 420, 300, 20, 0, 180)
+        def draw_dizzy2(d):
+            draw_dizzy_eyes(d)
+            draw_arc_eye(d, 380, 300, 20, 0, 180)
+            draw_arc_eye(d, 420, 300, 20, 180, 360)
+        create_face(f"{base_dir}/dizzy_{i:02d}.png", draw_dizzy1 if i % 2 == 0 else draw_dizzy2)
+
+def gen_cheeky(base_dir="faces/cheeky"):
+    ensure_dir(base_dir)
+    for i in range(1, 5):
+        create_face(f"{base_dir}/cheeky_{i:02d}.png", lambda d: (draw_cheeky_eyes(d), draw_mouth(d, "tongue")))
 
 if __name__ == "__main__":
     print("Generating BMO Faces...")
@@ -166,6 +210,8 @@ if __name__ == "__main__":
     gen_surprised()
     gen_sleepy()
     gen_thinking()
+    gen_dizzy()
+    gen_cheeky()
     
     # We should also ensure old images are removed if they don't match the sequence format to avoid clutter
     # Actually, we can just leave them if they loop well. But overwriting idle/speaking animations gives BMO new life!

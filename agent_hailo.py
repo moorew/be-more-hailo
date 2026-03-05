@@ -66,6 +66,8 @@ class BotStates:
     ANGRY = "angry"
     SURPRISED = "surprised"
     SLEEPY = "sleepy"
+    DIZZY = "dizzy"
+    CHEEKY = "cheeky"
 
 class BotGUI:
     BG_WIDTH, BG_HEIGHT = 800, 480 
@@ -147,7 +149,7 @@ class BotGUI:
     def load_animations(self):
         base = "faces"
         all_face_paths = []
-        for state in [BotStates.IDLE, BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.ERROR, BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY]:
+        for state in [BotStates.IDLE, BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.ERROR, BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY]:
             path = os.path.join(base, state)
             self.animations[state] = []
             if os.path.exists(path):
@@ -157,19 +159,20 @@ class BotGUI:
                     img = Image.open(img_path).resize((self.BG_WIDTH, self.BG_HEIGHT))
                     self.animations[state].append(ImageTk.PhotoImage(img))
                     
-        # Load screensaver frames (all images recursively, excluding 'warmup')
+        # Load screensaver frames (one image per folder to avoid flashing animation sequences)
         self.animations[BotStates.SCREENSAVER] = []
-        for root, dirs, files in os.walk(base):
-            if "warmup" in root:
+        for state_dir in os.listdir(base):
+            if state_dir == "warmup":
                 continue
-            for f in files:
-                if f.lower().endswith('.png'):
-                    img_path = os.path.join(root, f)
+            path = os.path.join(base, state_dir)
+            if os.path.isdir(path):
+                files = sorted([f for f in os.listdir(path) if f.lower().endswith('.png')])
+                if files:
                     try:
-                        img = Image.open(img_path).resize((self.BG_WIDTH, self.BG_HEIGHT))
+                        img = Image.open(os.path.join(path, files[0])).resize((self.BG_WIDTH, self.BG_HEIGHT))
                         self.animations[BotStates.SCREENSAVER].append(ImageTk.PhotoImage(img))
                     except Exception as e:
-                        print(f"Failed to load screensaver image {f}: {e}")
+                        print(f"Failed to load screensaver image {files[0]}: {e}")
         
         # Shuffle screensaver sequence so it's fresh each run
         random.shuffle(self.animations[BotStates.SCREENSAVER])
@@ -477,7 +480,7 @@ class BotGUI:
                                     chunk = chunk.replace(json_match.group(0), '').strip()
                                 elif action_data.get("action") == "set_expression" and action_data.get("value"):
                                     expr = action_data.get("value").lower()
-                                    if expr in [BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY]:
+                                    if expr in [BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY]:
                                         self.set_state(expr, f"Feeling {expr}...")
                                         # Let it show the expression for ~3 seconds, then we will revert back
                                         # (it will revert to SPEAKING when the next chunk comes in, or IDLE at the end)
