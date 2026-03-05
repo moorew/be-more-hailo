@@ -81,6 +81,7 @@ class BotGUI:
         self.master = master
         master.title("Pi Assistant")
         master.attributes('-fullscreen', True) 
+        master.configure(cursor='none') # Hide cursor for kiosk display
         master.bind('<Escape>', self.exit_fullscreen)
         
         # Events
@@ -101,8 +102,18 @@ class BotGUI:
         self.background_label = tk.Label(master, bg='black')
         self.background_label.place(x=0, y=0, width=self.BG_WIDTH, height=self.BG_HEIGHT)
         
-        self.status_label = tk.Label(master, text="Initializing...", font=('Courier New', 16, 'bold'), fg='white', bg='black')
-        self.status_label.place(relx=0.5, rely=0.9, anchor=tk.S)
+        # BMO-themed captions: dark green text on translucent lime-green background
+        self.status_label = tk.Label(
+            master,
+            text="Initializing...",
+            font=('Courier New', 14, 'bold'),
+            fg='#1a5c2a',       # Dark forest green text
+            bg='#bdffcb',       # BMO's signature green
+            padx=12, pady=4,
+            relief='flat',
+            highlightthickness=0
+        )
+        self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
 
         self.animations = {}
         self.current_frame = 0

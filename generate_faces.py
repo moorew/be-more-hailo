@@ -329,6 +329,23 @@ def gen_confused(base_dir="faces/confused"):
             draw_arc_eye(d, 380 + shift, 300, 20, 0, 180)
             draw_arc_eye(d, 420 - shift, 300, 20, 180, 360)
         create_face(f"{base_dir}/confused_{i:02d}.png", draw_conf1 if i % 2 == 0 else draw_conf2)
+def gen_listening(base_dir="faces/listening"):
+    ensure_dir(base_dir)
+    # Attentive eyes - slightly wider, straight mouth
+    for i in range(1, 3):
+        create_face(f"{base_dir}/listening_{i:02d}.png", lambda d: (draw_circle_eye(d, LEFT_EYE_X, EYE_VISUAL_Y, EYE_R - 2), draw_circle_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, EYE_R - 2), draw_mouth(d, "straight")))
+
+def gen_error(base_dir="faces/error"):
+    ensure_dir(base_dir)
+    create_face(f"{base_dir}/error_01.png", lambda d: (draw_dizzy_eyes(d), draw_mouth(d, "frown")))
+
+def gen_capturing(base_dir="faces/capturing"):
+    ensure_dir(base_dir)
+    create_face(f"{base_dir}/capturing_01.png", lambda d: (draw_surprised_eyes(d), draw_mouth(d, "surprised")))
+
+def gen_warmup(base_dir="faces/warmup"):
+    ensure_dir(base_dir)
+    create_face(f"{base_dir}/warmup_01.png", lambda d: (draw_regular_eyes(d, 0.5), draw_mouth(d, "straight")))
 
 if __name__ == "__main__":
     print("Generating BMO Faces...")
@@ -345,5 +362,15 @@ if __name__ == "__main__":
     gen_heart()
     gen_starry()
     gen_confused()
+    gen_listening()
+    gen_error()
+    gen_capturing()
+    gen_warmup()
+    
+    # Remove any leftover original (space-named) files that would cause frame jumping
+    import glob
+    for f in glob.glob("faces/**/* *.png", recursive=True):
+        os.remove(f)
+        print(f"Cleaned up original: {f}")
     
     print("Finished generating faces!")
