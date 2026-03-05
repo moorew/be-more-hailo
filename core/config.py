@@ -49,6 +49,9 @@ def get_system_prompt():
         "acknowledge it naturally and then append exactly this tag at the very end of your response: "
         "!PRONOUNCE: word=phonetic\n"
         "IMPORTANT: Do NOT use the !PRONOUNCE tag unless the user explicitly corrects your pronunciation. "
+        "CRITICAL: If you want to show a facial emotion, output EXACTLY this JSON format and nothing else in that block:\n"
+        '{"action": "set_expression", "value": "happy"}\n'
+        "Valid emotions are: happy, sad, angry, surprised, sleepy. Do not use this for every response, only when expressing a strong emotion.\n"
         "CRITICAL: If the user asks you to look at something, take a photo, or asks what you see, "
         "you MUST output exactly this JSON format and nothing else: "
         '{"action": "take_photo"}\n'

@@ -60,6 +60,12 @@ class BotStates:
     WARMUP = "warmup"
     DISPLAY_IMAGE = "display_image"
     SCREENSAVER = "screensaver"
+    # New Expressions
+    HAPPY = "happy"
+    SAD = "sad"
+    ANGRY = "angry"
+    SURPRISED = "surprised"
+    SLEEPY = "sleepy"
 
 class BotGUI:
     BG_WIDTH, BG_HEIGHT = 800, 480 
@@ -141,7 +147,7 @@ class BotGUI:
     def load_animations(self):
         base = "faces"
         all_face_paths = []
-        for state in [BotStates.IDLE, BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.ERROR]:
+        for state in [BotStates.IDLE, BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.ERROR, BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY]:
             path = os.path.join(base, state)
             self.animations[state] = []
             if os.path.exists(path):
@@ -468,6 +474,13 @@ class BotGUI:
                                 action_data = json.loads(json_match.group(0))
                                 if action_data.get("action") == "display_image" and action_data.get("image_url"):
                                     image_url = action_data.get("image_url")
+                                    chunk = chunk.replace(json_match.group(0), '').strip()
+                                elif action_data.get("action") == "set_expression" and action_data.get("value"):
+                                    expr = action_data.get("value").lower()
+                                    if expr in [BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY]:
+                                        self.set_state(expr, f"Feeling {expr}...")
+                                        # Let it show the expression for ~3 seconds, then we will revert back
+                                        # (it will revert to SPEAKING when the next chunk comes in, or IDLE at the end)
                                     chunk = chunk.replace(json_match.group(0), '').strip()
                             except Exception as e:
                                 print(f"JSON Parse Error: {e}")
