@@ -160,9 +160,10 @@ def draw_mouth(draw, type="straight", open_amount=0):
         draw_line(draw, m_left, MOUTH_Y, m_right, MOUTH_Y)
         draw_arc_eye(draw, 399 + 15, MOUTH_Y, 15, 0, 180)
     elif type == "wavy":
-        # squiggly mouth for dizzy
-        draw_arc_eye(draw, 399 - 15, MOUTH_Y, 15, 180, 360)
-        draw_arc_eye(draw, 399 + 15, MOUTH_Y, 15, 0, 180)
+        # squiggly mouth for dizzy (shift centers to account for PIL inward stroke)
+        shift = LINE_WIDTH // 2
+        draw_arc_eye(draw, 399 - 15 + shift, MOUTH_Y, 15, 180, 360)
+        draw_arc_eye(draw, 399 + 15 - shift, MOUTH_Y, 15, 0, 180)
 
 
 # GENERATORS
@@ -248,14 +249,15 @@ def gen_dizzy(base_dir="faces/dizzy"):
     ensure_dir(base_dir)
     for i in range(1, 5):
         # alternate wavy mouth direction to make it look like it's shaking
+        shift = LINE_WIDTH // 2
         def draw_dizzy1(d):
             draw_dizzy_eyes(d)
-            draw_arc_eye(d, 380, 300, 20, 180, 360)
-            draw_arc_eye(d, 420, 300, 20, 0, 180)
+            draw_arc_eye(d, 380 + shift, 300, 20, 180, 360)
+            draw_arc_eye(d, 420 - shift, 300, 20, 0, 180)
         def draw_dizzy2(d):
             draw_dizzy_eyes(d)
-            draw_arc_eye(d, 380, 300, 20, 0, 180)
-            draw_arc_eye(d, 420, 300, 20, 180, 360)
+            draw_arc_eye(d, 380 + shift, 300, 20, 0, 180)
+            draw_arc_eye(d, 420 - shift, 300, 20, 180, 360)
         create_face(f"{base_dir}/dizzy_{i:02d}.png", draw_dizzy1 if i % 2 == 0 else draw_dizzy2)
 
 def gen_cheeky(base_dir="faces/cheeky"):
