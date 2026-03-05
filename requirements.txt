@@ -16,3 +16,4 @@ librosa
 soundfile
 google-generativeai
 python-dotenv
+psutil
