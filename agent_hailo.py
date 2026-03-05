@@ -613,7 +613,9 @@ class BotGUI:
 
     def screensaver_audio_loop(self):
         import datetime
+        import requests as http_requests
         from core.search import search_web
+        from core.config import LLM_URL, FAST_LLM_MODEL
         
         # Topics BMO might wonder about — used as web search seeds
         search_topics = [
@@ -640,6 +642,50 @@ class BotGUI:
             "Football... is a tough little guy.",
         ]
         
+        def is_llm_reachable():
+            """Quick health check — ping the Ollama base URL before making a full LLM call."""
+            try:
+                base_url = LLM_URL.replace("/api/chat", "")
+                r = http_requests.get(base_url, timeout=5)
+                return r.status_code == 200
+            except Exception:
+                return False
+        
+        def generate_thought(search_result):
+            """Generate a BMO musing using a direct (non-streaming) LLM call.
+            Returns the thought string, or None on failure."""
+            thought_prompt = (
+                "You are BMO, a cute little robot. You just learned something interesting. "
+                "Based on this info, say ONE short sentence out loud as if thinking to yourself. "
+                "Be charming and curious. Do NOT use JSON. Do NOT ask questions to the user. "
+                "Just muse to yourself in 1 sentence.\n\n"
+                f"Info: {search_result[:300]}"
+            )
+            payload = {
+                "model": FAST_LLM_MODEL,
+                "messages": [
+                    {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself."},
+                    {"role": "user", "content": thought_prompt},
+                ],
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,
+                    "num_predict": 60,
+                }
+            }
+            try:
+                resp = http_requests.post(LLM_URL, json=payload, timeout=60)
+                if resp.status_code == 200:
+                    content = resp.json().get("message", {}).get("content", "").strip()
+                    # Filter out error-like responses the model might echo
+                    if content and "connect" not in content.lower() and "error" not in content.lower():
+                        return content[:200]
+                else:
+                    print(f"[SCREENSAVER] LLM returned status {resp.status_code}")
+            except http_requests.exceptions.RequestException as e:
+                print(f"[SCREENSAVER] LLM request failed: {e}")
+            return None
+        
         while not self.stop_event.is_set():
             time.sleep(30) # Check every 30 seconds
             if self.current_state != BotStates.SCREENSAVER:
@@ -661,31 +707,27 @@ class BotGUI:
                 # Ensure at least 20 minutes since last utterance
                 if time.time() - self.last_screensaver_audio_time > 1200:
                     phrase = None
-                    try:
-                        topic = random.choice(search_topics)
-                        print(f"[SCREENSAVER] Searching for: {topic}")
-                        search_result = search_web(topic)
-                        
-                        if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
-                            # Ask the LLM to turn this into a BMO thought
-                            thought_prompt = (
-                                f"You are BMO, a cute little robot. You just learned something interesting. "
-                                f"Based on this info, say ONE short sentence out loud as if thinking to yourself. "
-                                f"Be charming and curious. Do NOT use JSON. Do NOT ask questions to the user. "
-                                f"Just muse to yourself in 1 sentence.\n\n"
-                                f"Info: {search_result[:300]}"
-                            )
-                            # Use a temporary brain instance so we don't pollute the main conversation history
-                            # and cause the LLM context to bloat over time.
-                            from core.llm import Brain
-                            temp_brain = Brain()
-                            response = ""
-                            for chunk in temp_brain.stream_think(thought_prompt):
-                                response += chunk
-                            phrase = response.strip()[:200]  # Cap length
-                            print(f"[SCREENSAVER] BMO muses: {phrase}")
-                    except Exception as e:
-                        print(f"[SCREENSAVER] Dynamic thought failed: {e}")
+                    
+                    # Check if LLM server is even reachable before trying
+                    if is_llm_reachable():
+                        try:
+                            topic = random.choice(search_topics)
+                            print(f"[SCREENSAVER] Searching for: {topic}")
+                            search_result = search_web(topic)
+                            
+                            if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
+                                # Try up to 2 times with a short delay
+                                for attempt in range(2):
+                                    phrase = generate_thought(search_result)
+                                    if phrase:
+                                        print(f"[SCREENSAVER] BMO muses: {phrase}")
+                                        break
+                                    print(f"[SCREENSAVER] Attempt {attempt + 1} failed, retrying...")
+                                    time.sleep(5)
+                        except Exception as e:
+                            print(f"[SCREENSAVER] Dynamic thought failed: {e}")
+                    else:
+                        print("[SCREENSAVER] LLM server not reachable, skipping thought")
                     
                     # Fallback if dynamic generation failed
                     if not phrase:
