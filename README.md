@@ -149,8 +149,6 @@ chmod +x *.sh
 
 ## Running
 
-## Running
-
 **Web Interface (Kiosk Mode):**
 ```bash
 ./setup_web.sh
