@@ -276,7 +276,7 @@ class BotGUI:
         # Match web UI animation speeds
         speed = 500
         if self.current_state == BotStates.SPEAKING:
-            speed = 50   # Fix: Lower to 50ms (20fps) for natural lip sync
+            speed = 90   # Fix: 90ms for natural lip sync
         elif self.current_state == BotStates.THINKING:
             speed = 500
         elif self.current_state == BotStates.LISTENING:
@@ -370,9 +370,39 @@ class BotGUI:
         print("Transcribing...")
         return transcribe_audio(filename)
 
-    def speak(self, text):
-        print(f"Speaking: {text}")
-        play_audio_on_hardware(text)
+    def speak(self, text, msg="Speaking..."):
+        from core.tts import clean_text_for_speech
+        from core.config import PIPER_CMD, PIPER_MODEL, ALSA_DEVICE
+        
+        clean_text = clean_text_for_speech(text)
+        if not clean_text or not any(c.isalnum() for c in clean_text):
+            return
+            
+        print(f"Speaking: {clean_text[:30]}...")
+        try:
+            safe_text = clean_text.replace("'", "'\\''")
+            
+            # 1. Synthesize audio first. (Runs silently, mouth stays idle/thinking)
+            piper_cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_raw"
+            res = subprocess.run(piper_cmd, shell=True, capture_output=True)
+            if res.returncode != 0:
+                print(f"Piper error: {res.stderr}")
+                return
+            
+            # 2. Audio is ready! Set SPEAKING state so mouth starts moving.
+            if msg is not None:
+                self.set_state(BotStates.SPEAKING, msg)
+            else:
+                self.current_state = BotStates.SPEAKING
+                self.current_frame = 0
+                self.last_state_change = time.time()
+            
+            # 3. Play the generated audio bytes
+            aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", "22050", "-f", "S16_LE", "-t", "raw"]
+            subprocess.run(aplay_cmd, input=res.stdout)
+            
+        except Exception as e:
+            print(f"Hardware TTS Error: {e}")
 
     def record_followup(self, timeout_sec=8):
         """
@@ -553,7 +583,6 @@ class BotGUI:
                                 print(f"JSON Parse Error: {e}")
                                 
                         if chunk.strip():
-                            self.set_state(BotStates.SPEAKING, "Speaking...")
                             self.speak(chunk)
 
                     if taking_photo:
@@ -581,7 +610,6 @@ class BotGUI:
                                 except Exception:
                                     pass
                                 self.thinking_audio_process = None
-                            self.set_state(BotStates.SPEAKING, "Speaking...")
                             self.speak(response)
                         except FileNotFoundError as e:
                             print(f"Camera Error: {e}")
@@ -630,7 +658,6 @@ class BotGUI:
                         try:
                             for chunk in self.brain.stream_think(user_text):
                                 if chunk.strip():
-                                    self.set_state(BotStates.SPEAKING, "Speaking...")
                                     self.speak(chunk)
                         except Exception as e:
                             print(f"Follow-up LLM error: {e}")
@@ -766,8 +793,7 @@ class BotGUI:
                     # Speak the thought
                     if self.current_state == BotStates.SCREENSAVER:
                         old_state = self.current_state
-                        self.set_state(BotStates.SPEAKING, "")
-                        self.speak(phrase)
+                        self.speak(phrase, msg="")
                         self.set_state(old_state, "")
                         self.last_screensaver_audio_time = time.time()
 
