@@ -71,6 +71,7 @@ class BotStates:
     HEART = "heart"
     STARRY_EYED = "starry_eyed"
     CONFUSED = "confused"
+    SHHH = "shhh"
 
 class BotGUI:
 
@@ -83,6 +84,7 @@ class BotGUI:
         master.attributes('-fullscreen', True) 
         master.configure(cursor='none') # Hide cursor for kiosk display
         master.bind('<Escape>', self.exit_fullscreen)
+        master.bind('<Button-1>', self.mute_bmo)
         
         # Events
         self.stop_event = threading.Event()
@@ -141,6 +143,33 @@ class BotGUI:
         if msg:
             self.status_label.config(text=msg)
 
+    def mute_bmo(self, event=None):
+        """Emergency stop for audio and sets the whimsical 'shhh' face."""
+        try:
+            # Kill any hardware audio playing via aplay immediately
+            subprocess.run(["killall", "-9", "aplay"], capture_output=True)
+            print("[MUTE] Killed aplay process.")
+        except Exception as e:
+            print(f"[MUTE] Error stopping aplay: {e}")
+            
+        old_state = self.current_state
+        self.set_state(BotStates.SHHH, "Shhh...")
+        
+        # Stop background thinking audio loops too if they're active
+        if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+            try:
+                self.thinking_audio_process.terminate()
+            except Exception:
+                pass
+            self.thinking_audio_process = None
+
+        # After 3 seconds, resume natural state
+        def revert_state():
+            # Only revert if we haven't already transitioned to something else (e.g. LISTENING / SPEAKING)
+            if self.current_state == BotStates.SHHH:
+                self.set_state(old_state if old_state != BotStates.SHHH else BotStates.IDLE, "Ready...")
+        self.master.after(3000, revert_state)
+
     # --- ANIMATION & SOUND ENGINE ---
     def load_sounds(self):
         self.sounds = {
@@ -168,7 +197,7 @@ class BotGUI:
     def load_animations(self):
         base = "faces"
         all_face_paths = []
-        for state in [BotStates.IDLE, BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.ERROR, BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.CONFUSED]:
+        for state in [BotStates.IDLE, BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.ERROR, BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.CONFUSED, BotStates.SHHH]:
             path = os.path.join(base, state)
             self.animations[state] = []
             if os.path.exists(path):
@@ -247,12 +276,12 @@ class BotGUI:
         # Match web UI animation speeds
         speed = 500
         if self.current_state == BotStates.SPEAKING:
-            speed = 150
+            speed = 50   # Fix: Lower to 50ms (20fps) for natural lip sync
         elif self.current_state == BotStates.THINKING:
             speed = 500
         elif self.current_state == BotStates.LISTENING:
             speed = 400
-        elif self.current_state == BotStates.SCREENSAVER:
+        elif self.current_state == BotStates.SCREENSAVER or self.current_state == BotStates.SHHH:
             speed = 400 # Smooth animation speed for sequences
 
         self.master.after(speed, self.update_animation)

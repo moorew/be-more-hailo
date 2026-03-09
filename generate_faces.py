@@ -218,6 +218,11 @@ def draw_mouth(draw, type="straight", open_amount=0):
         shift = LINE_WIDTH // 2
         draw_arc_eye(draw, 399 - 15 + shift, MOUTH_Y, 15, 180, 360)
         draw_arc_eye(draw, 399 + 15 - shift, MOUTH_Y, 15, 0, 180)
+    elif type == "mute":
+        # whimsical 'x' mouth for shhh
+        sz = max(8, open_amount)
+        draw_line(draw, 399 - sz, MOUTH_Y - sz, 399 + sz, MOUTH_Y + sz)
+        draw_line(draw, 399 - sz, MOUTH_Y + sz, 399 + sz, MOUTH_Y - sz)
 
 
 # GENERATORS
@@ -499,6 +504,20 @@ def gen_curious(base_dir="faces/curious"):
             draw_mouth(d, "straight")
         create_face(f"{base_dir}/curious_{i+1:02d}.png", draw_cur)
 
+def gen_shhh(base_dir="faces/shhh"):
+    """Shhh mouth with a cute whimsical X, animated eyes slightly squinting"""
+    ensure_dir(base_dir)
+    # 8 frames of animation to match others
+    for i in range(8):
+        # Eyes slowly half-close
+        blink_amt = (4 - abs(i - 4)) * 0.1  # max ~0.4 blink
+        # X mouth pulsates gently
+        x_size = 10 + (4 - abs(i - 4)) * 1.5
+        def draw_sh(d, blink=blink_amt, sz=int(x_size)):
+            draw_regular_eyes(d, blink)
+            draw_mouth(d, "mute", open_amount=sz)
+        create_face(f"{base_dir}/shhh_{i+1:02d}.png", draw_sh)
+
 if __name__ == "__main__":
     print("Generating BMO Faces...")
     gen_idle()
@@ -522,6 +541,7 @@ if __name__ == "__main__":
     gen_bored()
     gen_jamming()
     gen_curious()
+    gen_shhh()
     
     # Remove any leftover original (space-named) files that would cause frame jumping
     import glob
