@@ -202,7 +202,7 @@ class Brain:
             "stream": False,
             "options": {
                 "temperature": 0.4,
-                "num_predict": 120,  # cap tokens to prevent runaway verbosity
+                "num_predict": 180,  # increased to prevent responses getting cut off
             }
         }
 
@@ -381,7 +381,7 @@ class Brain:
             "stream": True,
             "options": {
                 "temperature": 0.4,
-                "num_predict": 120,  # cap tokens to prevent runaway verbosity
+                "num_predict": 180,  # increased to prevent responses getting cut off
             }
         }
 
