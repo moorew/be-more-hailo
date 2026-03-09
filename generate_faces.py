@@ -234,14 +234,30 @@ def gen_idle(base_dir="faces/idle"):
 
 def gen_speaking(base_dir="faces/speaking"):
     ensure_dir(base_dir)
-    # Animated mouth opening and closing
-    heights = [15, 35, 60, 45, 25, 55, 30]
+    # Natural speech rhythm: 0 = closed mouth (straight line), >0 = open speaking mouth
+    # Pattern simulates syllable cadence with word-boundary pauses for realistic lip-sync
+    heights = [
+        0,          # 00: closed (clean start / rest)
+        35, 50,     # 01-02: first syllable
+        0,          # 03: brief close between syllables
+        45, 30,     # 04-05: second syllable
+        55, 25,     # 06-07: third syllable (emphasis)
+        0,          # 08: word boundary pause
+        40, 60,     # 09-10: stressed syllable
+        20,         # 11: quick consonant
+        45, 30,     # 12-13: next syllable
+        0,          # 14: word boundary pause
+        35, 50, 20, # 15-17: trailing word
+        0,          # 18: closed (clean loop back to start)
+    ]
     for i, h in enumerate(heights):
-        # Speaking BMO has fully open circular eyes, matching the idle eye radius
         def draw_spk(d, hm=h):
             draw_circle_eye(d, LEFT_EYE_X, EYE_VISUAL_Y, EYE_R - 1)
             draw_circle_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, EYE_R - 1)
-            draw_mouth(d, "speaking", hm)
+            if hm == 0:
+                draw_mouth(d, "straight")
+            else:
+                draw_mouth(d, "speaking", hm)
         create_face(f"{base_dir}/speaking_{i:02d}.png", draw_spk)
 
 def gen_happy(base_dir="faces/happy"):
