@@ -401,6 +401,17 @@ class BotGUI:
             aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", "22050", "-f", "S16_LE", "-t", "raw"]
             subprocess.run(aplay_cmd, input=res.stdout)
             
+            # 4. Enforce an immediate IDLE state and a short visual breath pause
+            # This ensures the mouth closes definitively before the next sentence chunk arrives
+            if self.current_state == BotStates.SPEAKING:
+                if msg is not None:
+                    self.set_state(BotStates.IDLE, "Ready...")
+                else:
+                    self.current_state = BotStates.IDLE
+                    self.current_frame = 0
+                    self.last_state_change = time.time()
+                time.sleep(0.3)
+            
         except Exception as e:
             print(f"Hardware TTS Error: {e}")
 
