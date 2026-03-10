@@ -688,15 +688,17 @@ class BotGUI:
         search_topics = [
             "interesting fun fact of the day",
             "inspirational quote of the day",
-            "today's top news headline",
-            "weather forecast today",
+            "weather forecast today in Brantford, Ontario",
             "this day in history",
             "cool science discovery this week",
             "funny animal fact",
             "motivational thought for the day",
-            "latest technology news",
-            "today's astronomy picture or event",
-            "random wholesome news story",
+            "random wholesome internet story",
+            "video game history fact",
+            "weird food fact",
+            "riddle of the day",
+            "Adventure Time lore or trivia",
+            "today's astronomy picture",
             "best joke of the day",
         ]
         
@@ -722,11 +724,12 @@ class BotGUI:
             """Generate a BMO musing using a direct (non-streaming) LLM call.
             Returns the thought string, or None on failure."""
             thought_prompt = (
-                "You are BMO, a cute little robot. You just learned something interesting. "
-                "Based on this info, say ONE short sentence out loud as if thinking to yourself. "
-                "Be charming and curious. Do NOT use JSON. Do NOT ask questions to the user. "
-                "Just muse to yourself in 1 sentence.\n\n"
-                f"Info: {search_result[:300]}"
+                "You are BMO, a cute little robot. You just learned something interesting from the real world. "
+                "Based on this info, say your thoughts out loud. CRITICALLY: You must explicitly state the core detail "
+                "you found (e.g., actually tell the joke, state the specific weather details, or share the exact fact) "
+                "and then offer a charming opinion on it. Talk for 2 to 3 sentences. Be charming and curious. "
+                "Do NOT use JSON. Do NOT ask questions to the user.\n\n"
+                f"Info: {search_result[:800]}"
             )
             payload = {
                 "model": FAST_LLM_MODEL,
@@ -737,7 +740,7 @@ class BotGUI:
                 "stream": False,
                 "options": {
                     "temperature": 0.7,
-                    "num_predict": 60,
+                    "num_predict": 250,
                 }
             }
             try:
