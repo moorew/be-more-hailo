@@ -432,7 +432,8 @@ class BotGUI:
             subprocess.run(aplay_cmd, input=res.stdout)
             
             # 4. Enforce an immediate IDLE state and a short visual breath pause
-            # This ensures the mouth closes definitively before the next sentence chunk arrives
+            # This ensures the mouth closes definitively before the next sentence chunk arrives,
+            # unless a background thread (like play_music) has already hijacked the state to JAMMING
             if self.current_state == BotStates.SPEAKING:
                 if msg is not None:
                     self.set_state(BotStates.IDLE, "Ready...")
