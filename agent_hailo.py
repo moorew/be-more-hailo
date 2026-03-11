@@ -365,6 +365,34 @@ class BotGUI:
         scipy.io.wavfile.write(filename, MIC_SAMPLE_RATE, data)
         return filename
 
+    # --- TIMERS & REMINDERS ---
+    def start_timer_thread(self, minutes, message):
+        def timer_worker():
+            print(f"[TIMER SET] for {minutes} minutes. Message: {message}")
+            time.sleep(minutes * 60)
+            print(f"[TIMER DONE] {message}")
+            
+            # Wait for BMO to finish speaking/listening to avoid ALSA conflicts
+            while self.current_state in [BotStates.SPEAKING, BotStates.LISTENING]:
+                time.sleep(1)
+                
+            # Interject the alarm
+            old_state = self.current_state
+            self.set_state(BotStates.HAPPY, "Reminder!")
+            # Play an alert noise if we have one
+            alert_proc = self.play_sound("ack_sounds")
+            if alert_proc:
+                alert_proc.wait()
+                
+            self.speak(message, msg="Reminder!")
+            
+            # Return BMO to whatever they were doing (e.g. IDLE or SCREENSAVER)
+            time.sleep(1)
+            if self.current_state == BotStates.IDLE:
+                self.set_state(old_state if old_state != BotStates.HAPPY else BotStates.IDLE, "Ready")
+                
+        threading.Thread(target=timer_worker, daemon=True).start()
+
     # --- STT & TTS ---
     def transcribe(self, filename):
         print("Transcribing...")
@@ -598,6 +626,11 @@ class BotGUI:
                                         self.set_state(expr, f"Feeling {expr}...")
                                         # Let it show the expression for ~3 seconds, then we will revert back
                                         # (it will revert to SPEAKING when the next chunk comes in, or IDLE at the end)
+                                    chunk = chunk.replace(json_match.group(0), '').strip()
+                                elif action_data.get("action") == "set_timer" and action_data.get("minutes") is not None:
+                                    mins = float(action_data.get("minutes"))
+                                    msg = action_data.get("message", "Timer is up!")
+                                    self.start_timer_thread(mins, msg)
                                     chunk = chunk.replace(json_match.group(0), '').strip()
                             except Exception as e:
                                 print(f"JSON Parse Error: {e}")

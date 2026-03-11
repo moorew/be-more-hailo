@@ -56,7 +56,11 @@ def get_system_prompt():
         "When feeling a strong emotion, you may include this JSON on its own line: "
         '{"action": "set_expression", "value": "EMOTION"} '
         "where EMOTION is one of: happy, sad, angry, surprised, sleepy, dizzy, cheeky, heart, starry_eyed, confused. "
-        "Only use this occasionally for strong emotions, not every response."
+        "Only use this occasionally for strong emotions, not every response. "
+        "If the user asks you to set a timer or a reminder, you MUST output this JSON on its own line: "
+        '{"action": "set_timer", "minutes": X, "message": "optional reminder message"} '
+        "where X is the number of minutes (use decimals for seconds if needed, e.g., 0.5 for 30 seconds). "
+        "If they don't give a specific reminder message, just say 'Timer is up!' for the message."
     )
 
 
