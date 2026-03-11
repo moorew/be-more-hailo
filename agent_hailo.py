@@ -691,33 +691,49 @@ class BotGUI:
 
                 self.set_state(BotStates.IDLE, "Ready")
 
-                # Conversation follow-up: listen briefly for a natural reply
-                self.set_state(BotStates.LISTENING, "Still listening...")
-                followup_wav = self.record_followup(timeout_sec=8)
-                if followup_wav:
+                # Conversation follow-up: let user reply repeatedly as long as they respond within 8 seconds
+                while True:
+                    self.set_state(BotStates.LISTENING, "Still listening...")
+                    followup_wav = self.record_followup(timeout_sec=8)
+                    
+                    if not followup_wav:
+                        # User didn't reply within 8 seconds, end conversation thread
+                        self.set_state(BotStates.IDLE, "Waiting...")
+                        break
+                        
                     self.set_state(BotStates.THINKING, "Transcribing...")
                     threading.Thread(target=play_thinking_sequence, daemon=True).start()
                     user_text = self.transcribe(followup_wav)
                     print(f"Follow-up Transcribed: {user_text}")
-                    if len(user_text) >= 2:
-                        self.set_state(BotStates.THINKING, "Thinking...")
+                    
+                    if len(user_text) < 2:
+                        # Mic picked up noise, but no actual speech. End conversation.
                         if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
                             try:
                                 self.thinking_audio_process.terminate()
                             except Exception:
                                 pass
                             self.thinking_audio_process = None
-                        try:
-                            for chunk in self.brain.stream_think(user_text):
-                                if chunk.strip():
-                                    self.speak(chunk)
-                        except Exception as e:
-                            print(f"Follow-up LLM error: {e}")
-                        self.set_state(BotStates.IDLE, "Ready")
-                    else:
                         self.set_state(BotStates.IDLE, "Waiting...")
-                else:
-                    self.set_state(BotStates.IDLE, "Waiting...")
+                        break
+
+                    self.set_state(BotStates.THINKING, "Thinking...")
+                    if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+                        try:
+                            self.thinking_audio_process.terminate()
+                        except Exception:
+                            pass
+                        self.thinking_audio_process = None
+                        
+                    try:
+                        for chunk in self.brain.stream_think(user_text):
+                            if chunk.strip():
+                                self.speak(chunk)
+                    except Exception as e:
+                        print(f"Follow-up LLM error: {e}")
+                        
+                    self.set_state(BotStates.IDLE, "Ready")
+                    # Loop back around and listen again!
                     
                 # Guarantee a 1 second cool-down before we loop all the way back up
                 # and call wait_for_wakeword(). This ensures ALSA capture locks are fully
