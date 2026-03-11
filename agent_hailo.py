@@ -470,6 +470,9 @@ class BotGUI:
             print(f"Follow-up listen error: {e}")
             return None
 
+        # Give ALSA/PortAudio time to fully close the stream context at OS level
+        time.sleep(0.5)
+
         print(f"Speech finished! Max mic volume was: {max_vol_seen:.2f}")
         if not has_spoken or not frames:
             return None
@@ -715,6 +718,11 @@ class BotGUI:
                         self.set_state(BotStates.IDLE, "Waiting...")
                 else:
                     self.set_state(BotStates.IDLE, "Waiting...")
+                    
+                # Guarantee a 1 second cool-down before we loop all the way back up
+                # and call wait_for_wakeword(). This ensures ALSA capture locks are fully
+                # released by the kernel, preventing PaErrorCode -9999 crashes.
+                time.sleep(1.0)
 
     def screensaver_audio_loop(self):
         import datetime
