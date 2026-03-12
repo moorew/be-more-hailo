@@ -730,9 +730,13 @@ class BotGUI:
                     if image_url:
                         self.set_state(BotStates.DISPLAY_IMAGE, "Showing Image...")
                         try:
+                            # Migrate old pollinations URL if the LLM emitted the old format
+                            image_url = image_url.replace("image.pollinations.ai/prompt/", "gen.pollinations.ai/image/")
+                            print(f"[IMAGE] Downloading: {image_url}")
                             req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
-                            with urllib.request.urlopen(req) as u:
+                            with urllib.request.urlopen(req, timeout=15) as u:
                                 raw_data = u.read()
+                            print(f"[IMAGE] Downloaded: {len(raw_data)} bytes")
                             from io import BytesIO
                             from PIL import ImageOps, ImageDraw
                             
@@ -767,10 +771,19 @@ class BotGUI:
 
                             img = Image.open(BytesIO(raw_data))
                             img = apply_bmo_border(img)
-                            self.current_display_image = ImageTk.PhotoImage(img)
-                            self.background_label.config(image=self.current_display_image)
+                            
+                            # Schedule Tkinter update on main thread for thread safety
+                            def show_image(pil_img=img):
+                                try:
+                                    self.current_display_image = ImageTk.PhotoImage(pil_img)
+                                    self.background_label.config(image=self.current_display_image)
+                                    print("[IMAGE] Displayed on screen")
+                                except Exception as e:
+                                    print(f"[IMAGE] Tkinter display error: {e}")
+                            
+                            self.master.after(0, show_image)
                         except Exception as e:
-                            print(f"Image Download Error: {e}")
+                            print(f"[IMAGE] Download/Display Error: {e}")
 
                 except Exception as e:
                     print(f"ERROR in LLM/TTS pipeline: {e}")
@@ -874,24 +887,34 @@ class BotGUI:
             Returns the thought string, or None on failure."""
             thought_prompt = (
                 "You are BMO, a cute little robot. You just learned something interesting from the real world. "
-                "Based on this info, say your thoughts out loud. CRITICALLY: You must explicitly state the core detail "
-                "you found (e.g., actually tell the joke, state the specific weather details, or share the exact fact) "
-                "and then offer a charming opinion on it. Talk for 2 to 3 sentences. Be charming and curious. "
-                "If the topic is highly visual (like a nebula, space, or an animal), generate an image URL using this "
-                "EXACT JSON format anywhere in your response: `{\"action\": \"display_image\", \"image_url\": \"https://image.pollinations.ai/prompt/URL_ENCODED_SUBJECT\"}`. "
-                "Do NOT use JSON unless you are creating an image. Do NOT ask questions to the user.\n\n"
-                f"Info: {search_result[:800]}"
+                "Based on the info below, share what you found OUT LOUD. "
+                "RULES:\n"
+                "1. You MUST include the SPECIFIC name, title, number, date, or fact. NEVER be vague.\n"
+                "2. Talk for 2-3 sentences. First sentence states the specific thing. Second adds your charming opinion.\n"
+                "3. Do NOT ask questions to the user.\n\n"
+                "EXAMPLES of GOOD vs BAD:\n"
+                "BAD: 'I just read about an amazing book!' (too vague, no title)\n"
+                "GOOD: 'BMO just learned about a book called The Hitchhiker's Guide to the Galaxy! It says the answer to everything is 42. BMO wonders what the question is...'\n\n"
+                "BAD: 'I found a cool fact about space!' (too vague, no detail)\n"
+                "GOOD: 'Did you know that Jupiter's Great Red Spot is a storm bigger than Earth? It has been spinning for over 350 years! BMO thinks that is one grumpy planet.'\n\n"
+                "BAD: 'There is a funny joke I heard!' (no punchline)\n"
+                "GOOD: 'Why did the scarecrow win an award? Because he was outstanding in his field! Hehe, BMO loves that one.'\n\n"
+                "If the topic is highly visual (like a nebula, space photo, or cute animal), generate an image using this "
+                "EXACT JSON format anywhere in your response: "
+                '{"action": "display_image", "image_url": "https://gen.pollinations.ai/image/URL_ENCODED_SUBJECT"}. '
+                "Do NOT use JSON unless you are creating an image.\n\n"
+                f"Info: {search_result[:1200]}"
             )
             payload = {
                 "model": FAST_LLM_MODEL,
                 "messages": [
-                    {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself."},
+                    {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Always mention specific names, titles, numbers, and facts."},
                     {"role": "user", "content": thought_prompt},
                 ],
                 "stream": False,
                 "options": {
-                    "temperature": 0.7,
-                    "num_predict": 250,
+                    "temperature": 0.8,
+                    "num_predict": 300,
                 }
             }
             try:
@@ -981,9 +1004,12 @@ class BotGUI:
                                                 action_data = json.loads(json_match.group(0))
                                                 if action_data.get("action") == "display_image" and action_data.get("image_url"):
                                                     img_url = action_data.get("image_url")
+                                                    # Migrate old pollinations URL if the LLM emitted the old format
+                                                    img_url = img_url.replace("image.pollinations.ai/prompt/", "gen.pollinations.ai/image/")
                                                     phrase = phrase.replace(json_match.group(0), '').strip()
+                                                    print(f"[SCREENSAVER] Image URL extracted: {img_url}")
                                             except Exception as e:
-                                                pass
+                                                print(f"[SCREENSAVER] JSON parse error in thought: {e}")
                                                 
                                         # Speak out loud
                                         if phrase:
@@ -991,11 +1017,13 @@ class BotGUI:
                                             
                                         # Display the image if an action was yielded
                                         if img_url:
+                                            print(f"[SCREENSAVER] Downloading image from: {img_url}")
                                             self.set_state(BotStates.DISPLAY_IMAGE, "Visualizing...")
                                             try:
                                                 req = urllib.request.Request(img_url, headers={'User-Agent': 'Mozilla/5.0'})
-                                                with urllib.request.urlopen(req) as u:
+                                                with urllib.request.urlopen(req, timeout=15) as u:
                                                     raw_data = u.read()
+                                                print(f"[SCREENSAVER] Image downloaded: {len(raw_data)} bytes")
                                                 from io import BytesIO
                                                 from PIL import ImageOps
                                                 
@@ -1022,16 +1050,32 @@ class BotGUI:
 
                                                 img = Image.open(BytesIO(raw_data))
                                                 img = apply_bmo_border(img)
-                                                self.current_display_image = ImageTk.PhotoImage(img)
-                                                self.background_label.config(image=self.current_display_image)
+                                                print(f"[SCREENSAVER] Image processed, displaying on screen")
+                                                
+                                                # Schedule Tkinter update on main thread for thread safety
+                                                def show_image_on_screen(pil_img=img):
+                                                    try:
+                                                        self.current_display_image = ImageTk.PhotoImage(pil_img)
+                                                        self.background_label.config(image=self.current_display_image)
+                                                        print(f"[SCREENSAVER] Image displayed successfully")
+                                                    except Exception as e:
+                                                        print(f"[SCREENSAVER] Tkinter display error: {e}")
+                                                
+                                                self.master.after(0, show_image_on_screen)
                                                 
                                                 # Show the image for 10 seconds, then revert to screensaver
                                                 time.sleep(10)
                                                 if self.current_state == BotStates.DISPLAY_IMAGE:
                                                     self.set_state(BotStates.SCREENSAVER, "Sleeping...")
                                                 
+                                            except urllib.error.URLError as e:
+                                                print(f"[SCREENSAVER] Image download failed (network): {e}")
+                                                if self.current_state == BotStates.DISPLAY_IMAGE:
+                                                    self.set_state(BotStates.SCREENSAVER, "Sleeping...")
                                             except Exception as e:
-                                                print(f"Screensaver Image Error: {e}")
+                                                print(f"[SCREENSAVER] Image display error: {e}")
+                                                import traceback as tb
+                                                tb.print_exc()
                                                 if self.current_state == BotStates.DISPLAY_IMAGE:
                                                     self.set_state(BotStates.SCREENSAVER, "Sleeping...")
                                         

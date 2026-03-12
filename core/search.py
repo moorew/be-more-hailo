@@ -17,7 +17,7 @@ def search_web(query: str) -> str:
             
             # 1. Try News search first
             try:
-                results = list(ddgs.news(query, region='us-en', max_results=1))
+                results = list(ddgs.news(query, region='us-en', max_results=3))
                 if results:
                     logger.info(f"Found News: {results[0].get('title')}")
             except Exception as e:
@@ -27,17 +27,20 @@ def search_web(query: str) -> str:
             if not results:
                 logger.info("No news found, trying text search...")
                 try:
-                    results = list(ddgs.text(query, region='us-en', max_results=1))
+                    results = list(ddgs.text(query, region='us-en', max_results=3))
                     if results:
                         logger.info(f"Found Text: {results[0].get('title')}")
                 except Exception as e:
                     logger.warning(f"Text Search Error: {e}")
 
             if results:
-                r = results[0]
-                title = r.get('title', 'No Title')
-                body = r.get('body', r.get('snippet', 'No Body'))
-                return f"SEARCH RESULTS for '{query}':\nTitle: {title}\nSnippet: {body[:500]}"
+                # Combine up to 3 results for richer context
+                parts = []
+                for r in results[:3]:
+                    title = r.get('title', 'No Title')
+                    body = r.get('body', r.get('snippet', 'No Body'))
+                    parts.append(f"Title: {title}\nSnippet: {body[:400]}")
+                return f"SEARCH RESULTS for '{query}':\n" + "\n---\n".join(parts)
             else:
                 logger.info("Search returned 0 results.")
                 return "SEARCH_EMPTY"
