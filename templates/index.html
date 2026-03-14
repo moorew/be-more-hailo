@@ -792,6 +792,7 @@
             greeting_sounds: [],
             ack_sounds: [],
             thinking_sounds: [],
+            camera_sounds: [],
             music: []
         };
 
@@ -869,6 +870,7 @@
             await loadSounds('greeting_sounds');
             await loadSounds('ack_sounds');
             await loadSounds('thinking_sounds');
+            await loadSounds('camera_sounds');
             await loadSounds('music');
 
             // Try to play greeting sound (might be blocked by browser autoplay policy)
@@ -1446,6 +1448,9 @@
 
                 // Give the camera a moment to adjust exposure
                 await new Promise(r => setTimeout(r, 500));
+
+                // Play shutter sound before capture
+                playRandomSound('camera_sounds');
 
                 // Set canvas dimensions to match video
                 canvas.width = video.videoWidth;
