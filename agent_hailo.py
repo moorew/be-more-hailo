@@ -37,6 +37,8 @@ from core.llm import Brain
 from core.tts import play_audio_on_hardware
 from core.stt import transcribe_audio
 from core.config import MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE
+from core.meter import MicMeter
+from core.bubble import ThoughtBubble
 from core.log import bmo_print, setup_logging
 
 setup_logging()
@@ -112,7 +114,10 @@ class BotGUI:
         # Init UI
         self.background_label = tk.Label(master, bg='black')
         self.background_label.place(x=0, y=0, width=self.BG_WIDTH, height=self.BG_HEIGHT)
-        
+
+        # Mic gain meter (extracted to core/meter.py)
+        self.meter = MicMeter(master)
+
         # BMO-themed captions: dark green text on translucent lime-green background
         self.status_label = tk.Label(
             master,
@@ -125,6 +130,9 @@ class BotGUI:
             highlightthickness=0
         )
         self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
+
+        # Thought bubble overlay for transcribed user input
+        self.bubble = ThoughtBubble(master)
 
         self.is_muted = False
         self.mute_label = tk.Label(
@@ -151,6 +159,10 @@ class BotGUI:
         self.last_screensaver_audio_time = time.time()
         threading.Thread(target=self.screensaver_audio_loop, daemon=True).start()
 
+    def show_user_prompt(self, text):
+        """Show transcribed text as an animated thought bubble, auto-hide after 8s."""
+        self.bubble.show(text)
+
     def exit_fullscreen(self, event=None):
         self.stop_event.set()
         self.master.quit()
@@ -161,6 +173,11 @@ class BotGUI:
             self.current_frame = 0
             self.last_state_change = time.time()
             bmo_print("STATE", f"{state.upper()}: {msg}")
+            # Mic gain meter: show only during LISTENING
+            if state == BotStates.LISTENING:
+                self.meter.show()
+            else:
+                self.meter.hide()
         if msg:
             self.status_label.config(text=msg)
 
@@ -286,10 +303,11 @@ class BotGUI:
         if self.current_state == BotStates.LISTENING and self.current_frame > 0 and 'screensaver' in str(self.animations.get(self.current_state, [])):
             self.current_frame = 0 # reset cleanly
 
-        # Hide text status label during screensaver
+        # Hide text labels during screensaver
         if self.current_state == BotStates.SCREENSAVER:
             if self.status_label.winfo_ismapped():
                 self.status_label.place_forget()
+            self.bubble.hide()
         else:
             if not self.status_label.winfo_ismapped():
                 self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
@@ -314,7 +332,7 @@ class BotGUI:
         elif self.current_state == BotStates.THINKING:
             speed = 500
         elif self.current_state == BotStates.LISTENING:
-            speed = 400
+            speed = 250
         elif self.current_state == BotStates.SCREENSAVER or self.current_state == BotStates.SHHH:
             speed = 400 # Smooth animation speed for sequences
 
@@ -368,18 +386,24 @@ class BotGUI:
 
         def callback(indata, frames_count, time, status):
             nonlocal silent_chunks, has_spoken
-            vol = np.linalg.norm(indata) * 10 
+            vol = np.linalg.norm(indata) * 10
+            self.meter.feed(vol)
             frames.append(indata.copy())
             if vol < 50000: # Silence threshold
                 silent_chunks += 1
             else:
                 silent_chunks = 0
                 has_spoken = True
-            
+
         try:
+            record_start = time.time()
             with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', callback=callback):
                 while not self.stop_event.is_set():
                     sd.sleep(50)
+                    elapsed = time.time() - record_start
+                    # Grace period: give user at least 1.5s to start speaking after wake word
+                    if elapsed < 1.5:
+                        continue
                     if not has_spoken and silent_chunks > 100:
                         break
                     if has_spoken and silent_chunks > 40:
@@ -507,8 +531,9 @@ class BotGUI:
             if time.time() < ignore_until:
                 return  # still in echo dead-zone — ignore all audio
             vol = np.linalg.norm(indata) * 10
+            self.meter.feed(vol)
             max_vol_seen = max(max_vol_seen, vol)
-            
+
             frames.append(indata.copy())
             if vol < 50000:  # Matching main record_audio silence threshold
                 silent_chunks += 1
@@ -614,7 +639,8 @@ class BotGUI:
 
                 user_text = self.transcribe(wav_file)
                 bmo_print("STT", f"User Transcribed: {user_text}")
-                
+                self.show_user_prompt(user_text)
+
                 if len(user_text) < 2:
                     self.set_state(BotStates.IDLE, "Ready")
                     if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
@@ -640,7 +666,8 @@ class BotGUI:
                     full_response = ""
                     image_url = None
                     taking_photo = False
-                    
+                    music_triggered = False
+
                     for chunk in self.brain.stream_think(user_text):
                         if not chunk.strip():
                             continue
@@ -677,6 +704,7 @@ class BotGUI:
                                     self.start_timer_thread(mins, msg)
                                     chunk = chunk.replace(json_match.group(0), '').strip()
                                 elif action_data.get("action") == "play_music":
+                                    music_triggered = True
                                     # Spawns a background thread to play music and animate
                                     def music_worker():
                                         # Wait for current speaking to finish
@@ -818,6 +846,12 @@ class BotGUI:
 
                 self.set_state(BotStates.IDLE, "Ready")
 
+                # Skip follow-up listening when music was triggered — the mic would
+                # pick up BMO's own intro speech and the music itself as false input.
+                if music_triggered:
+                    bmo_print("FOLLOW-UP", "Skipped — music playback active")
+                    continue
+
                 # Conversation follow-up: let user reply repeatedly as long as they respond within 8 seconds
                 while True:
                     self.set_state(BotStates.LISTENING, "Still listening...")
@@ -832,7 +866,8 @@ class BotGUI:
                     threading.Thread(target=play_thinking_sequence, daemon=True).start()
                     user_text = self.transcribe(followup_wav)
                     bmo_print("STT", f"Follow-up Transcribed: {user_text}")
-                    
+                    self.show_user_prompt(user_text)
+
                     if len(user_text) < 2:
                         # Mic picked up noise, but no actual speech. End conversation.
                         if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:

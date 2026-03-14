@@ -412,9 +412,32 @@ def gen_confused(base_dir="faces/confused"):
         create_face(f"{base_dir}/confused_{i:02d}.png", draw_conf1 if i % 2 == 0 else draw_conf2)
 def gen_listening(base_dir="faces/listening"):
     ensure_dir(base_dir)
-    # Attentive eyes - slightly wider, straight mouth
-    for i in range(1, 3):
-        create_face(f"{base_dir}/listening_{i:02d}.png", lambda d: (draw_circle_eye(d, LEFT_EYE_X, EYE_VISUAL_Y, EYE_R - 2), draw_circle_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, EYE_R - 2), draw_mouth(d, "straight")))
+    # Sound wave ear design — concentric arcs on each side ripple outward
+    # Arc radii for three concentric rings per ear
+    arc_radii = [18, 28, 38]
+    # Which arcs are visible per frame (indices into arc_radii)
+    frame_arcs = [
+        [0],        # 1: inner only
+        [0, 1],     # 2: inner + middle
+        [0, 1, 2],  # 3: all three
+        [0, 1, 2],  # 4: all three
+        [1, 2],     # 5: middle + outer
+        [2],        # 6: outer only
+        [],         # 7: none
+        [0],        # 8: inner only (loop)
+    ]
+    for i, visible in enumerate(frame_arcs):
+        def draw_listen(d, vis=visible):
+            # Left ear arcs — open rightward toward center: )))
+            for idx in vis:
+                r = arc_radii[idx]
+                draw_arc_eye(d, LEFT_EYE_X, EYE_VISUAL_Y, r, 300, 60)
+            # Right ear arcs — open leftward toward center: (((
+            for idx in vis:
+                r = arc_radii[idx]
+                draw_arc_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, r, 120, 240)
+            # No mouth — meter canvas overlays this area
+        create_face(f"{base_dir}/listening_{i+1:02d}.png", draw_listen)
 
 def gen_error(base_dir="faces/error"):
     ensure_dir(base_dir)
