@@ -754,8 +754,8 @@ class BotGUI:
                         self.set_state(BotStates.DISPLAY_IMAGE, "Showing Image...")
                         print(f"[IMAGE] Starting image display for: {image_url}")
                         try:
-                            # Migrate old pollinations URL if the LLM emitted the old format
-                            image_url = image_url.replace("image.pollinations.ai/prompt/", "gen.pollinations.ai/image/")
+                            # Migrate broken gen.pollinations.ai URL to working image.pollinations.ai
+                            image_url = image_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
                             print(f"[IMAGE] Downloading: {image_url}")
                             req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
                             with urllib.request.urlopen(req, timeout=15) as u:
@@ -925,7 +925,7 @@ class BotGUI:
                 "GOOD: 'Why did the scarecrow win an award? Because he was outstanding in his field! Hehe, BMO loves that one.'\n\n"
                 "If the topic is highly visual (like a nebula, space photo, or cute animal), generate an image using this "
                 "EXACT JSON format anywhere in your response: "
-                '{"action": "display_image", "image_url": "https://gen.pollinations.ai/image/URL_ENCODED_SUBJECT"}. '
+                '{"action": "display_image", "image_url": "https://image.pollinations.ai/prompt/URL_ENCODED_SUBJECT?width=512&height=512&nologo=true"}. '
                 "Do NOT use JSON unless you are creating an image.\n\n"
                 f"Info: {search_result[:1200]}"
             )
@@ -1002,6 +1002,12 @@ class BotGUI:
                 
             # ~2% chance every 30 seconds = roughly once every 25-30 minutes for audio vocalizations
             if random.random() < 0.02:
+                # Quiet hours: no pondering between 10 PM and 7 AM
+                from datetime import datetime
+                current_hour = datetime.now().hour
+                if current_hour >= 22 or current_hour < 7:
+                    continue
+                
                 # Ensure at least 20 minutes since last utterance
                 if time.time() - self.last_screensaver_audio_time > 1200:
                     phrase = None
@@ -1028,8 +1034,8 @@ class BotGUI:
                                                 action_data = json.loads(json_match.group(0))
                                                 if action_data.get("action") == "display_image" and action_data.get("image_url"):
                                                     img_url = action_data.get("image_url")
-                                                    # Migrate old pollinations URL if the LLM emitted the old format
-                                                    img_url = img_url.replace("image.pollinations.ai/prompt/", "gen.pollinations.ai/image/")
+                                                    # Migrate broken gen.pollinations.ai URL to working image.pollinations.ai
+                                                    img_url = img_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
                                                     phrase = phrase.replace(json_match.group(0), '').strip()
                                                     print(f"[SCREENSAVER] Image URL extracted: {img_url}")
                                             except Exception as e:

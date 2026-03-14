@@ -119,7 +119,7 @@ def _build_display_image_action(user_text: str) -> str:
     # Remove trailing punctuation
     subject = subject.rstrip("?.!")
     prompt = urllib.parse.quote(subject.strip() or "something fun")
-    return json.dumps({"action": "display_image", "image_url": f"https://gen.pollinations.ai/image/{prompt}"})
+    return json.dumps({"action": "display_image", "image_url": f"https://image.pollinations.ai/prompt/{prompt}?width=512&height=512&nologo=true"})
 
 
 def _strip_prompt_leakage(content: str) -> str:
