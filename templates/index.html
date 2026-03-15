@@ -814,6 +814,7 @@
             if (screensaverTimeout) clearTimeout(screensaverTimeout);
             if (screensaverActive) {
                 screensaverActive = false;
+                stopScreensaverThoughts();
                 setFaceState('idle');
             }
             screensaverTimeout = setTimeout(startScreensaver, SCREENSAVER_DELAY);
@@ -822,6 +823,7 @@
         function startScreensaver() {
             screensaverActive = true;
             playScreensaverSequence();
+            startScreensaverThoughts();
         }
 
         function playScreensaverSequence() {
@@ -856,6 +858,77 @@
                 frameIndex = framesShown % images.length;
                 bmoFace.src = images[frameIndex];
             }, 400);
+        }
+
+        // Screensaver thought polling — periodically fetch a random thought during screensaver
+        let screensaverThoughtInterval = null;
+        let lastScreensaverThoughtTime = 0;
+        const SCREENSAVER_THOUGHT_INTERVAL = 600000; // 10 minutes between thoughts
+
+        function startScreensaverThoughts() {
+            if (screensaverThoughtInterval) return;
+            screensaverThoughtInterval = setInterval(async () => {
+                if (!screensaverActive) return;
+                const now = Date.now();
+                if (now - lastScreensaverThoughtTime < SCREENSAVER_THOUGHT_INTERVAL) return;
+
+                try {
+                    const response = await fetch('/api/screensaver-thought');
+                    const data = await response.json();
+                    if (!screensaverActive) return; // User may have interacted during fetch
+
+                    if (data.thought) {
+                        lastScreensaverThoughtTime = Date.now();
+                        // Show thought as a system message in chat
+                        addMessage(`💭 ${data.thought}`, 'bmo');
+                        // Update the BMO transcript
+                        updateTranscript(data.thought, 6000);
+
+                        // Generate and play TTS if not using hardware audio
+                        if (!audioToggle.checked) {
+                            try {
+                                const ttsResponse = await fetch('/api/chat', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        message: data.thought,
+                                        history: [
+                                            { role: 'system', content: 'Repeat the following text exactly as-is, do not add anything:' },
+                                            { role: 'user', content: data.thought }
+                                        ],
+                                        play_on_hardware: false
+                                    })
+                                });
+                                // We just want the audio_url, not the response text
+                            } catch (e) {
+                                console.log('[SCREENSAVER] TTS for thought failed:', e);
+                            }
+                        }
+
+                        // Display image if one was generated
+                        if (data.image_url) {
+                            const displayImg = document.getElementById('bmo-display-image');
+                            displayImg.src = data.image_url;
+                            displayImg.style.display = 'block';
+                            // Hide after 10 seconds
+                            setTimeout(() => {
+                                if (screensaverActive) {
+                                    displayImg.style.display = 'none';
+                                }
+                            }, 10000);
+                        }
+                    }
+                } catch (e) {
+                    console.log('[SCREENSAVER] Thought fetch failed:', e);
+                }
+            }, 30000); // Check every 30 seconds
+        }
+
+        function stopScreensaverThoughts() {
+            if (screensaverThoughtInterval) {
+                clearInterval(screensaverThoughtInterval);
+                screensaverThoughtInterval = null;
+            }
         }
 
         // Initialize

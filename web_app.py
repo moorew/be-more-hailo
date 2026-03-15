@@ -311,6 +311,102 @@ async def get_sounds(category: str):
     sounds = [f"/sounds/{category}/{s}" for s in os.listdir(sound_dir) if s.endswith('.wav')]
     return {"sounds": sorted(sounds)}
 
+@app.get("/api/screensaver-thought")
+async def get_screensaver_thought():
+    """Generate a random BMO thought for the web screensaver.
+    Uses web search + LLM with Gemini fallback."""
+    import random
+    import re
+    from core.search import search_web
+    from core.config import gemini_chat, LLM_URL, FAST_LLM_MODEL
+
+    search_topics = [
+        "interesting fun fact of the day",
+        "inspirational quote of the day",
+        "this day in history",
+        "cool science discovery this week",
+        "funny animal fact",
+        "motivational thought for the day",
+        "video game history fact",
+        "weird food fact",
+        "riddle of the day",
+        "Adventure Time lore or trivia",
+        "best joke of the day",
+    ]
+    fallback_phrases = [
+        "I wonder what Finn and Jake are doing right now.",
+        "Does anyone want to play a video game? No? ...Okay.",
+        "La la la la la... BMO is the best!",
+        "Sometimes BMO just likes to hum a little tune.",
+        "Football... is a tough little guy.",
+    ]
+
+    phrase = None
+    image_url = None
+
+    try:
+        topic = random.choice(search_topics)
+        logger.info(f"[SCREENSAVER-WEB] Searching for: {topic}")
+        search_result = search_web(topic)
+
+        if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
+            thought_prompt = (
+                "You are BMO, a cute little robot. You just learned something interesting from the real world. "
+                "Based on the info below, share what you found OUT LOUD. "
+                "RULES:\n"
+                "1. You MUST include the SPECIFIC name, title, number, date, or fact. NEVER be vague.\n"
+                "2. Talk for 2-3 sentences. First sentence states the specific thing. Second adds your charming opinion.\n"
+                "3. Do NOT ask questions to the user.\n\n"
+                f"Info: {search_result[:1200]}"
+            )
+            messages = [
+                {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Always mention specific names, titles, numbers, and facts."},
+                {"role": "user", "content": thought_prompt},
+            ]
+
+            # Try local LLM first
+            try:
+                import requests as http_requests
+                payload = {
+                    "model": FAST_LLM_MODEL,
+                    "messages": messages,
+                    "stream": False,
+                    "options": {"temperature": 0.8, "num_predict": 300}
+                }
+                resp = http_requests.post(LLM_URL, json=payload, timeout=30)
+                if resp.status_code == 200:
+                    content = resp.json().get("message", {}).get("content", "").strip()
+                    if content and "connect" not in content.lower() and "error" not in content.lower():
+                        phrase = content
+            except Exception as e:
+                logger.warning(f"[SCREENSAVER-WEB] Local LLM failed: {e}")
+
+            # Fallback to Gemini
+            if not phrase:
+                gemini_result = gemini_chat(messages, temperature=0.8, max_tokens=300)
+                if gemini_result:
+                    phrase = gemini_result
+
+            # Extract image URL if present
+            if phrase:
+                json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
+                if json_match:
+                    try:
+                        action_data = json.loads(json_match.group(0))
+                        if action_data.get("action") == "display_image" and action_data.get("image_url"):
+                            image_url = action_data.get("image_url")
+                            image_url = image_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
+                            phrase = phrase.replace(json_match.group(0), '').strip()
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.error(f"[SCREENSAVER-WEB] Thought generation failed: {e}")
+
+    if not phrase:
+        phrase = random.choice(fallback_phrases)
+
+    return {"thought": phrase, "image_url": image_url}
+
 if __name__ == "__main__":
     import uvicorn
     import glob

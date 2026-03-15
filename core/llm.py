@@ -6,7 +6,7 @@ import re
 import json
 import urllib.parse
 import numpy as np
-from .config import LLM_URL, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt
+from .config import LLM_URL, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt, gemini_chat
 from .tts import add_pronunciation
 from .search import search_web
 
@@ -314,10 +314,24 @@ class Brain:
 
             else:
                 logger.error(f"LLM Error: {response.status_code} - {response.text}")
+                # Fallback to Gemini on LLM error
+                gemini_response = gemini_chat(self.history, temperature=0.4, max_tokens=180)
+                if gemini_response:
+                    logger.info("[FALLBACK] Gemini answered after LLM error")
+                    self.history.append({"role": "assistant", "content": gemini_response})
+                    self._trim_history()
+                    return gemini_response
                 return f"Error: {response.status_code}"
                 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Connection Error: {e}")
+            logger.error(f"Connection Error to {LLM_URL}: {e}")
+            # Fallback to Gemini when local LLM is unreachable
+            gemini_response = gemini_chat(self.history, temperature=0.4, max_tokens=180)
+            if gemini_response:
+                logger.info("[FALLBACK] Gemini answered after connection error")
+                self.history.append({"role": "assistant", "content": gemini_response})
+                self._trim_history()
+                return gemini_response
             return "Could not connect to my brain. Is the Hailo server running?"
         except Exception as e:
             logger.error(f"Brain Exception: {e}")
@@ -483,10 +497,26 @@ class Brain:
 
                 else:
                     logger.error(f"LLM Stream Error: {response.status_code} - {response.text}")
-                    yield "I'm having trouble thinking."
+                    # Fallback to Gemini on LLM error
+                    gemini_response = gemini_chat(self.history, temperature=0.4, max_tokens=180)
+                    if gemini_response:
+                        logger.info("[FALLBACK] Gemini answered after LLM stream error")
+                        self.history.append({"role": "assistant", "content": gemini_response})
+                        self._trim_history()
+                        yield gemini_response
+                    else:
+                        yield "I'm having trouble thinking."
         except requests.exceptions.RequestException as e:
-            logger.error(f"Connection Error: {e}")
-            yield "Could not connect to my brain."
+            logger.error(f"Connection Error to {LLM_URL}: {e}")
+            # Fallback to Gemini when local LLM is unreachable
+            gemini_response = gemini_chat(self.history, temperature=0.4, max_tokens=180)
+            if gemini_response:
+                logger.info("[FALLBACK] Gemini answered after connection error")
+                self.history.append({"role": "assistant", "content": gemini_response})
+                self._trim_history()
+                yield gemini_response
+            else:
+                yield "Could not connect to my brain."
         except Exception as e:
             logger.error(f"Brain Exception: {e}")
             yield "I'm having trouble right now."

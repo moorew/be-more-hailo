@@ -758,7 +758,7 @@ class BotGUI:
                             image_url = image_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
                             print(f"[IMAGE] Downloading: {image_url}")
                             req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
-                            with urllib.request.urlopen(req, timeout=15) as u:
+                            with urllib.request.urlopen(req, timeout=30) as u:
                                 raw_data = u.read()
                             print(f"[IMAGE] Downloaded: {len(raw_data)} bytes")
                             from io import BytesIO
@@ -868,7 +868,7 @@ class BotGUI:
         import datetime
         import requests as http_requests
         from core.search import search_web
-        from core.config import LLM_URL, FAST_LLM_MODEL
+        from core.config import LLM_URL, FAST_LLM_MODEL, gemini_chat, get_system_prompt
         
         # Topics BMO might wonder about — used as web search seeds
         search_topics = [
@@ -952,6 +952,18 @@ class BotGUI:
                     print(f"[SCREENSAVER] LLM returned status {resp.status_code}")
             except http_requests.exceptions.RequestException as e:
                 print(f"[SCREENSAVER] LLM request failed: {e}")
+            
+            # Fallback to Gemini if local LLM failed
+            print("[SCREENSAVER] Trying Gemini fallback for thought generation...")
+            gemini_messages = [
+                {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Always mention specific names, titles, numbers, and facts."},
+                {"role": "user", "content": thought_prompt},
+            ]
+            gemini_result = gemini_chat(gemini_messages, temperature=0.8, max_tokens=300)
+            if gemini_result:
+                print(f"[SCREENSAVER] Gemini fallback succeeded")
+                return gemini_result
+            
             return None
         
         while not self.stop_event.is_set():
@@ -1000,123 +1012,125 @@ class BotGUI:
                 self.master.after(8000, revert_persona)
                 continue
                 
-            # ~2% chance every 30 seconds = roughly once every 25-30 minutes for audio vocalizations
-            if random.random() < 0.02:
+            # ~5% chance every 30 seconds = roughly once every 10 minutes for audio vocalizations
+            if random.random() < 0.05:
                 # Quiet hours: no pondering between 10 PM and 7 AM
                 from datetime import datetime
                 current_hour = datetime.now().hour
                 if current_hour >= 22 or current_hour < 7:
                     continue
                 
-                # Ensure at least 20 minutes since last utterance
-                if time.time() - self.last_screensaver_audio_time > 1200:
+                # Ensure at least 10 minutes since last utterance
+                if time.time() - self.last_screensaver_audio_time > 600:
                     phrase = None
                     
                     # Check if LLM server is even reachable before trying
-                    if is_llm_reachable():
-                        try:
-                            topic = random.choice(search_topics)
-                            print(f"[SCREENSAVER] Searching for: {topic}")
-                            search_result = search_web(topic)
-                            
-                            if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
-                                # Try up to 2 times with a short delay
-                                for attempt in range(2):
-                                    phrase = generate_thought(search_result)
-                                    if phrase:
-                                        print(f"[SCREENSAVER] BMO muses: {phrase}")
-                                        
-                                        # Check for image generation action
-                                        img_url = None
-                                        json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
-                                        if json_match:
-                                            try:
-                                                action_data = json.loads(json_match.group(0))
-                                                if action_data.get("action") == "display_image" and action_data.get("image_url"):
-                                                    img_url = action_data.get("image_url")
-                                                    # Migrate broken gen.pollinations.ai URL to working image.pollinations.ai
-                                                    img_url = img_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
-                                                    phrase = phrase.replace(json_match.group(0), '').strip()
-                                                    print(f"[SCREENSAVER] Image URL extracted: {img_url}")
-                                            except Exception as e:
-                                                print(f"[SCREENSAVER] JSON parse error in thought: {e}")
-                                                
-                                        # Speak out loud
-                                        if phrase:
-                                            self.speak(phrase, msg="Pondering...")
+                    # (Still try even if LLM is down — Gemini fallback is available)
+                    llm_available = is_llm_reachable()
+                    if not llm_available:
+                        print("[SCREENSAVER] Local LLM not reachable, will try Gemini fallback")
+                    
+                    try:
+                        topic = random.choice(search_topics)
+                        print(f"[SCREENSAVER] Searching for: {topic}")
+                        search_result = search_web(topic)
+                        
+                        if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
+                            # Try up to 2 times with a short delay
+                            for attempt in range(2):
+                                phrase = generate_thought(search_result)
+                                if phrase:
+                                    print(f"[SCREENSAVER] BMO muses: {phrase}")
+                                    
+                                    # Check for image generation action
+                                    img_url = None
+                                    json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
+                                    if json_match:
+                                        try:
+                                            action_data = json.loads(json_match.group(0))
+                                            if action_data.get("action") == "display_image" and action_data.get("image_url"):
+                                                img_url = action_data.get("image_url")
+                                                # Migrate broken gen.pollinations.ai URL to working image.pollinations.ai
+                                                img_url = img_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
+                                                phrase = phrase.replace(json_match.group(0), '').strip()
+                                                print(f"[SCREENSAVER] Image URL extracted: {img_url}")
+                                        except Exception as e:
+                                            print(f"[SCREENSAVER] JSON parse error in thought: {e}")
                                             
-                                        # Display the image if an action was yielded
-                                        if img_url:
-                                            print(f"[SCREENSAVER] Downloading image from: {img_url}")
-                                            self.set_state(BotStates.DISPLAY_IMAGE, "Visualizing...")
-                                            try:
-                                                req = urllib.request.Request(img_url, headers={'User-Agent': 'Mozilla/5.0'})
-                                                with urllib.request.urlopen(req, timeout=15) as u:
-                                                    raw_data = u.read()
-                                                print(f"[SCREENSAVER] Image downloaded: {len(raw_data)} bytes")
-                                                from io import BytesIO
-                                                from PIL import ImageOps
-                                                
-                                                # Need to replicate apply_bmo_border for screensaver
-                                                def apply_bmo_border(pil_img):
-                                                    lcd_w, lcd_h = self.BG_WIDTH - 60, self.BG_HEIGHT - 60
-                                                    img_ratio = pil_img.width / pil_img.height
-                                                    target_ratio = lcd_w / lcd_h
-                                                    if img_ratio > target_ratio:
-                                                        new_h = lcd_h
-                                                        new_w = int(new_h * img_ratio)
-                                                    else:
-                                                        new_w = lcd_w
-                                                        new_h = int(new_w / img_ratio)
-                                                    pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                                                    left = (new_w - lcd_w) / 2
-                                                    top = (new_h - lcd_h) / 2
-                                                    right = (new_w + lcd_w) / 2
-                                                    bottom = (new_h + lcd_h) / 2
-                                                    pil_img = pil_img.crop((left, top, right, bottom))
-                                                    pil_img = ImageOps.expand(pil_img, border=10, fill="#1c201a")
-                                                    pil_img = ImageOps.expand(pil_img, border=20, fill="#38b5a0")
-                                                    return pil_img
-
-                                                img = Image.open(BytesIO(raw_data))
-                                                img = apply_bmo_border(img)
-                                                print(f"[SCREENSAVER] Image processed, displaying on screen")
-                                                
-                                                # Schedule Tkinter update on main thread for thread safety
-                                                def show_image_on_screen(pil_img=img):
-                                                    try:
-                                                        self.current_display_image = ImageTk.PhotoImage(pil_img)
-                                                        self.background_label.config(image=self.current_display_image)
-                                                        print(f"[SCREENSAVER] Image displayed successfully")
-                                                    except Exception as e:
-                                                        print(f"[SCREENSAVER] Tkinter display error: {e}")
-                                                
-                                                self.master.after(0, show_image_on_screen)
-                                                
-                                                # Show the image for 10 seconds, then revert to screensaver
-                                                time.sleep(10)
-                                                if self.current_state == BotStates.DISPLAY_IMAGE:
-                                                    self.set_state(BotStates.SCREENSAVER, "Sleeping...")
-                                                
-                                            except urllib.error.URLError as e:
-                                                print(f"[SCREENSAVER] Image download failed (network): {e}")
-                                                if self.current_state == BotStates.DISPLAY_IMAGE:
-                                                    self.set_state(BotStates.SCREENSAVER, "Sleeping...")
-                                            except Exception as e:
-                                                print(f"[SCREENSAVER] Image display error: {e}")
-                                                import traceback as tb
-                                                tb.print_exc()
-                                                if self.current_state == BotStates.DISPLAY_IMAGE:
-                                                    self.set_state(BotStates.SCREENSAVER, "Sleeping...")
+                                    # Speak out loud
+                                    if phrase:
+                                        self.speak(phrase, msg="Pondering...")
                                         
-                                        self.last_screensaver_audio_time = time.time()
-                                        break
-                                    print(f"[SCREENSAVER] Attempt {attempt + 1} failed, retrying...")
-                                    time.sleep(5)
-                        except Exception as e:
-                            print(f"[SCREENSAVER] Dynamic thought failed: {e}")
-                    else:
-                        print("[SCREENSAVER] LLM server not reachable, skipping thought")
+                                    # Display the image if an action was yielded
+                                    if img_url:
+                                        print(f"[SCREENSAVER] Downloading image from: {img_url}")
+                                        self.set_state(BotStates.DISPLAY_IMAGE, "Visualizing...")
+                                        try:
+                                            req = urllib.request.Request(img_url, headers={'User-Agent': 'Mozilla/5.0'})
+                                            with urllib.request.urlopen(req, timeout=30) as u:
+                                                raw_data = u.read()
+                                            print(f"[SCREENSAVER] Image downloaded: {len(raw_data)} bytes")
+                                            from io import BytesIO
+                                            from PIL import ImageOps
+                                            
+                                            # Need to replicate apply_bmo_border for screensaver
+                                            def apply_bmo_border(pil_img):
+                                                lcd_w, lcd_h = self.BG_WIDTH - 60, self.BG_HEIGHT - 60
+                                                img_ratio = pil_img.width / pil_img.height
+                                                target_ratio = lcd_w / lcd_h
+                                                if img_ratio > target_ratio:
+                                                    new_h = lcd_h
+                                                    new_w = int(new_h * img_ratio)
+                                                else:
+                                                    new_w = lcd_w
+                                                    new_h = int(new_w / img_ratio)
+                                                pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                                                left = (new_w - lcd_w) / 2
+                                                top = (new_h - lcd_h) / 2
+                                                right = (new_w + lcd_w) / 2
+                                                bottom = (new_h + lcd_h) / 2
+                                                pil_img = pil_img.crop((left, top, right, bottom))
+                                                pil_img = ImageOps.expand(pil_img, border=10, fill="#1c201a")
+                                                pil_img = ImageOps.expand(pil_img, border=20, fill="#38b5a0")
+                                                return pil_img
+
+                                            img = Image.open(BytesIO(raw_data))
+                                            img = apply_bmo_border(img)
+                                            print(f"[SCREENSAVER] Image processed, displaying on screen")
+                                            
+                                            # Schedule Tkinter update on main thread for thread safety
+                                            def show_image_on_screen(pil_img=img):
+                                                try:
+                                                    self.current_display_image = ImageTk.PhotoImage(pil_img)
+                                                    self.background_label.config(image=self.current_display_image)
+                                                    print(f"[SCREENSAVER] Image displayed successfully")
+                                                except Exception as e:
+                                                    print(f"[SCREENSAVER] Tkinter display error: {e}")
+                                            
+                                            self.master.after(0, show_image_on_screen)
+                                            
+                                            # Show the image for 10 seconds, then revert to screensaver
+                                            time.sleep(10)
+                                            if self.current_state == BotStates.DISPLAY_IMAGE:
+                                                self.set_state(BotStates.SCREENSAVER, "Sleeping...")
+                                            
+                                        except urllib.error.URLError as e:
+                                            print(f"[SCREENSAVER] Image download failed (network): {e}")
+                                            if self.current_state == BotStates.DISPLAY_IMAGE:
+                                                self.set_state(BotStates.SCREENSAVER, "Sleeping...")
+                                        except Exception as e:
+                                            print(f"[SCREENSAVER] Image display error: {e}")
+                                            import traceback as tb
+                                            tb.print_exc()
+                                            if self.current_state == BotStates.DISPLAY_IMAGE:
+                                                self.set_state(BotStates.SCREENSAVER, "Sleeping...")
+                                    
+                                    self.last_screensaver_audio_time = time.time()
+                                    break
+                                print(f"[SCREENSAVER] Attempt {attempt + 1} failed, retrying...")
+                                time.sleep(5)
+                    except Exception as e:
+                        print(f"[SCREENSAVER] Dynamic thought failed: {e}")
                     
                     # Fallback if dynamic generation failed
                     if not phrase:
@@ -1126,7 +1140,7 @@ class BotGUI:
                     # Speak the thought
                     if self.current_state == BotStates.SCREENSAVER:
                         old_state = self.current_state
-                        self.speak(phrase, msg="")
+                        self.speak(phrase, msg="Pondering...")
                         self.set_state(old_state, "")
                         self.last_screensaver_audio_time = time.time()
 
