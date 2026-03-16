@@ -147,7 +147,12 @@ class Brain:
         """
         Send text to local LLM (Hailo/Ollama) and get response.
         """
+        # Update system prompt with latest time/date before thinking
+        if self.history and self.history[0].get("role") == "system":
+            self.history[0]["content"] = get_system_prompt()
+            
         self.history.append({"role": "user", "content": user_text})
+
 
         lower_text = user_text.lower()
 
@@ -331,7 +336,12 @@ class Brain:
         Send text to local LLM and yield full sentences as they are generated.
         Useful for TTS chunking (speaking while generating).
         """
+        # Update system prompt with latest time/date before thinking
+        if self.history and self.history[0].get("role") == "system":
+            self.history[0]["content"] = get_system_prompt()
+
         self.history.append({"role": "user", "content": user_text})
+
 
         lower_text = user_text.lower()
 

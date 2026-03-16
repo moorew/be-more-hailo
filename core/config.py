@@ -66,26 +66,51 @@ def get_system_prompt():
         "This will automatically trigger your internal chiptune synthesizers and start your dancing animation!"
     )
 
-
-SYSTEM_PROMPT = get_system_prompt()
-
 # TTS Settings
 PIPER_CMD = "./piper/piper"
 PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
-# ALSA output device for hardware audio playback (aplay -D).
-# The USB combo device (mic+speaker) exposes two ALSA cards:
-#   card 2: UACDemoV10 -> speaker/playback output
-#   card 3: Device     -> microphone/capture input (held by sounddevice while agent runs)
-# Use the playback card (UACDemoV10) so aplay doesn't conflict with the mic stream.
-# Run 'aplay -l' to check your device names if this changes.
-ALSA_DEVICE = os.environ.get("ALSA_DEVICE", "plughw:UACDemoV10,0")
 
 # STT Settings (CPU whisper.cpp)
 WHISPER_CMD = "./whisper.cpp/build/bin/whisper-cli"
 WHISPER_MODEL = "./models/ggml-base.en.bin"
 
 # Audio Settings
-MIC_DEVICE_INDEX = 1
+
 MIC_SAMPLE_RATE = 48000
 WAKE_WORD_MODEL = "./wakeword.onnx"
 WAKE_WORD_THRESHOLD = 0.35
+
+# Robustly find Audio Devices
+def find_audio_devices():
+    import sounddevice as sd
+    devices = sd.query_devices()
+    mic_idx = 1 # Default fallback
+    speaker_name = "plughw:UACDemoV10,0" # Default fallback
+    
+    # Preferred names for BMO hardware
+    pref_mic = "USB Audio Device"
+    pref_speaker = "UACDemoV10"
+    
+    found_mic = False
+    for i, dev in enumerate(devices):
+        if pref_mic in dev['name'] and dev['max_input_channels'] > 0:
+            mic_idx = i
+            found_mic = True
+            print(f"[CONFIG] Found Mic by name: {dev['name']} at index {i}")
+        if pref_speaker in dev['name']:
+            speaker_name = "plughw:UACDemoV10,0"
+            print(f"[CONFIG] Found Speaker: {dev['name']} -> using {speaker_name}")
+            
+    # Fallback: if no mic found by name, pick the first one with input channels
+    if not found_mic:
+        for i, dev in enumerate(devices):
+            if dev['max_input_channels'] > 0:
+                mic_idx = i
+                print(f"[CONFIG] Fallback: Using first available mic: {dev['name']} at index {i}")
+                break
+                
+    return mic_idx, speaker_name
+
+MIC_DEVICE_INDEX, ALSA_DEVICE = find_audio_devices()
+
+
