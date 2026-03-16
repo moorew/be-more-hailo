@@ -314,11 +314,11 @@ async def get_sounds(category: str):
 @app.get("/api/screensaver-thought")
 async def get_screensaver_thought():
     """Generate a random BMO thought for the web screensaver.
-    Uses web search + LLM with Gemini fallback."""
+    Uses web search + local LLM."""
     import random
     import re
     from core.search import search_web
-    from core.config import gemini_chat, LLM_URL, FAST_LLM_MODEL
+    from core.config import LLM_URL, FAST_LLM_MODEL
 
     search_topics = [
         "interesting fun fact of the day",
@@ -364,7 +364,7 @@ async def get_screensaver_thought():
                 {"role": "user", "content": thought_prompt},
             ]
 
-            # Try local LLM first
+            # Try local LLM
             try:
                 import requests as http_requests
                 payload = {
@@ -380,12 +380,6 @@ async def get_screensaver_thought():
                         phrase = content
             except Exception as e:
                 logger.warning(f"[SCREENSAVER-WEB] Local LLM failed: {e}")
-
-            # Fallback to Gemini
-            if not phrase:
-                gemini_result = gemini_chat(messages, temperature=0.8, max_tokens=300)
-                if gemini_result:
-                    phrase = gemini_result
 
             # Extract image URL if present
             if phrase:
