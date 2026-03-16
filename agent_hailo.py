@@ -37,6 +37,11 @@ from core.llm import Brain
 from core.tts import play_audio_on_hardware
 from core.stt import transcribe_audio
 from core.config import MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE
+from core.meter import MicMeter
+from core.bubble import ThoughtBubble
+from core.log import bmo_print, setup_logging
+
+setup_logging()
 
 # =========================================================================
 # 1. HARDWARE CONFIGURATION
@@ -81,8 +86,8 @@ class BotStates:
 
 class BotGUI:
 
-    BG_WIDTH, BG_HEIGHT = 800, 480 
-    OVERLAY_WIDTH, OVERLAY_HEIGHT = 400, 300 
+    BG_WIDTH, BG_HEIGHT = 800, 480
+    OVERLAY_WIDTH, OVERLAY_HEIGHT = 400, 300
 
     def __init__(self, master):
         self.master = master
@@ -102,14 +107,17 @@ class BotGUI:
         # Audio State
         self.current_audio_process = None
         self.tts_queue = []
-        
+
         # Memory
         self.brain = Brain()
 
         # Init UI
         self.background_label = tk.Label(master, bg='black')
         self.background_label.place(x=0, y=0, width=self.BG_WIDTH, height=self.BG_HEIGHT)
-        
+
+        # Mic gain meter (extracted to core/meter.py)
+        self.meter = MicMeter(master)
+
         # BMO-themed captions: dark green text on translucent lime-green background
         self.status_label = tk.Label(
             master,
@@ -122,6 +130,9 @@ class BotGUI:
             highlightthickness=0
         )
         self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
+
+        # Thought bubble overlay for transcribed user input
+        self.bubble = ThoughtBubble(master)
 
         self.is_muted = False
         self.mute_label = tk.Label(
@@ -148,6 +159,10 @@ class BotGUI:
         self.last_screensaver_audio_time = time.time()
         threading.Thread(target=self.screensaver_audio_loop, daemon=True).start()
 
+    def show_user_prompt(self, text):
+        """Show transcribed text as an animated thought bubble, auto-hide after 8s."""
+        self.bubble.show(text)
+
     def exit_fullscreen(self, event=None):
         self.stop_event.set()
         self.master.quit()
@@ -157,7 +172,12 @@ class BotGUI:
             self.current_state = state
             self.current_frame = 0
             self.last_state_change = time.time()
-            print(f"[STATE] {state.upper()}: {msg}")
+            bmo_print("STATE", f"{state.upper()}: {msg}")
+            # Mic gain meter: show only during LISTENING
+            if state == BotStates.LISTENING:
+                self.meter.show()
+            else:
+                self.meter.hide()
         if msg:
             self.status_label.config(text=msg)
 
@@ -169,9 +189,9 @@ class BotGUI:
             try:
                 # Kill any hardware audio playing via aplay immediately
                 subprocess.run(["killall", "-9", "aplay"], capture_output=True)
-                print("[MUTE] Killed aplay process.")
+                bmo_print("MUTE", "Killed aplay process.")
             except Exception as e:
-                print(f"[MUTE] Error stopping aplay: {e}")
+                bmo_print("MUTE", f"Error stopping aplay: {e}")
                 
             old_state = self.current_state
             self.set_state(BotStates.SHHH, "Muted")
@@ -203,6 +223,7 @@ class BotGUI:
             "greeting_sounds": [],
             "ack_sounds": [],
             "thinking_sounds": [],
+            "camera_sounds": [],
             "music": []
         }
         base = "sounds"
@@ -221,13 +242,13 @@ class BotGUI:
         try:
             return subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', sound_file])
         except Exception as e:
-            print(f"Error playing sound {sound_file}: {e}")
+            bmo_print("AUDIO", f"Error playing sound {sound_file}: {e}")
             return None
 
     def load_animations(self):
         base = "faces"
         all_face_paths = []
-        for state in [BotStates.IDLE, BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.ERROR, BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.CONFUSED, BotStates.SHHH, BotStates.JAMMING, BotStates.FOOTBALL, BotStates.DETECTIVE, BotStates.SIR_MANO, BotStates.LOW_BATTERY, BotStates.BEE]:
+        for state in [BotStates.IDLE, BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.ERROR, BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.CONFUSED, BotStates.SHHH, BotStates.JAMMING, BotStates.FOOTBALL, BotStates.DETECTIVE, BotStates.SIR_MANO, BotStates.LOW_BATTERY, BotStates.BEE, BotStates.CAPTURING]:
             path = os.path.join(base, state)
             self.animations[state] = []
             if os.path.exists(path):
@@ -258,7 +279,7 @@ class BotGUI:
                         img = Image.open(os.path.join(path, f)).resize((self.BG_WIDTH, self.BG_HEIGHT))
                         seq_frames.append(ImageTk.PhotoImage(img))
                     except Exception as e:
-                        print(f"Failed to load screensaver image {f}: {e}")
+                        bmo_print("SCREENSAVER", f"Failed to load image {f}: {e}")
                 if seq_frames:
                     self.screensaver_sequences.append((state_dir, seq_frames))
         
@@ -283,10 +304,11 @@ class BotGUI:
         if self.current_state == BotStates.LISTENING and self.current_frame > 0 and 'screensaver' in str(self.animations.get(self.current_state, [])):
             self.current_frame = 0 # reset cleanly
 
-        # Hide text status label during screensaver
+        # Hide text labels during screensaver
         if self.current_state == BotStates.SCREENSAVER:
             if self.status_label.winfo_ismapped():
                 self.status_label.place_forget()
+            self.bubble.hide()
         else:
             if not self.status_label.winfo_ismapped():
                 self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
@@ -311,7 +333,9 @@ class BotGUI:
         elif self.current_state == BotStates.THINKING:
             speed = 500
         elif self.current_state == BotStates.LISTENING:
-            speed = 400
+            speed = 250
+        elif self.current_state == BotStates.CAPTURING:
+            speed = 150  # 8 frames × 150ms = 1.2s per shutter cycle
         elif self.current_state == BotStates.SCREENSAVER or self.current_state == BotStates.SHHH:
             speed = 400 # Smooth animation speed for sequences
 
@@ -334,21 +358,21 @@ class BotGUI:
                 while not self.stop_event.is_set():
                     data, _ = stream.read(CHUNK * downsample_factor)
                     # Simple integer decimation for 48k -> 16k
-                    audio_16k = data[::downsample_factor].flatten() 
-                    
-                    # Feed to model. 
+                    audio_16k = data[::downsample_factor].flatten()
+
+                    # Feed to model.
                     # Assuming model name is 'wakeword' if you only loaded that one onnx file
                     # but openwakeword usually keys predictions by model name.
                     oww.predict(audio_16k)
-                    
+
                     # Dynamically find the score so we don't crash on key error
                     for key in oww.prediction_buffer.keys():
                         if oww.prediction_buffer[key][-1] > WAKE_WORD_THRESHOLD:
-                            print(f"Wake Word Detected: {key}")
+                            bmo_print("WAKE", f"Detected: {key}")
                             oww.reset()
                             return True
         except Exception as e:
-            print(f"Audio Input Error: {e}")
+            bmo_print("AUDIO", f"Input Error: {e}")
             self.set_state(BotStates.ERROR)
             time.sleep(2) # Prevent rapid looping on error
             return False
@@ -357,7 +381,7 @@ class BotGUI:
 
     def record_audio(self):
         """Record until silence"""
-        print("Recording...")
+        bmo_print("STT", "Recording...")
         filename = "input.wav"
         frames = []
         silent_chunks = 0
@@ -365,7 +389,8 @@ class BotGUI:
 
         def callback(indata, frames_count, time, status):
             nonlocal silent_chunks, has_spoken
-            vol = np.linalg.norm(indata) * 10 
+            vol = np.linalg.norm(indata) * 10
+            self.meter.feed(vol)
             frames.append(indata.copy())
             if vol < 50000: # Silence threshold
                 silent_chunks += 1
@@ -374,19 +399,24 @@ class BotGUI:
                 has_spoken = True
             
         try:
+            record_start = time.time()
             with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', callback=callback):
                 while not self.stop_event.is_set():
                     sd.sleep(50)
+                    elapsed = time.time() - record_start
+                    # Grace period: give user at least 1.5s to start speaking after wake word
+                    if elapsed < 1.5:
+                        continue
                     if not has_spoken and silent_chunks > 100:
                         break
                     if has_spoken and silent_chunks > 40:
                         break
                     if len(frames) > (MIC_SAMPLE_RATE * 10 / 512): # Max 10 seconds approx
-                        break 
+                        break
         except Exception as e:
-            print(f"Recording Error: {e}")
+            bmo_print("STT", f"Recording Error: {e}")
             return None
-        
+
         # Save file
         if not frames:
             return None
@@ -399,9 +429,9 @@ class BotGUI:
     # --- TIMERS & REMINDERS ---
     def start_timer_thread(self, minutes, message):
         def timer_worker():
-            print(f"[TIMER SET] for {minutes} minutes. Message: {message}")
+            bmo_print("TIMER SET", f"for {minutes} minutes. Message: {message}")
             time.sleep(minutes * 60)
-            print(f"[TIMER DONE] {message}")
+            bmo_print("TIMER DONE", message)
             
             # Wait for BMO to finish speaking/listening to avoid ALSA conflicts
             while self.current_state in [BotStates.SPEAKING, BotStates.LISTENING]:
@@ -426,7 +456,7 @@ class BotGUI:
 
     # --- STT & TTS ---
     def transcribe(self, filename):
-        print("Transcribing...")
+        bmo_print("STT", "Transcribing...")
         return transcribe_audio(filename)
 
     def speak(self, text, msg="Speaking..."):
@@ -437,7 +467,7 @@ class BotGUI:
         if not clean_text or not any(c.isalnum() for c in clean_text):
             return
             
-        print(f"Speaking: {clean_text[:30]}...")
+        bmo_print("TTS", f"Speaking: {clean_text[:30]}...")
         try:
             safe_text = clean_text.replace("'", "'\\''")
             
@@ -445,7 +475,7 @@ class BotGUI:
             piper_cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_raw"
             res = subprocess.run(piper_cmd, shell=True, capture_output=True)
             if res.returncode != 0:
-                print(f"Piper error: {res.stderr}")
+                bmo_print("TTS", f"Piper error: {res.stderr}")
                 return
             
             # 2. Audio is ready! Set SPEAKING state so mouth starts moving.
@@ -477,7 +507,7 @@ class BotGUI:
                 time.sleep(0.3)
             
         except Exception as e:
-            print(f"Hardware TTS Error: {e}")
+            bmo_print("TTS", f"Hardware error: {e}")
 
     def record_followup(self, timeout_sec=8):
         """
@@ -490,7 +520,7 @@ class BotGUI:
         - A hard cap (max_deadline) ensures we always exit even if the mic
           keeps picking up ambient noise and has_spoken stays True.
         """
-        print("Listening for follow-up...")
+        bmo_print("FOLLOW-UP", "Listening...")
         frames = []
         silent_chunks = 0
         has_spoken = False
@@ -504,8 +534,9 @@ class BotGUI:
             if time.time() < ignore_until:
                 return  # still in echo dead-zone — ignore all audio
             vol = np.linalg.norm(indata) * 10
+            self.meter.feed(vol)
             max_vol_seen = max(max_vol_seen, vol)
-            
+
             frames.append(indata.copy())
             if vol < 50000:  # Matching main record_audio silence threshold
                 silent_chunks += 1
@@ -524,20 +555,20 @@ class BotGUI:
                         break
                     # No speech in the listen window — give up quietly
                     if now > deadline and not has_spoken:
-                        print(f"Follow-up timeout. Max mic volume detected was: {max_vol_seen:.2f} (threshold is 50000)")
+                        bmo_print("FOLLOW-UP", f"Timeout. Max mic volume: {max_vol_seen:.2f} (threshold 50000)")
                         return None
                     # Hard cap — break out and attempt transcription rather than discarding!
                     if now > max_deadline:
-                        print(f"Follow-up max deadline hit. Breaking to transcribe. Max volume: {max_vol_seen:.2f}")
+                        bmo_print("FOLLOW-UP", f"Max deadline hit. Breaking to transcribe. Max volume: {max_vol_seen:.2f}")
                         break
         except Exception as e:
-            print(f"Follow-up listen error: {e}")
+            bmo_print("FOLLOW-UP", f"Listen error: {e}")
             return None
 
         # Give ALSA/PortAudio time to fully close the stream context at OS level
         time.sleep(0.5)
 
-        print(f"Speech finished! Max mic volume was: {max_vol_seen:.2f}")
+        bmo_print("STT", f"Speech finished! Max mic volume: {max_vol_seen:.2f}")
         if not has_spoken or not frames:
             return None
 
@@ -549,7 +580,7 @@ class BotGUI:
                 return None
             audio_data = np.concatenate(valid_frames)
         except Exception as e:
-            print(f"Follow-up audio concat error: {e}")
+            bmo_print("FOLLOW-UP", f"Audio concat error: {e}")
             return None
 
         with wave.open(filename, 'w') as wf:
@@ -570,7 +601,7 @@ class BotGUI:
         try:
             oww = Model(wakeword_model_paths=[WAKE_WORD_MODEL])
         except Exception as e:
-            print(f"Failed to load wakeword model: {e}")
+            bmo_print("WAKE", f"Failed to load model: {e}")
             self.set_state(BotStates.ERROR, "Wake Word Error")
             return
 
@@ -610,8 +641,9 @@ class BotGUI:
                 threading.Thread(target=play_thinking_sequence, daemon=True).start()
 
                 user_text = self.transcribe(wav_file)
-                print(f"User Transcribed: {user_text}")
-                
+                bmo_print("STT", f"User Transcribed: {user_text}")
+                self.show_user_prompt(user_text)
+
                 if len(user_text) < 2:
                     self.set_state(BotStates.IDLE, "Ready")
                     if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
@@ -637,29 +669,30 @@ class BotGUI:
                     full_response = ""
                     image_url = None
                     taking_photo = False
-                    
+                    music_triggered = False
+
                     for chunk in self.brain.stream_think(user_text):
                         if not chunk.strip():
                             continue
                             
                         full_response += chunk
-                        print(f"[AGENT] Chunk received: '{chunk[:80]}'")
+                        bmo_print("AGENT", f"Chunk received: '{chunk[:80]}'")
                         
                         # Handle json actions
                         if '{"action": "take_photo"}' in chunk:
-                            print("[AGENT] take_photo action detected!")
+                            bmo_print("AGENT", "take_photo action detected!")
                             taking_photo = True
                             break
                             
                         json_match = re.search(r'\{.*?\}', chunk, re.DOTALL)
                         if json_match:
-                            print(f"[AGENT] JSON regex matched: '{json_match.group(0)[:80]}'")
+                            bmo_print("AGENT", f"JSON regex matched: '{json_match.group(0)[:80]}'")
                             try:
                                 action_data = json.loads(json_match.group(0))
-                                print(f"[AGENT] Parsed action: {action_data.get('action', 'unknown')}")
+                                bmo_print("AGENT", f"Parsed action: {action_data.get('action', 'unknown')}")
                                 if action_data.get("action") == "display_image" and action_data.get("image_url"):
                                     image_url = action_data.get("image_url")
-                                    print(f"[AGENT] display_image URL set: {image_url[:80]}")
+                                    bmo_print("AGENT", f"display_image URL set: {image_url[:80]}")
                                     chunk = chunk.replace(json_match.group(0), '').strip()
                                 elif action_data.get("action") == "set_expression" and action_data.get("value"):
                                     expr = action_data.get("value").lower()
@@ -674,6 +707,7 @@ class BotGUI:
                                     self.start_timer_thread(mins, msg)
                                     chunk = chunk.replace(json_match.group(0), '').strip()
                                 elif action_data.get("action") == "play_music":
+                                    music_triggered = True
                                     # Spawns a background thread to play music and animate
                                     def music_worker():
                                         # Wait for current speaking to finish
@@ -690,31 +724,46 @@ class BotGUI:
                                         ]
                                         self.speak(random.choice(intros), msg="Getting ready to jam...")
                                         
-                                        print("[MUSIC] Starting music playback...")
+                                        bmo_print("MUSIC", "Starting music playback...")
                                         music_proc = self.play_sound("music")
                                         if music_proc:
                                             old_state = self.current_state
                                             self.set_state(BotStates.JAMMING, "Jamming!")
-                                            print("[MUSIC] Now playing! State set to JAMMING")
+                                            bmo_print("MUSIC", "Now playing! State set to JAMMING")
                                             music_proc.wait()
-                                            print("[MUSIC] Playback finished")
+                                            bmo_print("MUSIC", "Playback finished")
                                             time.sleep(1) # Extra buffer
                                             if self.current_state == BotStates.JAMMING:
                                                 self.set_state(BotStates.IDLE, "Ready")
                                         else:
-                                            print("[MUSIC] No music files found or muted!")
+                                            bmo_print("MUSIC", "No music files found or muted!")
                                             self.speak("BMO wants to play music, but there are no songs loaded!")
                                     
                                     threading.Thread(target=music_worker, daemon=True).start()
                                     chunk = chunk.replace(json_match.group(0), '').strip()
                             except Exception as e:
-                                print(f"[AGENT] JSON Parse Error: {e} for: '{json_match.group(0)[:50]}'")
+                                bmo_print("AGENT", f"JSON Parse Error: {e} for: '{json_match.group(0)[:50]}'")
                                 
                         if chunk.strip():
                             self.speak(chunk)
 
                     if taking_photo:
-                        self.set_state(BotStates.CAPTURING, "Taking Photo...")
+                        # Clear transcription bubble so it doesn't clip the camera face
+                        self.bubble.hide()
+                        # --- Camera UX: animated face + spoken intro + shutter ---
+                        camera_intros = [
+                            "BMO is activating camera mode!",
+                            "Loading photo module, please wait a sec!",
+                            "Say cheese! BMO is going to take a picture!",
+                            "Photo time! Hold still for BMO!",
+                            "BMO's camera is warming up!",
+                            "Ooh, let BMO see what's out there!",
+                            "Smile! BMO is about to snap a photo!",
+                        ]
+                        self.speak(random.choice(camera_intros))
+                        self.set_state(BotStates.CAPTURING, "Say cheese!")
+                        time.sleep(2)
+                        self.play_sound("camera_sounds")
                         try:
                             # Try libcamera-still (older) or rpicam-still (newer Pi OS)
                             cam_cmd = None
@@ -740,11 +789,11 @@ class BotGUI:
                                 self.thinking_audio_process = None
                             self.speak(response)
                         except FileNotFoundError as e:
-                            print(f"Camera Error: {e}")
+                            bmo_print("CAMERA", f"Error: {e}")
                             self.speak("Hmm, BMO doesn't seem to have a camera connected right now. I can't take a photo!")
 
                         except Exception as e:
-                            print(f"Camera Error: {e}")
+                            bmo_print("CAMERA", f"Error: {e}")
                             self.speak("I tried to take a photo, but my camera isn't working.")
                     
                     # 5. Display Image (if any)
@@ -752,15 +801,15 @@ class BotGUI:
                         # Speak confirmation before downloading
                         self.speak("Ooh, let BMO draw something for you!")
                         self.set_state(BotStates.DISPLAY_IMAGE, "Showing Image...")
-                        print(f"[IMAGE] Starting image display for: {image_url}")
+                        bmo_print("IMAGE", f"Starting image display for: {image_url}")
                         try:
                             # Migrate broken gen.pollinations.ai URL to working image.pollinations.ai
                             image_url = image_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
-                            print(f"[IMAGE] Downloading: {image_url}")
+                            bmo_print("IMAGE", f"Downloading: {image_url}")
                             req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
                             with urllib.request.urlopen(req, timeout=30) as u:
                                 raw_data = u.read()
-                            print(f"[IMAGE] Downloaded: {len(raw_data)} bytes")
+                            bmo_print("IMAGE", f"Downloaded: {len(raw_data)} bytes")
                             from io import BytesIO
                             from PIL import ImageOps, ImageDraw
                             
@@ -801,19 +850,25 @@ class BotGUI:
                                 try:
                                     self.current_display_image = ImageTk.PhotoImage(pil_img)
                                     self.background_label.config(image=self.current_display_image)
-                                    print("[IMAGE] Displayed on screen")
+                                    bmo_print("IMAGE", "Displayed on screen")
                                 except Exception as e:
-                                    print(f"[IMAGE] Tkinter display error: {e}")
+                                    bmo_print("IMAGE", f"Tkinter display error: {e}")
                             
                             self.master.after(0, show_image)
                         except Exception as e:
-                            print(f"[IMAGE] Download/Display Error: {e}")
+                            bmo_print("IMAGE", f"Download/Display Error: {e}")
 
                 except Exception as e:
-                    print(f"ERROR in LLM/TTS pipeline: {e}")
+                    bmo_print("ERROR", f"LLM/TTS pipeline: {e}")
                     traceback.print_exc()
 
                 self.set_state(BotStates.IDLE, "Ready")
+
+                # Skip follow-up listening when music was triggered — the mic would
+                # pick up BMO's own intro speech and the music itself as false input.
+                if music_triggered:
+                    bmo_print("FOLLOW-UP", "Skipped — music playback active")
+                    continue
 
                 # Conversation follow-up: let user reply repeatedly as long as they respond within 8 seconds
                 while True:
@@ -828,8 +883,9 @@ class BotGUI:
                     self.set_state(BotStates.THINKING, "Transcribing...")
                     threading.Thread(target=play_thinking_sequence, daemon=True).start()
                     user_text = self.transcribe(followup_wav)
-                    print(f"Follow-up Transcribed: {user_text}")
-                    
+                    bmo_print("STT", f"Follow-up Transcribed: {user_text}")
+                    self.show_user_prompt(user_text)
+
                     if len(user_text) < 2:
                         # Mic picked up noise, but no actual speech. End conversation.
                         if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
@@ -854,7 +910,7 @@ class BotGUI:
                             if chunk.strip():
                                 self.speak(chunk)
                     except Exception as e:
-                        print(f"Follow-up LLM error: {e}")
+                        bmo_print("AGENT", f"Follow-up LLM error: {e}")
                         
                     self.set_state(BotStates.IDLE, "Ready")
                     # Loop back around and listen again!
@@ -949,9 +1005,9 @@ class BotGUI:
                     if content and "connect" not in content.lower() and "error" not in content.lower():
                         return content
                 else:
-                    print(f"[SCREENSAVER] LLM returned status {resp.status_code}")
+                    bmo_print("SCREENSAVER", f"LLM returned status {resp.status_code}")
             except http_requests.exceptions.RequestException as e:
-                print(f"[SCREENSAVER] LLM request failed: {e}")
+                bmo_print("SCREENSAVER", f"LLM request failed: {e}")
             return None
         
         while not self.stop_event.is_set():
@@ -1003,8 +1059,7 @@ class BotGUI:
             # ~5% chance every 30 seconds = roughly once every 10 minutes for audio vocalizations
             if random.random() < 0.05:
                 # Quiet hours: no pondering between 10 PM and 7 AM
-                from datetime import datetime
-                current_hour = datetime.now().hour
+                current_hour = datetime.datetime.now().hour
                 if current_hour >= 22 or current_hour < 7:
                     continue
                 
@@ -1016,7 +1071,7 @@ class BotGUI:
                     if is_llm_reachable():
                         try:
                             topic = random.choice(search_topics)
-                            print(f"[SCREENSAVER] Searching for: {topic}")
+                            bmo_print("SCREENSAVER", f"Searching for: {topic}")
                             search_result = search_web(topic)
                             
                             if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
@@ -1024,7 +1079,7 @@ class BotGUI:
                                 for attempt in range(2):
                                     phrase = generate_thought(search_result)
                                     if phrase:
-                                        print(f"[SCREENSAVER] BMO muses: {phrase}")
+                                        bmo_print("SCREENSAVER", f"BMO muses: {phrase}")
                                         
                                         # Check for image generation action
                                         img_url = None
@@ -1037,9 +1092,9 @@ class BotGUI:
                                                     # Migrate broken gen.pollinations.ai URL to working image.pollinations.ai
                                                     img_url = img_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
                                                     phrase = phrase.replace(json_match.group(0), '').strip()
-                                                    print(f"[SCREENSAVER] Image URL extracted: {img_url}")
+                                                    bmo_print("SCREENSAVER", f"Image URL extracted: {img_url}")
                                             except Exception as e:
-                                                print(f"[SCREENSAVER] JSON parse error in thought: {e}")
+                                                bmo_print("SCREENSAVER", f"JSON parse error in thought: {e}")
                                                 
                                         # Speak out loud
                                         if phrase:
@@ -1047,13 +1102,13 @@ class BotGUI:
                                             
                                         # Display the image if an action was yielded
                                         if img_url:
-                                            print(f"[SCREENSAVER] Downloading image from: {img_url}")
+                                            bmo_print("SCREENSAVER", f"Downloading image from: {img_url}")
                                             self.set_state(BotStates.DISPLAY_IMAGE, "Visualizing...")
                                             try:
                                                 req = urllib.request.Request(img_url, headers={'User-Agent': 'Mozilla/5.0'})
                                                 with urllib.request.urlopen(req, timeout=30) as u:
                                                     raw_data = u.read()
-                                                print(f"[SCREENSAVER] Image downloaded: {len(raw_data)} bytes")
+                                                bmo_print("SCREENSAVER", f"Image downloaded: {len(raw_data)} bytes")
                                                 from io import BytesIO
                                                 from PIL import ImageOps
                                                 
@@ -1080,16 +1135,16 @@ class BotGUI:
 
                                                 img = Image.open(BytesIO(raw_data))
                                                 img = apply_bmo_border(img)
-                                                print(f"[SCREENSAVER] Image processed, displaying on screen")
+                                                bmo_print("SCREENSAVER", "Image processed, displaying on screen")
                                                 
                                                 # Schedule Tkinter update on main thread for thread safety
                                                 def show_image_on_screen(pil_img=img):
                                                     try:
                                                         self.current_display_image = ImageTk.PhotoImage(pil_img)
                                                         self.background_label.config(image=self.current_display_image)
-                                                        print(f"[SCREENSAVER] Image displayed successfully")
+                                                        bmo_print("SCREENSAVER", "Image displayed successfully")
                                                     except Exception as e:
-                                                        print(f"[SCREENSAVER] Tkinter display error: {e}")
+                                                        bmo_print("SCREENSAVER", f"Tkinter display error: {e}")
                                                 
                                                 self.master.after(0, show_image_on_screen)
                                                 
@@ -1099,11 +1154,11 @@ class BotGUI:
                                                     self.set_state(BotStates.SCREENSAVER, "Sleeping...")
                                                 
                                             except urllib.error.URLError as e:
-                                                print(f"[SCREENSAVER] Image download failed (network): {e}")
+                                                bmo_print("SCREENSAVER", f"Image download failed (network): {e}")
                                                 if self.current_state == BotStates.DISPLAY_IMAGE:
                                                     self.set_state(BotStates.SCREENSAVER, "Sleeping...")
                                             except Exception as e:
-                                                print(f"[SCREENSAVER] Image display error: {e}")
+                                                bmo_print("SCREENSAVER", f"Image display error: {e}")
                                                 import traceback as tb
                                                 tb.print_exc()
                                                 if self.current_state == BotStates.DISPLAY_IMAGE:
@@ -1111,17 +1166,17 @@ class BotGUI:
                                         
                                         self.last_screensaver_audio_time = time.time()
                                         break
-                                    print(f"[SCREENSAVER] Attempt {attempt + 1} failed, retrying...")
+                                    bmo_print("SCREENSAVER", f"Attempt {attempt + 1} failed, retrying...")
                                     time.sleep(5)
                         except Exception as e:
-                            print(f"[SCREENSAVER] Dynamic thought failed: {e}")
+                            bmo_print("SCREENSAVER", f"Dynamic thought failed: {e}")
                     else:
-                        print("[SCREENSAVER] LLM server not reachable, skipping thought")
+                        bmo_print("SCREENSAVER", "LLM server not reachable, skipping thought")
                     
                     # Fallback if dynamic generation failed
                     if not phrase:
                         phrase = random.choice(fallback_phrases)
-                        print(f"[SCREENSAVER] Fallback: {phrase}")
+                        bmo_print("SCREENSAVER", f"Fallback: {phrase}")
                     
                     # Speak the thought
                     if self.current_state == BotStates.SCREENSAVER:

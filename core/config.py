@@ -89,3 +89,6 @@ MIC_DEVICE_INDEX = 1
 MIC_SAMPLE_RATE = 48000
 WAKE_WORD_MODEL = "./wakeword.onnx"
 WAKE_WORD_THRESHOLD = 0.35
+
+# UI Settings
+MIC_METER_ENABLED = True  # Show mic gain meter overlay during listening

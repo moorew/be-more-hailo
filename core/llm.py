@@ -1,5 +1,8 @@
 import base64
 import os
+import subprocess
+import signal
+import time
 import requests
 import logging
 import re
@@ -9,6 +12,7 @@ import numpy as np
 from .config import LLM_URL, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt
 from .tts import add_pronunciation
 from .search import search_web
+from .log import bmo_print
 
 logger = logging.getLogger(__name__)
 
@@ -42,16 +46,102 @@ def _get_vlm():
     from hailo_platform.genai import VLM
 
     logger.info(f"Initialising Hailo VLM from {hef} ...")
-    _vlm_vdevice = VDevice()
-    _vlm_instance = VLM(_vlm_vdevice, hef)
+    try:
+        params = VDevice.create_params()
+        params.group_id = "SHARED"          # coexist with hailo-ollama on the NPU
+        _vlm_vdevice = VDevice(params)
+        _vlm_instance = VLM(_vlm_vdevice, hef)
+    except Exception:
+        # Release partially-initialised resources so the device isn't leaked
+        if _vlm_vdevice is not None:
+            try:
+                _vlm_vdevice.release()
+            except Exception:
+                pass
+        _vlm_vdevice = None
+        _vlm_instance = None
+        raise
+
     shape = _vlm_instance.input_frame_shape()
     dtype = _vlm_instance.input_frame_format_type()
     logger.info(f"VLM ready — frame shape {shape}, dtype {dtype}")
     return _vlm_instance, shape, dtype
 
 
+def release_vlm():
+    """Release VLM and VDevice resources. Safe to call multiple times."""
+    global _vlm_instance, _vlm_vdevice
+    if _vlm_instance is not None:
+        try:
+            _vlm_instance.clear_context()
+            _vlm_instance.release()
+        except Exception as e:
+            logger.warning(f"Error releasing VLM: {e}")
+        _vlm_instance = None
+    if _vlm_vdevice is not None:
+        try:
+            _vlm_vdevice.release()
+        except Exception as e:
+            logger.warning(f"Error releasing VDevice: {e}")
+        _vlm_vdevice = None
+
+
+# --------------------------------------------------------------------------- #
+#  hailo-ollama lifecycle helpers
+# --------------------------------------------------------------------------- #
+# The Hailo-10H NPU can only be held by one process at a time.  hailo-ollama
+# (LLM server) keeps the device open, so we must stop it before loading the
+# VLM and restart it afterwards.
+
+def _stop_hailo_ollama() -> bool:
+    """Stop all hailo-ollama processes. Returns True if any were killed."""
+    try:
+        result = subprocess.run(["pkill", "-f", "hailo-ollama serve"],
+                                capture_output=True, timeout=5)
+        if result.returncode == 0:
+            # Give the NPU time to release
+            time.sleep(1.5)
+            logger.info("Stopped hailo-ollama to free NPU for VLM")
+            return True
+    except Exception as e:
+        logger.warning(f"Failed to stop hailo-ollama: {e}")
+    return False
+
+
+def _start_hailo_ollama():
+    """Restart hailo-ollama in the background."""
+    try:
+        env = os.environ.copy()
+        env["OLLAMA_HOST"] = "0.0.0.0:8000"
+        subprocess.Popen(
+            ["hailo-ollama", "serve"],
+            stdout=open("/tmp/ollama.log", "a"),
+            stderr=subprocess.STDOUT,
+            env=env,
+            start_new_session=True,     # detach from our process group
+        )
+        logger.info("Restarted hailo-ollama")
+        # Wait for it to be ready before returning
+        for _ in range(20):
+            time.sleep(0.5)
+            try:
+                r = requests.get("http://127.0.0.1:8000/api/tags", timeout=2)
+                if r.status_code == 200:
+                    logger.info("hailo-ollama is ready")
+                    return
+            except requests.ConnectionError:
+                pass
+        logger.warning("hailo-ollama started but didn't become ready within 10s")
+    except Exception as e:
+        logger.error(f"Failed to restart hailo-ollama: {e}")
+
+
 def _decode_image_to_frame(image_b64: str, target_shape, target_dtype=np.uint8):
-    """Decode a base64 JPEG/PNG into a numpy array matching VLM input requirements."""
+    """Decode a base64 JPEG/PNG into a numpy array matching VLM input requirements.
+
+    Uses a central-crop strategy (resize to cover + center crop) so the image
+    is never stretched or distorted — matching the hailo-apps reference impl.
+    """
     import cv2
 
     raw = base64.b64decode(image_b64)
@@ -63,9 +153,19 @@ def _decode_image_to_frame(image_b64: str, target_shape, target_dtype=np.uint8):
     # OpenCV loads BGR; VLM expects RGB
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    h, w, c = target_shape
-    if img.shape[0] != h or img.shape[1] != w:
-        img = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
+    target_h, target_w = target_shape[0], target_shape[1]
+    src_h, src_w = img.shape[:2]
+
+    if src_h != target_h or src_w != target_w:
+        # Scale to cover the target size, then center-crop (preserves aspect ratio)
+        scale = max(target_w / src_w, target_h / src_h)
+        new_w = int(src_w * scale)
+        new_h = int(src_h * scale)
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+        x_start = (new_w - target_w) // 2
+        y_start = (new_h - target_h) // 2
+        img = img[y_start:y_start + target_h, x_start:x_start + target_w]
 
     return img.astype(target_dtype)
 
@@ -167,8 +267,8 @@ class Brain:
         if any(kw in lower_text for kw in _DISPLAY_IMAGE_KEYWORDS):
             action = _build_display_image_action(user_text)
             matched_kw = next(kw for kw in _DISPLAY_IMAGE_KEYWORDS if kw in lower_text)
-            print(f"[LLM] Image keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
-            print(f"[LLM] Emitting display_image action: {action[:80]}")
+            bmo_print("LLM", f"Image keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
+            bmo_print("LLM", f"Emitting display_image action: {action[:80]}")
             self.history.append({"role": "assistant", "content": action})
             return action
 
@@ -177,12 +277,12 @@ class Brain:
         if any(kw in lower_text for kw in _MUSIC_KEYWORDS):
             action = '{"action": "play_music"}'
             matched_kw = next(kw for kw in _MUSIC_KEYWORDS if kw in lower_text)
-            print(f"[LLM] Music keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
-            print(f"[LLM] Emitting play_music action")
+            bmo_print("LLM", f"Music keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
+            bmo_print("LLM", "Emitting play_music action")
             self.history.append({"role": "assistant", "content": action})
             return action
 
-        print(f"[LLM] No pre-LLM action matched for: '{lower_text[:60]}'")
+        bmo_print("LLM", f"No pre-LLM action matched for: '{lower_text[:60]}'")
 
         # Pre-LLM web search — same logic as stream_think
         realtime_keywords = [
@@ -353,7 +453,7 @@ class Brain:
         if any(kw in lower_text for kw in _DISPLAY_IMAGE_KEYWORDS):
             action = _build_display_image_action(user_text)
             matched_kw = next(kw for kw in _DISPLAY_IMAGE_KEYWORDS if kw in lower_text)
-            print(f"[LLM-STREAM] Image keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
+            bmo_print("LLM-STREAM", f"Image keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
             self.history.append({"role": "assistant", "content": action})
             yield action
             return
@@ -362,12 +462,12 @@ class Brain:
         if any(kw in lower_text for kw in _MUSIC_KEYWORDS):
             action = '{"action": "play_music"}'
             matched_kw = next(kw for kw in _MUSIC_KEYWORDS if kw in lower_text)
-            print(f"[LLM-STREAM] Music keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
+            bmo_print("LLM-STREAM", f"Music keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
             self.history.append({"role": "assistant", "content": action})
             yield action
             return
 
-        print(f"[LLM-STREAM] No pre-LLM action matched for: '{lower_text[:60]}'")
+        bmo_print("LLM-STREAM", f"No pre-LLM action matched for: '{lower_text[:60]}'")
 
         # Pre-LLM keyword check: if the question likely needs real-time info,
         # do the web search now rather than relying on the model to emit JSON.
@@ -513,6 +613,9 @@ class Brain:
         # but we do append the user's question and the assistant's answer.
         self.history.append({"role": "user", "content": user_text})
 
+        # Stop hailo-ollama so the NPU is free for VLM
+        ollama_was_running = _stop_hailo_ollama()
+
         try:
             vlm, frame_shape, frame_dtype = _get_vlm()
 
@@ -532,12 +635,22 @@ class Brain:
 
             logger.info("Running VLM inference on Hailo NPU ...")
             vlm.clear_context()
-            content = vlm.generate_all(
-                prompt=prompt,
-                frames=[frame],
-                max_generated_tokens=150,
-                temperature=0.4,
-            )
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    vlm.generate_all,
+                    prompt=prompt,
+                    frames=[frame],
+                    max_generated_tokens=200,
+                    temperature=0.4,
+                    seed=42,
+                )
+                try:
+                    content = future.result(timeout=60)
+                except concurrent.futures.TimeoutError:
+                    logger.warning("VLM inference timed out after 60 seconds")
+                    vlm.clear_context()
+                    return "BMO looked too long and got dizzy! Try again?"
 
             # Clean up any smart quotes, stop tokens, or stray formatting
             content = content.replace('\u201c', '"').replace('\u201d', '"')
@@ -556,4 +669,15 @@ class Brain:
             return "BMO's vision model isn't installed yet. Run setup.sh to download it!"
         except Exception as e:
             logger.error(f"VLM Exception: {e}", exc_info=True)
+            # Ensure VLM context is clean for the next call
+            try:
+                if _vlm_instance is not None:
+                    _vlm_instance.clear_context()
+            except Exception:
+                pass
             return "I tried to look, but my eyes aren't working right now."
+        finally:
+            # Release VLM so the NPU is free, then restart hailo-ollama
+            release_vlm()
+            if ollama_was_running:
+                _start_hailo_ollama()

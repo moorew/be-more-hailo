@@ -18,9 +18,10 @@ from core.llm import Brain
 from core.tts import play_audio_on_hardware, generate_audio_file, add_pronunciation, load_pronunciations, clean_text_for_speech
 from core.stt import transcribe_audio
 from core.config import LLM_URL, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
+from core.log import setup_logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # Try to load openwakeword for web streaming
