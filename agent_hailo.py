@@ -90,7 +90,6 @@ class BotGUI:
         master.attributes('-fullscreen', True) 
         master.configure(cursor='none') # Hide cursor for kiosk display
         master.bind('<Escape>', self.exit_fullscreen)
-        master.bind('<Button-1>', self.mute_bmo)
         
         # Events
         self.stop_event = threading.Event()
@@ -129,20 +128,6 @@ class BotGUI:
         )
         self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
 
-        # Interactive Buttons (Adventure Time style)
-        # Red Button: Generate random thought
-        self.btn_red = tk.Canvas(master, width=60, height=60, bg='#bdffcb', highlightthickness=0)
-        self.btn_red.place(relx=0.92, rely=0.88, anchor=tk.CENTER)
-        self.btn_red.create_oval(5, 5, 55, 55, fill='#f44336', outline='#b71c1c', width=2)
-        self.btn_red.bind("<Button-1>", self.trigger_random_thought)
-        
-        # Blue Triangle: (Optional/Future: Games)
-        self.btn_blue = tk.Canvas(master, width=50, height=50, bg='#bdffcb', highlightthickness=0)
-        self.btn_blue.place(relx=0.84, rely=0.88, anchor=tk.CENTER)
-        self.btn_blue.create_polygon(25, 5, 5, 45, 45, 45, fill='#2196f3', outline='#0d47a1', width=2)
-        # Bind to something fun, maybe just a happy face for now
-        self.btn_blue.bind("<Button-1>", lambda e: self.set_state(BotStates.HAPPY, "BMO is happy!"))
-
         self.is_muted = False
         self.mute_label = tk.Label(
             master,
@@ -154,6 +139,9 @@ class BotGUI:
             relief='flat',
             highlightthickness=0
         )
+        
+        # Use a master click handler for hot corners and muting
+        master.bind('<Button-1>', self.handle_click)
 
         self.animations = {}
         self.current_frame = 0
@@ -181,6 +169,31 @@ class BotGUI:
         if msg:
             self.master.after(0, lambda: self.status_label.config(text=msg))
 
+
+    def handle_click(self, event):
+        """Map screen clicks to hot corners or mute toggle."""
+        # Only process clicks if not currently displaying a full-screen image
+        if self.current_state == BotStates.DISPLAY_IMAGE:
+            # Clicking an image clears it back to IDLE/SCREENSAVER
+            self.set_state(BotStates.IDLE, "Ready...")
+            return
+
+        x, y = event.x, event.y
+        # Hot corner dimensions
+        corner_w, corner_h = 200, 150
+        
+        if x < corner_w and y < corner_h:
+            print("[CLICK] Top-Left Hot Corner: Generate Image")
+            self.trigger_generate_image()
+        elif x > self.BG_WIDTH - corner_w and y < corner_h:
+            print("[CLICK] Top-Right Hot Corner: Random Thought")
+            self.trigger_random_thought()
+        elif x > self.BG_WIDTH - corner_w and y > self.BG_HEIGHT - corner_h:
+            print("[CLICK] Bottom-Right Hot Corner: Play Music")
+            self.trigger_music()
+        else:
+            print("[CLICK] Center/Mouth: Toggle Mute")
+            self.mute_bmo()
 
     def mute_bmo(self, event=None):
         """Toggle audio mute and sets the whimsical 'shhh' face."""
@@ -308,17 +321,15 @@ class BotGUI:
         if self.current_state == BotStates.SCREENSAVER:
             if self.status_label.winfo_ismapped():
                 self.status_label.place_forget()
-            if self.btn_red.winfo_ismapped():
-                self.btn_red.place_forget()
-            if self.btn_blue.winfo_ismapped():
-                self.btn_blue.place_forget()
         else:
             if not self.status_label.winfo_ismapped():
                 self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
-            if not self.btn_red.winfo_ismapped():
-                self.btn_red.place(relx=0.92, rely=0.88, anchor=tk.CENTER)
-            if not self.btn_blue.winfo_ismapped():
-                self.btn_blue.place(relx=0.84, rely=0.88, anchor=tk.CENTER)
+
+        # Buttons should look like permanent physical features, except maybe when showing a full image
+        if self.current_state == BotStates.DISPLAY_IMAGE:
+            pass
+        else:
+            pass
 
         frames = self.animations.get(self.current_state, []) or self.animations.get(BotStates.IDLE, [])
         if frames:
@@ -966,12 +977,88 @@ class BotGUI:
 
         threading.Thread(target=run_thought, daemon=True).start()
 
+    def trigger_music(self, event=None):
+        """Manually trigger BMO to play music and jam."""
+        if self.is_busy or self.current_state in [BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.JAMMING]:
+            return
+            
+        def run_music():
+            # Wait for current speaking to finish if any
+            while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
+                time.sleep(0.5)
+            
+            intros = [
+                "Oh yeah! BMO is going to jam out!",
+                "Time for music! La la la!",
+                "BMO loves this song!",
+                "Let BMO play you a tune!",
+                "Music time! BMO is so excited!",
+            ]
+            self.speak(random.choice(intros), msg="Getting ready to jam...")
+            print("[MUSIC] Starting music playback...")
+            music_proc = self.play_sound("music")
+            if music_proc:
+                self.set_state(BotStates.JAMMING, "Jamming!")
+                print("[MUSIC] Now playing! State set to JAMMING")
+                music_proc.wait()
+                print("[MUSIC] Playback finished")
+                time.sleep(1) # Extra buffer
+                if self.current_state == BotStates.JAMMING:
+                    self.set_state(BotStates.IDLE, "Ready")
+            else:
+                print("[MUSIC] No music files found or muted!")
+                self.speak("BMO wants to play music, but there are no songs loaded!")
+                
+        threading.Thread(target=run_music, daemon=True).start()
+
+    def trigger_generate_image(self, event=None):
+        """Manually trigger an image generation."""
+        if self.is_busy or self.current_state in [BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING]:
+            return
+            
+        def run_image_thought():
+            from core.config import LLM_URL, FAST_LLM_MODEL
+            import requests as http_requests
+            import urllib.parse
+            
+            self.set_state(BotStates.THINKING, "Imagining...")
+            
+            prompt = "You are BMO. Describe a cute, simple, and colorful scene you would like to draw. Be very concise, just the scene description (e.g. 'a cute penguin eating ice cream'). Do NOT say anything else."
+            payload = {
+                "model": FAST_LLM_MODEL,
+                "messages": [
+                    {"role": "system", "content": "You are BMO. You only output short, simple, highly descriptive visual prompts for an image generator."},
+                    {"role": "user", "content": prompt}
+                ],
+                "stream": False,
+                "options": {"temperature": 0.9, "num_predict": 50}
+            }
+            try:
+                resp = http_requests.post(LLM_URL, json=payload, timeout=30)
+                if resp.status_code == 200:
+                    scene = resp.json().get("message", {}).get("content", "").strip()
+                    if scene:
+                        self.speak(f"BMO is going to draw a picture of {scene}!", msg="Drawing...")
+                        safe_prompt = urllib.parse.quote(scene, safe=':/?&=')
+                        url = f"https://image.pollinations.ai/prompt/{safe_prompt}"
+                        self.display_remote_image(url)
+                        return
+            except Exception as e:
+                print(f"[IMAGE] Generator failed: {e}")
+            
+            self.set_state(BotStates.IDLE, "Ready...")
+
+        threading.Thread(target=run_image_thought, daemon=True).start()
+
     def display_remote_image(self, image_url):
         """Fetch and display an image from a URL with BMO styling."""
         def run_display():
             self.set_state(BotStates.DISPLAY_IMAGE, "Visualizing...")
             try:
-                req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
+                import urllib.parse
+                # Safely encode the URL in case the LLM included spaces
+                safe_url = urllib.parse.quote(image_url, safe=':/?&=')
+                req = urllib.request.Request(safe_url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, timeout=30) as u:
                     raw_data = u.read()
                 

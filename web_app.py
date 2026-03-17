@@ -426,8 +426,10 @@ async def get_screensaver_thought():
                     try:
                         action_data = json.loads(json_match.group(0))
                         if action_data.get("action") == "display_image" and action_data.get("image_url"):
-                            image_url = action_data.get("image_url")
-                            image_url = image_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
+                            raw_url = action_data.get("image_url")
+                            raw_url = raw_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
+                            import urllib.parse
+                            image_url = urllib.parse.quote(raw_url, safe=':/?&=')
                             phrase = phrase.replace(json_match.group(0), '').strip()
                     except Exception:
                         pass
