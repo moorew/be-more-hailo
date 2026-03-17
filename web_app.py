@@ -390,9 +390,11 @@ async def get_screensaver_thought():
                 "RULES:\n"
                 "1. Start by saying: 'I found this today, [Summarize the specific fact].' \n"
                 "2. Then, share your own charming reaction or opinion naturally. Do NOT use labels like 'My thoughts:' or 'Opinion:'. \n"
-                "3. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
-                "4. CRITICAL: Your entire response MUST be under 60 words and 3-4 sentences maximum. You must finish your thought completely. \n"
-                "5. Do NOT ask questions to the user.\n\n"
+                "3. If the topic is very visual (like space, animals, nature, history, landmarks), you SHOULD include exactly one JSON action on a new line: \n"
+                "   {\"action\": \"display_image\", \"image_url\": \"https://gen.pollinations.ai/image/[SHORT_DESCRIPTIVE_PROMPT]\"} \n"
+                "4. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
+                "5. CRITICAL: Your entire response MUST be under 60 words and 3-4 sentences maximum. You must finish your thought completely. \n"
+                "6. Do NOT ask questions to the user.\n\n"
                 f"Info: {search_result[:1500]}"
             )
             messages = [

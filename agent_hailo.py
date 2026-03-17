@@ -129,6 +129,20 @@ class BotGUI:
         )
         self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
 
+        # Interactive Buttons (Adventure Time style)
+        # Red Button: Generate random thought
+        self.btn_red = tk.Canvas(master, width=60, height=60, bg='#bdffcb', highlightthickness=0)
+        self.btn_red.place(relx=0.92, rely=0.88, anchor=tk.CENTER)
+        self.btn_red.create_oval(5, 5, 55, 55, fill='#f44336', outline='#b71c1c', width=2)
+        self.btn_red.bind("<Button-1>", self.trigger_random_thought)
+        
+        # Blue Triangle: (Optional/Future: Games)
+        self.btn_blue = tk.Canvas(master, width=50, height=50, bg='#bdffcb', highlightthickness=0)
+        self.btn_blue.place(relx=0.84, rely=0.88, anchor=tk.CENTER)
+        self.btn_blue.create_polygon(25, 5, 5, 45, 45, 45, fill='#2196f3', outline='#0d47a1', width=2)
+        # Bind to something fun, maybe just a happy face for now
+        self.btn_blue.bind("<Button-1>", lambda e: self.set_state(BotStates.HAPPY, "BMO is happy!"))
+
         self.is_muted = False
         self.mute_label = tk.Label(
             master,
@@ -294,9 +308,17 @@ class BotGUI:
         if self.current_state == BotStates.SCREENSAVER:
             if self.status_label.winfo_ismapped():
                 self.status_label.place_forget()
+            if self.btn_red.winfo_ismapped():
+                self.btn_red.place_forget()
+            if self.btn_blue.winfo_ismapped():
+                self.btn_blue.place_forget()
         else:
             if not self.status_label.winfo_ismapped():
                 self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
+            if not self.btn_red.winfo_ismapped():
+                self.btn_red.place(relx=0.92, rely=0.88, anchor=tk.CENTER)
+            if not self.btn_blue.winfo_ismapped():
+                self.btn_blue.place(relx=0.84, rely=0.88, anchor=tk.CENTER)
 
         frames = self.animations.get(self.current_state, []) or self.animations.get(BotStates.IDLE, [])
         if frames:
@@ -888,6 +910,150 @@ class BotGUI:
                 # released by the kernel, preventing PaErrorCode -9999 crashes.
                 time.sleep(1.0)
 
+    def trigger_random_thought(self, event=None):
+        """Manually trigger a random pondering thought (BMO's red button)."""
+        if self.is_busy or self.current_state in [BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING]:
+            return
+
+        def run_thought():
+            # We need the local functions from screensaver_audio_loop or we move them
+            # For simplicity, I'll re-implement the core logic here or refer to shared ones.
+            # I'll use the same logic as the loop but in a separate thread.
+            from core.search import search_web
+            from core.config import LLM_URL, FAST_LLM_MODEL
+            import requests as http_requests
+
+            # Need to get search_topics - I'll make it a class attribute in a moment or just copy
+            topics = [
+                "interesting fun fact of the day", "weather forecast today in Brantford, Ontario",
+                "this day in history", "cool science discovery this week", "funny animal fact",
+                "random wholesome internet story", "video game history fact", "weird food fact",
+                "Adventure Time lore or trivia", "today's astronomy picture", "best joke of the day",
+                "funny dad jokes", "hilarious puns", "unusual world records"
+            ]
+            
+            topic = random.choice(topics)
+            print(f"[BUTTON] Manually triggering thought for: {topic}")
+            self.set_state(BotStates.THINKING, "Thinking...")
+            
+            search_result = search_web(topic)
+            if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
+                # We need to call the same generate_thought logic. 
+                # Since it was local to screensaver_audio_loop, I'll move it to a class method first.
+                phrase = self.generate_thought_internal(search_result)
+                
+                if phrase:
+                    # Check for image URL
+                    image_url = None
+                    json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
+                    if json_match:
+                        try:
+                            action_data = json.loads(json_match.group(0))
+                            if action_data.get("action") == "display_image" and action_data.get("image_url"):
+                                image_url = action_data.get("image_url")
+                                phrase = phrase.replace(json_match.group(0), '').strip()
+                                image_url = image_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
+                        except Exception: pass
+                    
+                    self.speak(phrase, msg="Pondering...")
+                    
+                    if image_url:
+                        self.display_remote_image(image_url)
+                else:
+                    self.set_state(BotStates.IDLE, "Ready...")
+            else:
+                self.set_state(BotStates.IDLE, "Ready...")
+
+        threading.Thread(target=run_thought, daemon=True).start()
+
+    def display_remote_image(self, image_url):
+        """Fetch and display an image from a URL with BMO styling."""
+        def run_display():
+            self.set_state(BotStates.DISPLAY_IMAGE, "Visualizing...")
+            try:
+                req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=30) as u:
+                    raw_data = u.read()
+                
+                from io import BytesIO
+                from PIL import ImageOps
+                
+                img = Image.open(BytesIO(raw_data))
+                
+                # Apply BMO border
+                lcd_w, lcd_h = self.BG_WIDTH - 60, self.BG_HEIGHT - 60
+                img_ratio = img.width / img.height
+                target_ratio = lcd_w / lcd_h
+                if img_ratio > target_ratio:
+                    new_h = lcd_h
+                    new_w = int(new_h * img_ratio)
+                else:
+                    new_w = lcd_w
+                    new_h = int(new_w / img_ratio)
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                left = (new_w - lcd_w) / 2
+                top = (new_h - lcd_h) / 2
+                right = (new_w + lcd_w) / 2
+                bottom = (new_h + lcd_h) / 2
+                img = img.crop((left, top, right, bottom))
+                img = ImageOps.expand(img, border=10, fill="#1c201a")
+                img = ImageOps.expand(img, border=20, fill="#38b5a0")
+                
+                def show_img(p_img=img):
+                    try:
+                        self.current_display_image = ImageTk.PhotoImage(p_img)
+                        self.background_label.config(image=self.current_display_image)
+                    except Exception: pass
+                
+                self.master.after(0, show_img)
+                time.sleep(12)
+                if self.current_state == BotStates.DISPLAY_IMAGE:
+                    self.set_state(BotStates.IDLE, "Ready...")
+            except Exception as e:
+                print(f"[IMAGE] Failed to display: {e}")
+                self.set_state(BotStates.IDLE, "Ready...")
+        
+        threading.Thread(target=run_display, daemon=True).start()
+
+    def generate_thought_internal(self, search_result):
+        """Shared logic for generating a BMO thought from search results."""
+        from core.config import LLM_URL, FAST_LLM_MODEL
+        import requests as http_requests
+
+        if not self.llm_lock.acquire(blocking=False):
+            return None
+        try:
+            thought_prompt = (
+                "You are BMO, a cute little robot. You just learned something interesting from the real world. "
+                "Share what you found as a short, charming 'pondering' to yourself. "
+                "RULES:\n"
+                "1. Start by saying: 'I found this today, [Summarize the specific fact].' \n"
+                "2. Then, share your own charming reaction or opinion naturally. Do NOT use labels like 'My thoughts:' or 'Opinion:'. \n"
+                "3. If the topic is very visual (like space, animals, nature, history, landmarks), you SHOULD include exactly one JSON action on a new line: \n"
+                "   {\"action\": \"display_image\", \"image_url\": \"https://gen.pollinations.ai/image/[SHORT_DESCRIPTIVE_PROMPT]\"} \n"
+                "4. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
+                "5. CRITICAL: Your entire response MUST be under 60 words and 3-4 sentences maximum. You must finish your thought completely. \n"
+                "6. Do NOT ask questions to the user.\n\n"
+                f"Info: {search_result[:1500]}"
+            )
+            payload = {
+                "model": FAST_LLM_MODEL,
+                "messages": [
+                    {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Be concise, specific, and always finish your thought within 60 words."},
+                    {"role": "user", "content": thought_prompt},
+                ],
+                "stream": False,
+                "options": {"temperature": 0.8, "num_predict": 200}
+            }
+            resp = http_requests.post(LLM_URL, json=payload, timeout=60)
+            if resp.status_code == 200:
+                return resp.json().get("message", {}).get("content", "").strip()
+        except Exception as e:
+            print(f"[LLM] Thought generation error: {e}")
+        finally:
+            self.llm_lock.release()
+        return None
+
     def screensaver_audio_loop(self):
         import datetime
         import requests as http_requests
@@ -976,9 +1142,11 @@ class BotGUI:
                     "RULES:\n"
                     "1. Start by saying: 'I found this today, [Summarize the specific fact].' \n"
                     "2. Then, share your own charming reaction or opinion naturally. Do NOT use labels like 'My thoughts:' or 'Opinion:'. \n"
-                    "3. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
-                    "4. CRITICAL: Your entire response MUST be under 60 words and 3-4 sentences maximum. You must finish your thought completely. \n"
-                    "5. Do NOT ask questions to the user.\n\n"
+                    "3. If the topic is very visual (like space, animals, nature, history, landmarks), you SHOULD include exactly one JSON action on a new line: \n"
+                    "   {\"action\": \"display_image\", \"image_url\": \"https://gen.pollinations.ai/image/[SHORT_DESCRIPTIVE_PROMPT]\"} \n"
+                    "4. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
+                    "5. CRITICAL: Your entire response MUST be under 60 words and 3-4 sentences maximum. You must finish your thought completely. \n"
+                    "6. Do NOT ask questions to the user.\n\n"
                     f"Info: {search_result[:1500]}"
                 )
                 payload = {
@@ -1061,8 +1229,7 @@ class BotGUI:
                         
                         phrase = None
                         if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
-                            # Use generate_thought which now has its own lock and timeout
-                            phrase = generate_thought(search_result)
+                            phrase = self.generate_thought_internal(search_result)
                             
                             if phrase:
                                 # Check for image URL
@@ -1075,8 +1242,7 @@ class BotGUI:
                                             image_url = action_data.get("image_url")
                                             phrase = phrase.replace(json_match.group(0), '').strip()
                                             image_url = image_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
-                                    except Exception:
-                                        pass
+                                    except Exception: pass
                                 
                                 # Speak the thought
                                 if phrase and self.current_state == BotStates.SCREENSAVER and not self.is_busy:
@@ -1085,52 +1251,7 @@ class BotGUI:
                                     
                                     # Handle image display
                                     if image_url and self.current_state == BotStates.IDLE: # speak() ends in IDLE
-                                        self.set_state(BotStates.DISPLAY_IMAGE, "Visualizing...")
-                                        try:
-                                            req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
-                                            with urllib.request.urlopen(req, timeout=30) as u:
-                                                raw_data = u.read()
-                                            
-                                            from io import BytesIO
-                                            from PIL import ImageOps
-                                            
-                                            def apply_bmo_border(pil_img):
-                                                lcd_w, lcd_h = self.BG_WIDTH - 60, self.BG_HEIGHT - 60
-                                                img_ratio = pil_img.width / pil_img.height
-                                                target_ratio = lcd_w / lcd_h
-                                                if img_ratio > target_ratio:
-                                                    new_h = lcd_h
-                                                    new_w = int(new_h * img_ratio)
-                                                else:
-                                                    new_w = lcd_w
-                                                    new_h = int(new_w / img_ratio)
-                                                pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                                                left = (new_w - lcd_w) / 2
-                                                top = (new_h - lcd_h) / 2
-                                                right = (new_w + lcd_w) / 2
-                                                bottom = (new_h + lcd_h) / 2
-                                                pil_img = pil_img.crop((left, top, right, bottom))
-                                                pil_img = ImageOps.expand(pil_img, border=10, fill="#1c201a")
-                                                pil_img = ImageOps.expand(pil_img, border=20, fill="#38b5a0")
-                                                return pil_img
-
-                                            img = Image.open(BytesIO(raw_data))
-                                            img = apply_bmo_border(img)
-                                            
-                                            def show_img(p_img=img):
-                                                try:
-                                                    self.current_display_image = ImageTk.PhotoImage(p_img)
-                                                    self.background_label.config(image=self.current_display_image)
-                                                except Exception: pass
-                                            
-                                            self.master.after(0, show_img)
-                                            time.sleep(10)
-                                            if self.current_state == BotStates.DISPLAY_IMAGE:
-                                                self.set_state(BotStates.SCREENSAVER, "Sleeping...")
-                                        except Exception as e:
-                                            print(f"[SCREENSAVER] Image error: {e}")
-                                            if self.current_state == BotStates.DISPLAY_IMAGE:
-                                                self.set_state(BotStates.SCREENSAVER, "Sleeping...")
+                                        self.display_remote_image(image_url)
                     except Exception as e:
                         print(f"[SCREENSAVER] Thought failed: {e}")
                 
