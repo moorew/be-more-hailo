@@ -457,7 +457,7 @@ class BotGUI:
                 # 1. Synthesize audio first. (Runs silently, mouth stays idle/thinking)
                 safe_text = clean_text.replace("'", "'\\''")
                 piper_cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_raw"
-                res = subprocess.run(piper_cmd, shell=True, capture_output=True, timeout=10)
+                res = subprocess.run(piper_cmd, shell=True, capture_output=True, timeout=30)
                 if res.returncode != 0:
                     print(f"Piper error: {res.stderr}")
                     return
@@ -472,9 +472,9 @@ class BotGUI:
                 
                 # 3. Play the generated audio bytes
                 if not self.is_muted:
-                    # Added 20s timeout to aplay to prevent hangs on busy audio devices
+                    # Added 45s timeout to aplay to prevent hangs on busy audio devices
                     aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", "22050", "-f", "S16_LE", "-t", "raw", "-q"]
-                    subprocess.run(aplay_cmd, input=res.stdout, timeout=20)
+                    subprocess.run(aplay_cmd, input=res.stdout, timeout=45)
                 else:
                     # If muted, just hold the speaking pose for a moment to simulate talking
                     time.sleep(1.5)
@@ -920,6 +920,27 @@ class BotGUI:
             "tallest buildings in the world",
             "invention of the telephone",
             "what is a black hole",
+            "funny dad jokes",
+            "hilarious puns",
+            "knock knock jokes",
+            "short funny stories",
+            "unusual world records",
+            "history of board games",
+            "how honey is made",
+            "origins of common idioms",
+            "mysteries of the pyramids",
+            "first mission to the moon",
+            "evolution of video game consoles",
+            "how to make a paper airplane",
+            "why the sky is blue",
+            "fun facts about penguins",
+            "discovery of dinosaurs",
+            "life on Mars possibilities",
+            "history of ice cream",
+            "how the internet works for kids",
+            "cool chemistry experiments",
+            "amazing origami facts",
+            "the world's oldest trees",
         ]
         
         # Fallback phrases if search/LLM fails
@@ -952,28 +973,27 @@ class BotGUI:
                 thought_prompt = (
                     "You are BMO, a cute little robot. You just learned something interesting from the real world. "
                     "Share what you found as a short, charming 'pondering' to yourself. "
-                    "FORMAT:\n"
-                    "1. Start with exactly: 'I found this today, [Summarize the specific fact].' \n"
-                    "2. Follow with: 'My thoughts: [BMO's reaction/opinion].' \n"
                     "RULES:\n"
-                    "1. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
-                    "2. Talk for 2-4 sentences total.\n"
-                    "3. Do NOT ask questions to the user.\n\n"
+                    "1. Start by saying: 'I found this today, [Summarize the specific fact].' \n"
+                    "2. Then, share your own charming reaction or opinion naturally. Do NOT use labels like 'My thoughts:' or 'Opinion:'. \n"
+                    "3. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
+                    "4. CRITICAL: Your entire response MUST be under 60 words and 3-4 sentences maximum. You must finish your thought completely. \n"
+                    "5. Do NOT ask questions to the user.\n\n"
                     f"Info: {search_result[:1500]}"
                 )
                 payload = {
                     "model": FAST_LLM_MODEL,
                     "messages": [
-                        {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Always mention specific names, titles, numbers, and facts. Use the requested format: 'I found this today, ... My thoughts: ...'"},
+                        {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Be concise, specific, and always finish your thought within 60 words."},
                         {"role": "user", "content": thought_prompt},
                     ],
                     "stream": False,
                     "options": {
                         "temperature": 0.8,
-                        "num_predict": 512,
+                        "num_predict": 200,
                     }
                 }
-                resp = http_requests.post(LLM_URL, json=payload, timeout=45)
+                resp = http_requests.post(LLM_URL, json=payload, timeout=60)
                 if resp.status_code == 200:
                     content = resp.json().get("message", {}).get("content", "").strip()
                     if content and "connect" not in content.lower() and "error" not in content.lower():
