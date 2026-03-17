@@ -322,16 +322,29 @@ async def get_screensaver_thought():
 
     search_topics = [
         "interesting fun fact of the day",
-        "inspirational quote of the day",
+        "weather forecast today in Brantford, Ontario",
         "this day in history",
         "cool science discovery this week",
         "funny animal fact",
-        "motivational thought for the day",
+        "random wholesome internet story",
         "video game history fact",
         "weird food fact",
-        "riddle of the day",
         "Adventure Time lore or trivia",
+        "today's astronomy picture",
         "best joke of the day",
+        "random Wikipedia article summary",
+        "latest space news from NASA",
+        "strange laws in Canada",
+        "mythology fun fact",
+        "how a computer works for kids",
+        "cool deep sea creatures",
+        "interesting insect facts",
+        "history of robots",
+        "why do cats purr",
+        "fastest land animals",
+        "tallest buildings in the world",
+        "invention of the telephone",
+        "what is a black hole",
     ]
     fallback_phrases = [
         "I wonder what Finn and Jake are doing right now.",
@@ -352,15 +365,18 @@ async def get_screensaver_thought():
         if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
             thought_prompt = (
                 "You are BMO, a cute little robot. You just learned something interesting from the real world. "
-                "Based on the info below, share what you found OUT LOUD. "
+                "Share what you found as a short, charming 'pondering' to yourself. "
+                "FORMAT:\n"
+                "1. Start with exactly: 'I found this today, [Summarize the specific fact].' \n"
+                "2. Follow with: 'My thoughts: [BMO's reaction/opinion].' \n"
                 "RULES:\n"
-                "1. You MUST include the SPECIFIC name, title, number, date, or fact. NEVER be vague.\n"
-                "2. Talk for 2-3 sentences. First sentence states the specific thing. Second adds your charming opinion.\n"
+                "1. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
+                "2. Talk for 2-4 sentences total.\n"
                 "3. Do NOT ask questions to the user.\n\n"
-                f"Info: {search_result[:1200]}"
+                f"Info: {search_result[:1500]}"
             )
             messages = [
-                {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Always mention specific names, titles, numbers, and facts."},
+                {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Always mention specific names, titles, numbers, and facts. Use the requested format: 'I found this today, ... My thoughts: ...'"},
                 {"role": "user", "content": thought_prompt},
             ]
 
@@ -371,7 +387,7 @@ async def get_screensaver_thought():
                     "model": FAST_LLM_MODEL,
                     "messages": messages,
                     "stream": False,
-                    "options": {"temperature": 0.8, "num_predict": 300}
+                    "options": {"temperature": 0.8, "num_predict": 512}
                 }
                 resp = http_requests.post(LLM_URL, json=payload, timeout=30)
                 if resp.status_code == 200:
