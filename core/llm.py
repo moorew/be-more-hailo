@@ -102,8 +102,11 @@ _PROMPT_LEAK_PATTERNS = [
     re.compile(r'Valid emotions are:', re.IGNORECASE),
     re.compile(r'1\. Start by saying:.*?', re.IGNORECASE),
     re.compile(r'2\. Then, share your own.*?', re.IGNORECASE),
-    re.compile(r'3\. If the topic is very visual.*?', re.IGNORECASE),
+    re.compile(r'3\. If the topic is visual.*?', re.IGNORECASE),
     re.compile(r'Rule \d:.*?', re.IGNORECASE),
+    re.compile(r'Summarize (?:the )?specific fact.*?', re.IGNORECASE),
+    re.compile(r'\[Summarize.*?\]', re.IGNORECASE),
+    re.compile(r'Start by saying:.*?', re.IGNORECASE),
 ]
 
 
@@ -140,18 +143,18 @@ def strip_prompt_leakage(content: str) -> str:
     # First, strip <think> blocks entirely as they are internal reasoning
     content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
     
+    # If the model uses our new [BMO] tag, strip everything before it (including the tag)
+    if "[BMO]" in content:
+        content = content.split("[BMO]", 1)[1].strip()
+
     # Remove numbered list labels at the start of lines (e.g., "1. ", "2. ")
     # which the model sometimes includes when following multi-step prompts.
-    content = re.sub(r'^\s*\d+[\.\)]\s*', '', content, flags=re.MULTILINE)
-    
+...
     # Remove common prompt-following labels
-    content = re.sub(r'^(?:My thoughts|Reaction|Opinion|BMO\'s thoughts|BMO\'s reaction):', '', content, flags=re.IGNORECASE | re.MULTILINE)
+    content = re.sub(r'^(?:My thoughts|Reaction|Opinion|BMO\'s thoughts|BMO\'s reaction|Summarize|Fact):', '', content, flags=re.IGNORECASE | re.MULTILINE)
 
     for pat in _PROMPT_LEAK_PATTERNS:
-        # Remove the matched pattern and everything after it (it's usually trailing noise)
-        match = pat.search(content)
-        if match:
-            content = content[:match.start()].strip()
+...
     return content.strip()
 
 
