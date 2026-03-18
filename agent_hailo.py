@@ -5,7 +5,7 @@
 
 import tkinter as tk
 from tkinter import ttk
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageOps
 import threading
 import time
 import json
@@ -18,6 +18,7 @@ import select
 import traceback
 import atexit
 import datetime
+from collections import deque
 import warnings
 import wave
 import struct 
@@ -109,6 +110,7 @@ class BotGUI:
         
         # Memory
         self.brain = Brain()
+        self.recent_topics = deque(maxlen=20)
 
 
         # Init UI
@@ -929,14 +931,10 @@ class BotGUI:
             return
 
         def run_thought():
-            # We need the local functions from screensaver_audio_loop or we move them
-            # For simplicity, I'll re-implement the core logic here or refer to shared ones.
-            # I'll use the same logic as the loop but in a separate thread.
-            from core.search import search_web
+            from core.search import search_web, search_images
             from core.config import LLM_URL, FAST_LLM_MODEL
             import requests as http_requests
 
-            # Need to get search_topics - I'll make it a class attribute in a moment or just copy
             topics = [
                 "interesting fun fact of the day", "weather forecast today in Brantford, Ontario",
                 "this day in history", "cool science discovery this week", "funny animal fact",
@@ -944,33 +942,44 @@ class BotGUI:
                 "Adventure Time lore or trivia", "today's astronomy picture", "best joke of the day",
                 "funny dad jokes", "hilarious puns", "unusual world records"
             ]
-            
+
             topic = random.choice(topics)
+            for _ in range(3):
+                if topic in self.recent_topics:
+                    topic = random.choice(topics)
+                else:
+                    break
+
             print(f"[BUTTON] Manually triggering thought for: {topic}")
             self.set_state(BotStates.THINKING, "Thinking...")
-            
+
             search_result = search_web(topic)
             if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
-                # We need to call the same generate_thought logic. 
-                # Since it was local to screensaver_audio_loop, I'll move it to a class method first.
                 phrase = self.generate_thought_internal(search_result)
-                
+
                 if phrase:
-                    # Check for image URL
+                    self.recent_topics.append(topic)
+                    # Check for image URL or subject
                     image_url = None
                     json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
                     if json_match:
                         try:
                             action_data = json.loads(json_match.group(0))
-                            if action_data.get("action") == "display_image" and action_data.get("image_url"):
-                                image_url = action_data.get("image_url")
+                            if action_data.get("action") == "display_image":
+                                subject = action_data.get("subject") or action_data.get("image_url")
+                                if subject:
+                                    if "://" in subject:
+                                        image_url = subject
+                                    else:
+                                        image_url = search_images(subject)
                                 phrase = phrase.replace(json_match.group(0), '').strip()
                         except Exception: pass
-                    
+
                     self.speak(phrase, msg="Pondering...")
-                    
                     if image_url:
-                        self.display_remote_image(image_url)
+                        # Wait for BMO to start speaking before showing image
+                        time.sleep(1.5)
+                        self.display_remote_image(image_url, commentary_prompt=topic)
                 else:
                     self.set_state(BotStates.IDLE, "Ready...")
             else:
@@ -1019,8 +1028,8 @@ class BotGUI:
             
         def run_image_thought():
             from core.config import LLM_URL, FAST_LLM_MODEL
+            from core.search import search_images
             import requests as http_requests
-            import urllib.parse
             
             self.set_state(BotStates.THINKING, "Imagining...")
             
@@ -1033,11 +1042,11 @@ class BotGUI:
             ]
             self.speak(random.choice(intros), msg="Imagining...")
             
-            prompt = "You are BMO. You want to show a picture. Output ONLY 1 to 3 comma-separated keywords for the image you want to show (e.g. 'cute,penguin' or 'space,stars'). Do NOT say anything else."
+            prompt = "You are BMO. You want to show a picture. Output ONLY a short, vivid 3-5 word descriptive search term for an image (e.g. 'cute baby penguin' or 'colorful deep space nebula'). Do NOT say anything else."
             payload = {
                 "model": FAST_LLM_MODEL,
                 "messages": [
-                    {"role": "system", "content": "You are BMO. You only output short, comma-separated keywords for an image search."},
+                    {"role": "system", "content": "You are BMO. You only output short image search terms."},
                     {"role": "user", "content": prompt}
                 ],
                 "stream": False,
@@ -1046,20 +1055,25 @@ class BotGUI:
             try:
                 resp = http_requests.post(LLM_URL, json=payload, timeout=30)
                 if resp.status_code == 200:
-                    keywords = resp.json().get("message", {}).get("content", "").strip()
-                    keywords = keywords.replace(" ", "").replace('"', '').replace('\n', '').strip()
-                    if not keywords:
-                        keywords = "cute,robot"
+                    search_term = resp.json().get("message", {}).get("content", "").strip()
+                    search_term = search_term.replace('"', '').replace('\n', '').strip()
+                    if not search_term:
+                        search_term = "cute robot"
                         
-                    import random
-                    lock_id = random.randint(1, 100000)
-                    url = f"https://loremflickr.com/640/480/{keywords}?lock={lock_id}"
+                    # Find a real image
+                    url = search_images(search_term)
+                    
+                    if not url:
+                        # Fallback to a placeholder if search fails
+                        import random
+                        lock_id = random.randint(1, 100000)
+                        url = f"https://loremflickr.com/640/480/{search_term.replace(' ', ',')}?lock={lock_id}"
                     
                     # Wait for BMO to finish speaking the intro
                     while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
                         time.sleep(0.5)
                         
-                    self.display_remote_image(url, commentary_prompt=keywords.replace(",", " "))
+                    self.display_remote_image(url, commentary_prompt=search_term)
                     return
             except Exception as e:
                 print(f"[IMAGE] Generator failed: {e}")
@@ -1155,6 +1169,7 @@ class BotGUI:
     def generate_thought_internal(self, search_result):
         """Shared logic for generating a BMO thought from search results."""
         from core.config import LLM_URL, FAST_LLM_MODEL
+        from core.llm import strip_prompt_leakage
         import requests as http_requests
 
         if not self.llm_lock.acquire(blocking=False):
@@ -1165,18 +1180,19 @@ class BotGUI:
                 "Share what you found as a short, charming 'pondering' to yourself. "
                 "RULES:\n"
                 "1. Start by saying: 'I found this today, [Summarize the specific fact].' \n"
-                "2. Then, share your own charming reaction or opinion naturally. Do NOT use labels like 'My thoughts:' or 'Opinion:'. \n"
-                "3. If the topic is very visual (like space, animals, nature, history, landmarks), you SHOULD include exactly one JSON action on a new line: \n"
-                "   {\"action\": \"display_image\", \"image_url\": \"https://loremflickr.com/640/480/[COMMA_SEPARATED_KEYWORDS]?lock=[RANDOM_NUMBER]\"} \n"
-                "4. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
-                "5. CRITICAL: Your entire response MUST be under 60 words and 3-4 sentences maximum. You must finish your thought completely. \n"
-                "6. Do NOT ask questions to the user.\n\n"
+                "2. Then, share your own charming reaction or opinion naturally. \n"
+                "3. If the topic is visual, you SHOULD include exactly one JSON action on a new line: \n"
+                "   {\"action\": \"display_image\", \"subject\": \"[CUTE_WHIMSICAL_DESCRIPTION]\"} \n"
+                "   REPLACE [CUTE_WHIMSICAL_DESCRIPTION] with a 4-7 word vivid, whimsical description (e.g. 'artistic drawing of a colorful galaxy' or 'cute illustration of a baby elephant'). \n"
+                "4. You MUST include SPECIFIC names, dates, or numbers from the info provided.\n"
+                "5. CRITICAL: Your entire response MUST be under 60 words. You must finish your thought completely. \n"
+                "6. Do NOT include labels like 'My thoughts:' or 'Opinion:' or repeat these rules.\n"
                 f"Info: {search_result[:1500]}"
             )
             payload = {
                 "model": FAST_LLM_MODEL,
                 "messages": [
-                    {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Be concise, specific, and always finish your thought within 60 words."},
+                    {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Be concise, specific, and always finish your thought within 60 words. Do NOT repeat instructions."},
                     {"role": "user", "content": thought_prompt},
                 ],
                 "stream": False,
@@ -1184,7 +1200,8 @@ class BotGUI:
             }
             resp = http_requests.post(LLM_URL, json=payload, timeout=60)
             if resp.status_code == 200:
-                return resp.json().get("message", {}).get("content", "").strip()
+                content = resp.json().get("message", {}).get("content", "").strip()
+                return strip_prompt_leakage(content)
         except Exception as e:
             print(f"[LLM] Thought generation error: {e}")
         finally:
@@ -1264,52 +1281,6 @@ class BotGUI:
             except Exception:
                 return False
         
-        def generate_thought(search_result):
-            """Generate a BMO musing using a direct (non-streaming) LLM call.
-            Returns the thought string, or None on failure."""
-            # SKIP if the LLM is already busy with a main-thread request
-            if not self.llm_lock.acquire(blocking=False):
-                print("[SCREENSAVER] LLM busy, skipping thought generation")
-                return None
-                
-            try:
-                thought_prompt = (
-                    "You are BMO, a cute little robot. You just learned something interesting from the real world. "
-                    "Share what you found as a short, charming 'pondering' to yourself. "
-                    "RULES:\n"
-                    "1. Start by saying: 'I found this today, [Summarize the specific fact].' \n"
-                    "2. Then, share your own charming reaction or opinion naturally. Do NOT use labels like 'My thoughts:' or 'Opinion:'. \n"
-                    "3. If the topic is very visual (like space, animals, nature, history, landmarks), you SHOULD include exactly one JSON action on a new line: \n"
-                    "   {\"action\": \"display_image\", \"image_url\": \"https://loremflickr.com/640/480/[COMMA_SEPARATED_KEYWORDS]?lock=[RANDOM_NUMBER]\"} \n"                    "4. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
-                    "5. CRITICAL: Your entire response MUST be under 60 words and 3-4 sentences maximum. You must finish your thought completely. \n"
-                    "6. Do NOT ask questions to the user.\n\n"
-                    f"Info: {search_result[:1500]}"
-                )
-                payload = {
-                    "model": FAST_LLM_MODEL,
-                    "messages": [
-                        {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Be concise, specific, and always finish your thought within 60 words."},
-                        {"role": "user", "content": thought_prompt},
-                    ],
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.8,
-                        "num_predict": 200,
-                    }
-                }
-                resp = http_requests.post(LLM_URL, json=payload, timeout=60)
-                if resp.status_code == 200:
-                    content = resp.json().get("message", {}).get("content", "").strip()
-                    if content and "connect" not in content.lower() and "error" not in content.lower():
-                        return content
-                else:
-                    print(f"[SCREENSAVER] LLM returned status {resp.status_code}")
-            except http_requests.exceptions.RequestException as e:
-                print(f"[SCREENSAVER] LLM request failed: {e}")
-            finally:
-                self.llm_lock.release()
-            return None
-        
         while not self.stop_event.is_set():
             time.sleep(30) # Check every 30 seconds
             if self.current_state != BotStates.SCREENSAVER or self.is_busy:
@@ -1360,6 +1331,12 @@ class BotGUI:
                 if is_llm_reachable():
                     try:
                         topic = random.choice(search_topics)
+                        for _ in range(3):
+                            if topic in self.recent_topics:
+                                topic = random.choice(search_topics)
+                            else:
+                                break
+                                
                         print(f"[SCREENSAVER] Searching for: {topic}")
                         search_result = search_web(topic)
                         
@@ -1368,14 +1345,20 @@ class BotGUI:
                             phrase = self.generate_thought_internal(search_result)
                             
                             if phrase:
-                                # Check for image URL
+                                self.recent_topics.append(topic)
+                                # Check for image URL or subject
                                 image_url = None
                                 json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
                                 if json_match:
                                     try:
                                         action_data = json.loads(json_match.group(0))
-                                        if action_data.get("action") == "display_image" and action_data.get("image_url"):
-                                            image_url = action_data.get("image_url")
+                                        if action_data.get("action") == "display_image":
+                                            subject = action_data.get("subject") or action_data.get("image_url")
+                                            if subject:
+                                                if "://" in subject:
+                                                    image_url = subject
+                                                else:
+                                                    image_url = search_images(subject)
                                             phrase = phrase.replace(json_match.group(0), '').strip()
                                     except Exception: pass
                                 
@@ -1385,8 +1368,10 @@ class BotGUI:
                                     self.last_screensaver_audio_time = time.time()
                                     
                                     # Handle image display
-                                    if image_url and self.current_state == BotStates.IDLE: # speak() ends in IDLE
-                                        self.display_remote_image(image_url)
+                                    if image_url:
+                                        # Wait for BMO to start speaking
+                                        time.sleep(1.5)
+                                        self.display_remote_image(image_url, commentary_prompt=topic)
                     except Exception as e:
                         print(f"[SCREENSAVER] Thought failed: {e}")
                 

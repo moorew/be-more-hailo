@@ -39,6 +39,9 @@ app = FastAPI(title="BMO Web UI")
 os.makedirs("static/audio", exist_ok=True)
 
 import time as _time
+from collections import deque
+recent_thoughts = deque(maxlen=20) # Cache last 20 thoughts to avoid repeats
+
 AUDIO_DIR = os.path.join("static", "audio")
 AUDIO_MAX_AGE_SECONDS = 300  # 5 minutes
 
@@ -379,7 +382,16 @@ async def get_screensaver_thought():
     image_url = None
 
     try:
+        # Avoid picking the same topic too often if we have many
         topic = random.choice(search_topics)
+        
+        # Limit attempts to find a new thought
+        for _ in range(3):
+            if topic in recent_thoughts:
+                topic = random.choice(search_topics)
+            else:
+                break
+        
         logger.info(f"[SCREENSAVER-WEB] Searching for: {topic}")
         search_result = search_web(topic)
 
@@ -390,9 +402,10 @@ async def get_screensaver_thought():
                 "RULES:\n"
                 "1. Start by saying: 'I found this today, [Summarize the specific fact].' \n"
                 "2. Then, share your own charming reaction or opinion naturally. \n"
-                "3. If the topic is very visual (like space, animals, nature, history, landmarks), you SHOULD include exactly one JSON action on a new line: \n"
-                "   {\"action\": \"display_image\", \"subject\": \"[REPLACE_WITH_SPECIFIC_IMAGE_SUBJECT]\"} \n"
-                "4. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
+                "3. If the topic is visual, you SHOULD include exactly one JSON action on a new line: \n"
+                "   {\"action\": \"display_image\", \"subject\": \"[CUTE_WHIMSICAL_DESCRIPTION]\"} \n"
+                "   REPLACE [CUTE_WHIMSICAL_DESCRIPTION] with a 4-7 word vivid, whimsical description (e.g. 'artistic drawing of a colorful galaxy' or 'cute illustration of a baby elephant'). \n"
+                "4. You MUST include SPECIFIC names, dates, or numbers from the info provided.\n"
                 "5. CRITICAL: Your entire response MUST be under 60 words. You must finish your thought completely. \n"
                 "6. Do NOT include labels like 'My thoughts:' or 'Opinion:' or repeat these rules.\n"
                 f"Info: {search_result[:1500]}"
@@ -417,6 +430,8 @@ async def get_screensaver_thought():
                     if content and "connect" not in content.lower() and "error" not in content.lower():
                         # Strip leakage and reasoning
                         phrase = strip_prompt_leakage(content)
+                        if phrase:
+                            recent_thoughts.append(topic)
             except Exception as e:
                 logger.warning(f"[SCREENSAVER-WEB] Local LLM failed: {e}")
 
@@ -435,6 +450,7 @@ async def get_screensaver_thought():
                                 if "://" in subject:
                                     image_url = subject
                                 else:
+                                    # Make the search more likely to find 'imaginative' art/photos
                                     image_url = search_images(subject)
                                     
                             phrase = phrase.replace(block, '').strip()
