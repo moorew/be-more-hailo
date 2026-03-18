@@ -14,7 +14,7 @@ import psutil
 import subprocess
 
 # Import our new unified core modules
-from core.llm import Brain
+from core.llm import Brain, strip_prompt_leakage
 from core.tts import play_audio_on_hardware, generate_audio_file, add_pronunciation, load_pronunciations, clean_text_for_speech
 from core.stt import transcribe_audio
 from core.config import LLM_URL, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
@@ -317,7 +317,7 @@ async def get_screensaver_thought():
     Uses web search + local LLM."""
     import random
     import re
-    from core.search import search_web
+    from core.search import search_web, search_images
     from core.config import LLM_URL, FAST_LLM_MODEL
 
     search_topics = [
@@ -389,16 +389,16 @@ async def get_screensaver_thought():
                 "Share what you found as a short, charming 'pondering' to yourself. "
                 "RULES:\n"
                 "1. Start by saying: 'I found this today, [Summarize the specific fact].' \n"
-                "2. Then, share your own charming reaction or opinion naturally. Do NOT use labels like 'My thoughts:' or 'Opinion:'. \n"
+                "2. Then, share your own charming reaction or opinion naturally. \n"
                 "3. If the topic is very visual (like space, animals, nature, history, landmarks), you SHOULD include exactly one JSON action on a new line: \n"
-                "   {\"action\": \"display_image\", \"image_url\": \"https://gen.pollinations.ai/image/[SHORT_DESCRIPTIVE_PROMPT]\"} \n"
+                "   {\"action\": \"display_image\", \"subject\": \"[REPLACE_WITH_SPECIFIC_IMAGE_SUBJECT]\"} \n"
                 "4. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
-                "5. CRITICAL: Your entire response MUST be under 60 words and 3-4 sentences maximum. You must finish your thought completely. \n"
-                "6. Do NOT ask questions to the user.\n\n"
+                "5. CRITICAL: Your entire response MUST be under 60 words. You must finish your thought completely. \n"
+                "6. Do NOT include labels like 'My thoughts:' or 'Opinion:' or repeat these rules.\n"
                 f"Info: {search_result[:1500]}"
             )
             messages = [
-                {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Be concise, specific, and always finish your thought within 60 words."},
+                {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Be concise, specific, and always finish your thought within 60 words. Do NOT repeat instructions."},
                 {"role": "user", "content": thought_prompt},
             ]
 
@@ -415,24 +415,38 @@ async def get_screensaver_thought():
                 if resp.status_code == 200:
                     content = resp.json().get("message", {}).get("content", "").strip()
                     if content and "connect" not in content.lower() and "error" not in content.lower():
-                        phrase = content
+                        # Strip leakage and reasoning
+                        phrase = strip_prompt_leakage(content)
             except Exception as e:
                 logger.warning(f"[SCREENSAVER-WEB] Local LLM failed: {e}")
 
             # Extract image URL if present
             if phrase:
-                json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
-                if json_match:
+                # First, find all JSON-like blocks
+                json_blocks = re.findall(r'\{.*?\}', phrase, re.DOTALL)
+                for block in json_blocks:
                     try:
-                        action_data = json.loads(json_match.group(0))
-                        if action_data.get("action") == "display_image" and action_data.get("image_url"):
-                            raw_url = action_data.get("image_url")
-                            raw_url = raw_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
-                            import urllib.parse
-                            image_url = urllib.parse.quote(raw_url, safe=':/?&=')
-                            phrase = phrase.replace(json_match.group(0), '').strip()
+                        action_data = json.loads(block)
+                        if action_data.get("action") == "display_image":
+                            # Use DuckDuckGo to find a real image of the subject
+                            subject = action_data.get("subject") or action_data.get("image_url")
+                            if subject:
+                                # Clean up subject if it's a URL
+                                if "://" in subject:
+                                    image_url = subject
+                                else:
+                                    image_url = search_images(subject)
+                                    
+                            phrase = phrase.replace(block, '').strip()
+                            break # Only one image
+                        elif "action" in action_data:
+                            # Remove other JSON actions from the phrase
+                            phrase = phrase.replace(block, '').strip()
                     except Exception:
                         pass
+                
+                # Final cleanup of the phrase
+                phrase = strip_prompt_leakage(phrase)
     except Exception as e:
         logger.error(f"[SCREENSAVER-WEB] Thought generation failed: {e}")
 

@@ -8,7 +8,7 @@ import urllib.parse
 import numpy as np
 from .config import LLM_URL, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt
 from .tts import add_pronunciation
-from .search import search_web
+from .search import search_web, search_images
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +93,17 @@ _MUSIC_KEYWORDS = [
 
 # Phrases that indicate the model is regurgitating system prompt instructions
 _PROMPT_LEAK_PATTERNS = [
+    re.compile(r'<think>.*?</think>', re.IGNORECASE | re.DOTALL),
     re.compile(r'CRIT(?:IC)?AL:.*?JSON', re.IGNORECASE | re.DOTALL),
     re.compile(r'you MUST output.*?JSON', re.IGNORECASE | re.DOTALL),
     re.compile(r'output (?:exactly )?this JSON', re.IGNORECASE),
     re.compile(r'If the user asks.*?(?:output|JSON)', re.IGNORECASE | re.DOTALL),
     re.compile(r'Replace YOUR_PROMPT_HERE', re.IGNORECASE),
     re.compile(r'Valid emotions are:', re.IGNORECASE),
+    re.compile(r'1\. Start by saying:.*?', re.IGNORECASE),
+    re.compile(r'2\. Then, share your own.*?', re.IGNORECASE),
+    re.compile(r'3\. If the topic is very visual.*?', re.IGNORECASE),
+    re.compile(r'Rule \d:.*?', re.IGNORECASE),
 ]
 
 
@@ -118,18 +123,36 @@ def _build_display_image_action(user_text: str) -> str:
             break
     # Remove trailing punctuation
     subject = subject.rstrip("?.!")
-    prompt = urllib.parse.quote(subject.strip() or "something fun")
-    return json.dumps({"action": "display_image", "image_url": f"https://image.pollinations.ai/prompt/{prompt}?width=512&height=512&nologo=true"})
+    
+    # Try to find a real image using DuckDuckGo
+    real_url = search_images(subject)
+    if real_url:
+        return json.dumps({"action": "display_image", "image_url": real_url})
+    
+    # Fallback to a placeholder if search fails
+    import random
+    lock_id = random.randint(1, 1000000)
+    return json.dumps({"action": "display_image", "image_url": f"https://loremflickr.com/512/512/{urllib.parse.quote(subject)}?lock={lock_id}"})
 
 
-def _strip_prompt_leakage(content: str) -> str:
+def strip_prompt_leakage(content: str) -> str:
     """Remove text that looks like the model echoing system prompt instructions."""
+    # First, strip <think> blocks entirely as they are internal reasoning
+    content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+    
+    # Remove numbered list labels at the start of lines (e.g., "1. ", "2. ")
+    # which the model sometimes includes when following multi-step prompts.
+    content = re.sub(r'^\s*\d+[\.\)]\s*', '', content, flags=re.MULTILINE)
+    
+    # Remove common prompt-following labels
+    content = re.sub(r'^(?:My thoughts|Reaction|Opinion|BMO\'s thoughts|BMO\'s reaction):', '', content, flags=re.IGNORECASE | re.MULTILINE)
+
     for pat in _PROMPT_LEAK_PATTERNS:
         # Remove the matched pattern and everything after it (it's usually trailing noise)
         match = pat.search(content)
         if match:
             content = content[:match.start()].strip()
-    return content
+    return content.strip()
 
 
 class Brain:
@@ -295,7 +318,7 @@ class Brain:
                     content = re.sub(r'!PRONOUNCE:.*', '', content, flags=re.IGNORECASE).strip()
 
                 # Strip any system prompt leakage from the response
-                content = _strip_prompt_leakage(content)
+                content = strip_prompt_leakage(content)
 
                 # Ensure BMO is spelled correctly in text responses
                 content = re.sub(r'\bBeemo\b', 'BMO', content, flags=re.IGNORECASE)
@@ -456,7 +479,7 @@ class Brain:
                                 # If buffer ends with punctuation or newline, yield it
                                 if any(buffer.endswith(punc) for punc in ['.', '!', '?', '\n']) or "\n\n" in buffer:
                                     # Strip system prompt leakage
-                                    cleaned = _strip_prompt_leakage(buffer)
+                                    cleaned = strip_prompt_leakage(buffer)
                                     # Ensure BMO spelling before yielding
                                     out_chunk = re.sub(r'\bBeemo\b', 'BMO', cleaned, flags=re.IGNORECASE)
                                     if out_chunk.strip():
@@ -468,7 +491,7 @@ class Brain:
                                 
                     # Yield any remaining buffer
                     if buffer.strip():
-                        cleaned = _strip_prompt_leakage(buffer)
+                        cleaned = strip_prompt_leakage(buffer)
                         out_chunk = re.sub(r'\bBeemo\b', 'BMO', cleaned, flags=re.IGNORECASE)
                         if out_chunk.strip():
                             yield out_chunk

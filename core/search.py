@@ -75,3 +75,22 @@ def search_web(query: str) -> str:
     except Exception as e:
         logger.error(f"Connection/Library Error during search: {e}")
         return "SEARCH_ERROR"
+
+def search_images(query: str) -> str:
+    """
+    Searches DuckDuckGo for the given query and returns the first image URL.
+    """
+    logger.info(f"Searching images for: {query}")
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.images(query, max_results=1))
+            if results:
+                image_url = results[0].get('image')
+                logger.info(f"Found Image: {image_url}")
+                return image_url
+            else:
+                logger.info("Image search returned 0 results.")
+                return ""
+    except Exception as e:
+        logger.error(f"Image Search Error: {e}")
+        return ""

@@ -495,13 +495,16 @@ class BotGUI:
                     print(f"Piper error: {res.stderr}")
                     return
                 
-                # 2. Audio is ready! Set SPEAKING state so mouth starts moving.
-                if msg is not None:
-                    self.set_state(BotStates.SPEAKING, msg)
+                # 2. Audio is ready! Set SPEAKING state so mouth starts moving, unless we're showing a picture.
+                if self.current_state != BotStates.DISPLAY_IMAGE:
+                    if msg is not None:
+                        self.set_state(BotStates.SPEAKING, msg)
+                    else:
+                        self.current_state = BotStates.SPEAKING
+                        self.current_frame = 0
+                        self.last_state_change = time.time()
                 else:
-                    self.current_state = BotStates.SPEAKING
-                    self.current_frame = 0
-                    self.last_state_change = time.time()
+                    print(f"BMO is speaking during DISPLAY_IMAGE: {clean_text[:30]}")
                 
                 # 3. Play the generated audio bytes
                 if not self.is_muted:
@@ -807,8 +810,7 @@ class BotGUI:
                         self.set_state(BotStates.DISPLAY_IMAGE, "Showing Image...")
                         print(f"[IMAGE] Starting image display for: {image_url}")
                         try:
-                            # Migrate broken gen.pollinations.ai URL to working image.pollinations.ai
-                            image_url = image_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
+                            # Note: migrated to loremflickr
                             print(f"[IMAGE] Downloading: {image_url}")
                             req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
                             with urllib.request.urlopen(req, timeout=30) as u:
@@ -963,7 +965,6 @@ class BotGUI:
                             if action_data.get("action") == "display_image" and action_data.get("image_url"):
                                 image_url = action_data.get("image_url")
                                 phrase = phrase.replace(json_match.group(0), '').strip()
-                                image_url = image_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
                         except Exception: pass
                     
                     self.speak(phrase, msg="Pondering...")
@@ -1023,26 +1024,43 @@ class BotGUI:
             
             self.set_state(BotStates.THINKING, "Imagining...")
             
-            prompt = "You are BMO. Describe a cute, simple, and colorful scene you would like to draw. Be very concise, just the scene description (e.g. 'a cute penguin eating ice cream'). Do NOT say anything else."
+            # Say something generic first
+            intros = [
+                "BMO is feeling creative! Let me draw something for you.",
+                "I am going to make some art!",
+                "Time for BMO's art class! One moment...",
+                "Let me paint a beautiful picture for you."
+            ]
+            self.speak(random.choice(intros), msg="Imagining...")
+            
+            prompt = "You are BMO. You want to show a picture. Output ONLY 1 to 3 comma-separated keywords for the image you want to show (e.g. 'cute,penguin' or 'space,stars'). Do NOT say anything else."
             payload = {
                 "model": FAST_LLM_MODEL,
                 "messages": [
-                    {"role": "system", "content": "You are BMO. You only output short, simple, highly descriptive visual prompts for an image generator."},
+                    {"role": "system", "content": "You are BMO. You only output short, comma-separated keywords for an image search."},
                     {"role": "user", "content": prompt}
                 ],
                 "stream": False,
-                "options": {"temperature": 0.9, "num_predict": 50}
+                "options": {"temperature": 0.9, "num_predict": 20}
             }
             try:
                 resp = http_requests.post(LLM_URL, json=payload, timeout=30)
                 if resp.status_code == 200:
-                    scene = resp.json().get("message", {}).get("content", "").strip()
-                    if scene:
-                        self.speak(f"BMO is going to draw a picture of {scene}!", msg="Drawing...")
-                        safe_prompt = urllib.parse.quote(scene, safe=':/?&=')
-                        url = f"https://image.pollinations.ai/prompt/{safe_prompt}"
-                        self.display_remote_image(url)
-                        return
+                    keywords = resp.json().get("message", {}).get("content", "").strip()
+                    keywords = keywords.replace(" ", "").replace('"', '').replace('\n', '').strip()
+                    if not keywords:
+                        keywords = "cute,robot"
+                        
+                    import random
+                    lock_id = random.randint(1, 100000)
+                    url = f"https://loremflickr.com/640/480/{keywords}?lock={lock_id}"
+                    
+                    # Wait for BMO to finish speaking the intro
+                    while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
+                        time.sleep(0.5)
+                        
+                    self.display_remote_image(url, commentary_prompt=keywords.replace(",", " "))
+                    return
             except Exception as e:
                 print(f"[IMAGE] Generator failed: {e}")
             
@@ -1050,20 +1068,29 @@ class BotGUI:
 
         threading.Thread(target=run_image_thought, daemon=True).start()
 
-    def display_remote_image(self, image_url):
+    def display_remote_image(self, image_url, commentary_prompt=None):
         """Fetch and display an image from a URL with BMO styling."""
         def run_display():
             self.set_state(BotStates.DISPLAY_IMAGE, "Visualizing...")
             try:
+                import urllib.request
                 import urllib.parse
-                # Safely encode the URL in case the LLM included spaces
-                safe_url = urllib.parse.quote(image_url, safe=':/?&=')
+                
+                # Safely encode the URL path and query
+                parts = urllib.parse.urlparse(image_url)
+                safe_path = urllib.parse.quote(urllib.parse.unquote(parts.path))
+                safe_query = urllib.parse.quote(urllib.parse.unquote(parts.query), safe='=&')
+                safe_url = urllib.parse.urlunparse((parts.scheme, parts.netloc, safe_path, parts.params, safe_query, parts.fragment))
+                
                 req = urllib.request.Request(safe_url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=30) as u:
+                with urllib.request.urlopen(req, timeout=15) as u:
                     raw_data = u.read()
+                            
+                if not raw_data:
+                    raise Exception("Failed to download image data.")
                 
                 from io import BytesIO
-                from PIL import ImageOps
+                from PIL import ImageOps, Image
                 
                 img = Image.open(BytesIO(raw_data))
                 
@@ -1093,6 +1120,29 @@ class BotGUI:
                     except Exception: pass
                 
                 self.master.after(0, show_img)
+                
+                if commentary_prompt:
+                    from core.config import LLM_URL, FAST_LLM_MODEL
+                    import requests as http_requests
+                    
+                    thought_prompt = f"You just drew a picture of: {commentary_prompt}. React to your artwork in one short sentence as BMO. Be proud of it!"
+                    payload = {
+                        "model": FAST_LLM_MODEL,
+                        "messages": [
+                            {"role": "system", "content": "You are BMO, a cute little robot. Keep it under 20 words."},
+                            {"role": "user", "content": thought_prompt}
+                        ],
+                        "stream": False,
+                        "options": {"temperature": 0.8, "num_predict": 40}
+                    }
+                    try:
+                        resp = http_requests.post(LLM_URL, json=payload, timeout=20)
+                        if resp.status_code == 200:
+                            commentary = resp.json().get("message", {}).get("content", "").strip()
+                            self.speak(commentary, msg="Admiring art...")
+                    except Exception as e:
+                        pass
+                
                 time.sleep(12)
                 if self.current_state == BotStates.DISPLAY_IMAGE:
                     self.set_state(BotStates.IDLE, "Ready...")
@@ -1117,7 +1167,7 @@ class BotGUI:
                 "1. Start by saying: 'I found this today, [Summarize the specific fact].' \n"
                 "2. Then, share your own charming reaction or opinion naturally. Do NOT use labels like 'My thoughts:' or 'Opinion:'. \n"
                 "3. If the topic is very visual (like space, animals, nature, history, landmarks), you SHOULD include exactly one JSON action on a new line: \n"
-                "   {\"action\": \"display_image\", \"image_url\": \"https://gen.pollinations.ai/image/[SHORT_DESCRIPTIVE_PROMPT]\"} \n"
+                "   {\"action\": \"display_image\", \"image_url\": \"https://loremflickr.com/640/480/[COMMA_SEPARATED_KEYWORDS]?lock=[RANDOM_NUMBER]\"} \n"
                 "4. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
                 "5. CRITICAL: Your entire response MUST be under 60 words and 3-4 sentences maximum. You must finish your thought completely. \n"
                 "6. Do NOT ask questions to the user.\n\n"
@@ -1230,8 +1280,7 @@ class BotGUI:
                     "1. Start by saying: 'I found this today, [Summarize the specific fact].' \n"
                     "2. Then, share your own charming reaction or opinion naturally. Do NOT use labels like 'My thoughts:' or 'Opinion:'. \n"
                     "3. If the topic is very visual (like space, animals, nature, history, landmarks), you SHOULD include exactly one JSON action on a new line: \n"
-                    "   {\"action\": \"display_image\", \"image_url\": \"https://gen.pollinations.ai/image/[SHORT_DESCRIPTIVE_PROMPT]\"} \n"
-                    "4. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
+                    "   {\"action\": \"display_image\", \"image_url\": \"https://loremflickr.com/640/480/[COMMA_SEPARATED_KEYWORDS]?lock=[RANDOM_NUMBER]\"} \n"                    "4. You MUST include SPECIFIC names, dates, or numbers. NEVER be vague.\n"
                     "5. CRITICAL: Your entire response MUST be under 60 words and 3-4 sentences maximum. You must finish your thought completely. \n"
                     "6. Do NOT ask questions to the user.\n\n"
                     f"Info: {search_result[:1500]}"
@@ -1328,7 +1377,6 @@ class BotGUI:
                                         if action_data.get("action") == "display_image" and action_data.get("image_url"):
                                             image_url = action_data.get("image_url")
                                             phrase = phrase.replace(json_match.group(0), '').strip()
-                                            image_url = image_url.replace("gen.pollinations.ai/image/", "image.pollinations.ai/prompt/")
                                     except Exception: pass
                                 
                                 # Speak the thought
