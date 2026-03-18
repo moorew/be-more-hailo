@@ -935,6 +935,7 @@ class BotGUI:
             from core.config import LLM_URL, FAST_LLM_MODEL
             import requests as http_requests
 
+            self.is_busy = True
             topics = [
                 "interesting fun fact of the day", "weather forecast today in Brantford, Ontario",
                 "this day in history", "cool science discovery this week", "funny animal fact",
@@ -980,9 +981,14 @@ class BotGUI:
                         # Wait for BMO to start speaking before showing image
                         time.sleep(1.5)
                         self.display_remote_image(image_url, commentary_prompt=topic)
+                    else:
+                        self.is_busy = False
+                        self.set_state(BotStates.IDLE, "Ready...")
                 else:
+                    self.is_busy = False
                     self.set_state(BotStates.IDLE, "Ready...")
             else:
+                self.is_busy = False
                 self.set_state(BotStates.IDLE, "Ready...")
 
         threading.Thread(target=run_thought, daemon=True).start()
@@ -1031,6 +1037,7 @@ class BotGUI:
             from core.search import search_images
             import requests as http_requests
             
+            self.is_busy = True
             self.set_state(BotStates.THINKING, "Imagining...")
             
             # Say something generic first
@@ -1077,8 +1084,8 @@ class BotGUI:
                     return
             except Exception as e:
                 print(f"[IMAGE] Generator failed: {e}")
-            
-            self.set_state(BotStates.IDLE, "Ready...")
+                self.is_busy = False
+                self.set_state(BotStates.IDLE, "Ready...")
 
         threading.Thread(target=run_image_thought, daemon=True).start()
 
@@ -1163,6 +1170,8 @@ class BotGUI:
             except Exception as e:
                 print(f"[IMAGE] Failed to display: {e}")
                 self.set_state(BotStates.IDLE, "Ready...")
+            finally:
+                self.is_busy = False
         
         threading.Thread(target=run_display, daemon=True).start()
 
@@ -1282,6 +1291,14 @@ class BotGUI:
         
         while not self.stop_event.is_set():
             time.sleep(30) # Check every 30 seconds
+            
+            # Watchdog: if is_busy is True for too long (e.g. > 2 mins), clear it.
+            # This prevents BMO from being 'stuck' forever if a thread dies.
+            if self.is_busy and (time.time() - self.last_state_change > 120):
+                print("[WATCHDOG] BMO was busy for > 120s. Force-clearing is_busy.")
+                self.is_busy = False
+                self.set_state(BotStates.IDLE, "Ready...")
+
             if self.current_state != BotStates.SCREENSAVER or self.is_busy:
                 continue
                 
@@ -1363,6 +1380,7 @@ class BotGUI:
                                 
                                 # Speak the thought
                                 if phrase and self.current_state == BotStates.SCREENSAVER and not self.is_busy:
+                                    self.is_busy = True
                                     self.speak(phrase, msg="Pondering...")
                                     self.last_screensaver_audio_time = time.time()
                                     
@@ -1371,8 +1389,12 @@ class BotGUI:
                                         # Wait for BMO to start speaking
                                         time.sleep(1.5)
                                         self.display_remote_image(image_url, commentary_prompt=topic)
+                                    else:
+                                        self.is_busy = False
                     except Exception as e:
                         print(f"[SCREENSAVER] Thought failed: {e}")
+                        self.is_busy = False
+                        self.set_state(BotStates.SCREENSAVER, "Sleeping...")
                 
                 # Revert to screensaver state if needed
                 if self.current_state != BotStates.SCREENSAVER and not self.is_busy and self.current_state != BotStates.DISPLAY_IMAGE:

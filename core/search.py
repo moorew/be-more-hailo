@@ -35,7 +35,7 @@ def search_web(query: str) -> str:
             # Fall through to DDG if wttr.in fails
 
     try:
-        with DDGS() as ddgs:
+        with DDGS(timeout=10) as ddgs:
             results = []
             
             # Use Canadian region if Ontario is mentioned
@@ -82,7 +82,7 @@ def search_images(query: str) -> str:
     """
     logger.info(f"Searching images for: {query}")
     try:
-        with DDGS() as ddgs:
+        with DDGS(timeout=10) as ddgs:
             results = list(ddgs.images(query, max_results=1))
             if results:
                 image_url = results[0].get('image')
