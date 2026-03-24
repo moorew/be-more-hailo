@@ -566,18 +566,23 @@ def gen_football(base_dir="faces/football"):
         def draw_fb(d, frame=i):
             draw_happy_eyes(d)
             draw_mouth(d, "smile")
-            # Pink lipstick blush on cheeks
-            pink = (255, 105, 180)
-            d.ellipse([150*SCALE, 230*SCALE, 190*SCALE, 260*SCALE], fill=pink)
-            d.ellipse([610*SCALE, 230*SCALE, 650*SCALE, 260*SCALE], fill=pink)
-            # A little pink bow on top
-            d.polygon([(399*SCALE, 70*SCALE), (370*SCALE, 50*SCALE), (370*SCALE, 90*SCALE)], fill=pink)
-            d.polygon([(399*SCALE, 70*SCALE), (428*SCALE, 50*SCALE), (428*SCALE, 90*SCALE)], fill=pink)
-            d.ellipse([385*SCALE, 60*SCALE, 413*SCALE, 80*SCALE], fill=pink)
+            # Softer, more organic pink blush (slightly transparent feel via color choice)
+            pink = (255, 140, 190)
+            # Oval blush spots positioned lower and wider
+            d.ellipse([120*SCALE, 240*SCALE, 180*SCALE, 275*SCALE], fill=pink)
+            d.ellipse([620*SCALE, 240*SCALE, 680*SCALE, 275*SCALE], fill=pink)
+            
+            # A more "fabric" looking bow on the top corner
+            bx, by = 550, 40
+            # Bow Loops (rounded polygons for a soft look)
+            d.chord([(bx-40)*SCALE, by*SCALE, bx*SCALE, (by+50)*SCALE], 120, 300, fill=pink, outline=LINE_COLOR, width=2*SCALE)
+            d.chord([bx*SCALE, by*SCALE, (bx+40)*SCALE, (by+50)*SCALE], 240, 60, fill=pink, outline=LINE_COLOR, width=2*SCALE)
+            # Bow Knot (small rounded center)
+            d.rounded_rectangle([(bx-8)*SCALE, (by+15)*SCALE, (bx+8)*SCALE, (by+35)*SCALE], radius=5*SCALE, fill=pink, outline=LINE_COLOR, width=2*SCALE)
         create_face(f"{base_dir}/football_{i+1:02d}.png", draw_fb)
 
 def gen_detective(base_dir="faces/detective"):
-    """Detective BMO with a fedora and pipe."""
+    """Detective BMO with a stylized fedora and pipe."""
     ensure_dir(base_dir)
     import math
     for i in range(8):
@@ -588,19 +593,31 @@ def gen_detective(base_dir="faces/detective"):
             draw_arc_eye(d, LEFT_EYE_X + off, EYE_Y + 5, EYE_R, 345, 195)
             draw_arc_eye(d, RIGHT_EYE_X + off, EYE_Y + 5, EYE_R, 345, 195)
             draw_mouth(d, "straight")
-            # Fedora hat
-            dark_grey = (50, 50, 50)
-            d.rectangle([(250*SCALE, 100*SCALE), (550*SCALE, 120*SCALE)], fill=dark_grey) # brim
-            d.rectangle([(300*SCALE, 20*SCALE), (500*SCALE, 100*SCALE)], fill=dark_grey) # crown
-            d.rectangle([(300*SCALE, 85*SCALE), (500*SCALE, 100*SCALE)], fill=(20, 20, 20)) # band
-            # Magnifying glass / Pipe (let's do pipe)
-            pipe_brown = (139, 69, 19)
-            d.line([(399*SCALE, 302*SCALE), (450*SCALE, 350*SCALE)], fill=pipe_brown, width=8*SCALE)
-            d.rectangle([(440*SCALE, 330*SCALE), (460*SCALE, 350*SCALE)], fill=pipe_brown)
+            
+            # Stylized Fedora
+            hat_color = (60, 60, 70)
+            band_color = (30, 30, 40)
+            # Curved Brim
+            d.chord([220*SCALE, 110*SCALE, 580*SCALE, 150*SCALE], 0, 180, fill=hat_color, outline=LINE_COLOR, width=3*SCALE)
+            # Tapered Crown (Trapezoid-ish with rounded top)
+            d.polygon([(300*SCALE, 115*SCALE), (320*SCALE, 30*SCALE), (480*SCALE, 30*SCALE), (500*SCALE, 115*SCALE)], fill=hat_color, outline=LINE_COLOR, width=3*SCALE)
+            # Hat Band
+            d.polygon([(304*SCALE, 115*SCALE), (312*SCALE, 85*SCALE), (488*SCALE, 85*SCALE), (496*SCALE, 115*SCALE)], fill=band_color)
+            
+            # Classic wooden pipe
+            pipe_brown = (120, 60, 30)
+            px, py = 450, 310
+            # Stem (slightly curved)
+            d.line([(px*SCALE, py*SCALE), ((px+60)*SCALE, (py+40)*SCALE)], fill=pipe_brown, width=6*SCALE)
+            # Bowl
+            d.ellipse([(px+55)*SCALE, (py+25)*SCALE, (px+85)*SCALE, (py+65)*SCALE], fill=pipe_brown, outline=LINE_COLOR, width=3*SCALE)
+            # Smoke puff
+            if i % 2 == 0:
+                d.ellipse([(px+80)*SCALE, (py+5)*SCALE, (px+100)*SCALE, (py+25)*SCALE], fill=(255, 255, 255, 128))
         create_face(f"{base_dir}/detective_{i+1:02d}.png", draw_det)
 
 def gen_sir_mano(base_dir="faces/sir_mano"):
-    """Sir Mano with a fancy mustache."""
+    """Sir Mano with a bold, fancy mustache."""
     ensure_dir(base_dir)
     for i in range(8):
         def draw_sm(d):
@@ -608,13 +625,18 @@ def gen_sir_mano(base_dir="faces/sir_mano"):
             draw_circle_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, EYE_R - 2)
             # Gentle smile
             draw_arc_eye(d, 399, MOUTH_Y - 5, MOUTH_W // 2, 45, 135)
-            # Handlebar mustache (two arcs)
-            w = LINE_WIDTH * SCALE
-            d.arc([(330*SCALE, 260*SCALE), (399*SCALE, 290*SCALE)], 0, 180, fill=LINE_COLOR, width=w)
-            d.arc([(399*SCALE, 260*SCALE), (468*SCALE, 290*SCALE)], 0, 180, fill=LINE_COLOR, width=w)
-            # Curls stringing up
-            d.arc([(310*SCALE, 250*SCALE), (340*SCALE, 280*SCALE)], 90, 270, fill=LINE_COLOR, width=w)
-            d.arc([(458*SCALE, 250*SCALE), (488*SCALE, 280*SCALE)], -90, 90, fill=LINE_COLOR, width=w)
+            
+            # Thick Handlebar Mustache
+            # Each side is a teardrop shape that tapers to a curl
+            w = 12 * SCALE
+            # Left side
+            d.chord([310*SCALE, 255*SCALE, 400*SCALE, 305*SCALE], 0, 180, fill=LINE_COLOR)
+            # Left Curl
+            d.arc([290*SCALE, 245*SCALE, 330*SCALE, 285*SCALE], 90, 270, fill=LINE_COLOR, width=w)
+            # Right side
+            d.chord([398*SCALE, 255*SCALE, 488*SCALE, 305*SCALE], 0, 180, fill=LINE_COLOR)
+            # Right Curl
+            d.arc([468*SCALE, 245*SCALE, 508*SCALE, 285*SCALE], -90, 90, fill=LINE_COLOR, width=w)
         create_face(f"{base_dir}/sir_mano_{i+1:02d}.png", draw_sm)
 
 def gen_low_battery(base_dir="faces/low_battery"):
