@@ -347,6 +347,7 @@ class BotGUI:
             self.background_label.config(image=frames[self.current_frame])
         
         # Match web UI animation speeds (faster and more dynamic)
+        speed = 200 # Default speed
         if self.current_state == BotStates.SPEAKING:
             speed = 80   # Snappy lip sync
         elif self.current_state == BotStates.THINKING:
@@ -357,6 +358,10 @@ class BotGUI:
             speed = 120  # Animate the new idle 'looking around' sequence
         elif self.current_state == BotStates.SCREENSAVER or self.current_state == BotStates.SHHH:
             speed = 150  # Faster, smoother expressions
+        elif self.current_state in [BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.CONFUSED]:
+            speed = 150  # Expression speed
+        elif self.current_state in [BotStates.FOOTBALL, BotStates.DETECTIVE, BotStates.SIR_MANO, BotStates.LOW_BATTERY, BotStates.BEE, BotStates.JAMMING]:
+            speed = 150  # Persona/Special speed
 
         self.master.after(speed, self.update_animation)
 
