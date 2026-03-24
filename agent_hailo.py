@@ -110,7 +110,7 @@ class BotGUI:
         
         # Memory
         self.brain = Brain()
-        self.recent_topics = deque(maxlen=20)
+        self.recent_thoughts = deque(maxlen=20)
 
 
         # Init UI
@@ -947,7 +947,7 @@ class BotGUI:
 
             topic = random.choice(topics)
             for _ in range(3):
-                if topic in self.recent_topics:
+                if topic in self.recent_thoughts:
                     topic = random.choice(topics)
                 else:
                     break
@@ -960,7 +960,7 @@ class BotGUI:
                 phrase = self.generate_thought_internal(search_result)
 
                 if phrase:
-                    self.recent_topics.append(topic)
+                    self.recent_thoughts.append(topic)
                     # Check for image URL or subject
                     image_url = None
                     json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
@@ -1370,7 +1370,7 @@ class BotGUI:
                         if not topic or len(topic) < 3:
                             topic = random.choice(search_topics)
                             for _ in range(3):
-                                if topic in self.recent_topics:
+                                if topic in self.recent_thoughts:
                                     topic = random.choice(search_topics)
                                 else:
                                     break
@@ -1383,7 +1383,7 @@ class BotGUI:
                             phrase = self.generate_thought_internal(search_result)
                             
                             if phrase:
-                                self.recent_topics.append(topic)
+                                self.recent_thoughts.append(topic)
                                 # Check for image URL or subject
                                 image_url = None
                                 json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
