@@ -842,22 +842,26 @@
             bmoFace.classList.remove('idle-animation');
 
             let frameIndex = 0;
-            const totalLoops = 2; // play sequence 2x
+            const totalLoops = 3; // play sequence 3x
             const totalFrames = images.length * totalLoops;
             let framesShown = 0;
+
+            // Faster screensaver playback
+            let speed = 150;
+            if (state === 'idle') speed = 100;
 
             bmoFace.src = images[0];
             animationInterval = setInterval(() => {
                 framesShown++;
                 if (framesShown >= totalFrames) {
                     clearInterval(animationInterval);
-                    // Move to next expression
-                    setTimeout(playScreensaverSequence, 200);
+                    // Move to next expression after a short pause
+                    setTimeout(playScreensaverSequence, 1500);
                     return;
                 }
                 frameIndex = framesShown % images.length;
                 bmoFace.src = images[frameIndex];
-            }, 400);
+            }, speed);
         }
 
         // Screensaver thought polling — periodically fetch a random thought during screensaver
@@ -1380,7 +1384,7 @@
             // Show first frame immediately
             bmoFace.src = images[0];
 
-            // Apply CSS animation for idle state (since it only has 1 frame)
+            // Apply breathing effect to idle, but now it also has animation frames
             if (state === 'idle') {
                 bmoFace.classList.add('idle-animation');
             } else {
@@ -1389,14 +1393,15 @@
 
             // If multiple frames, animate
             if (images.length > 1) {
-                let speed = 500;
-                if (state === 'speaking') speed = 150;
-                if (state === 'thinking') speed = 500;
-                if (state === 'listening') speed = 400;
+                let speed = 200; // Default faster
+                if (state === 'speaking') speed = 80;
+                if (state === 'thinking') speed = 200;
+                if (state === 'listening') speed = 300;
+                if (state === 'idle') speed = 120; // Animate the idle looking around
                 // Expression states animate at a moderate speed
                 if (['happy', 'sad', 'angry', 'surprised', 'sleepy', 'dizzy',
                     'cheeky', 'heart', 'starry_eyed', 'confused',
-                    'daydream', 'bored', 'jamming', 'curious'].includes(state)) speed = 350;
+                    'daydream', 'bored', 'jamming', 'curious'].includes(state)) speed = 150;
 
                 animationInterval = setInterval(() => {
                     frameIndex = (frameIndex + 1) % images.length;

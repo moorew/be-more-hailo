@@ -41,8 +41,53 @@ def add_pronunciation(word: str, phonetic: str):
     pronunciations[word.lower()] = phonetic
     save_pronunciations(pronunciations)
 
+def replace_years_with_words(text: str) -> str:
+    """Converts 4-digit years into their spoken equivalents (e.g., 1980 -> nineteen eighty)."""
+    def number_to_words(n):
+        units = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+        tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+        if 0 <= n < 20:
+            return units[n]
+        else:
+            return (tens[n // 10] + " " + units[n % 10]).strip()
+
+    def year_to_words(match):
+        year_str = match.group(0)
+        year = int(year_str)
+        if 1000 <= year <= 1999:
+            first_half = year // 100
+            second_half = year % 100
+            if second_half == 0:
+                return f"{number_to_words(first_half)} hundred"
+            elif second_half < 10:
+                return f"{number_to_words(first_half)} oh {number_to_words(second_half)}"
+            else:
+                return f"{number_to_words(first_half)} {number_to_words(second_half)}"
+        elif 2000 <= year <= 2009:
+            second_half = year % 100
+            if second_half == 0:
+                return "two thousand"
+            else:
+                return f"two thousand and {number_to_words(second_half)}"
+        elif 2010 <= year <= 2099:
+            first_half = year // 100
+            second_half = year % 100
+            if second_half == 0:
+                return f"{number_to_words(first_half)} hundred"
+            elif second_half < 10:
+                 return f"{number_to_words(first_half)} oh {number_to_words(second_half)}"
+            else:
+                return f"{number_to_words(first_half)} {number_to_words(second_half)}"
+        return year_str
+
+    # Match 4 digit years that are likely years (starting with 10-20)
+    # and not immediately preceded or followed by other digits
+    return re.sub(r'\b(1[0-9]{3}|20[0-9]{2})\b', year_to_words, text)
+
 def clean_text_for_speech(text: str) -> str:
     """Removes markdown and special characters that shouldn't be spoken."""
+    # Convert years to words first (e.g., 1980 -> nineteen eighty)
+    text = replace_years_with_words(text)
     # Remove JSON blocks
     text = re.sub(r'\{.*?\}', '', text, flags=re.DOTALL)
     # Replace newlines with spaces to prevent shell line breaks during Piper TTS
@@ -51,6 +96,11 @@ def clean_text_for_speech(text: str) -> str:
     text = text.replace('*', '')
     # Remove other common markdown like bold/italics, headers, and list bullets
     text = re.sub(r'[_~`#\-]', '', text)
+    # Replace common abbreviations with spoken words
+    text = re.sub(r'\bkm/h\b', 'kilometers per hour', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bmph\b', 'miles per hour', text, flags=re.IGNORECASE)
+    # Replace slashes in units (e.g., m/s, km/h) with " per "
+    text = re.sub(r'([a-zA-Z])\/([a-zA-Z])', r'\1 per \2', text)
     # Remove URLs
     text = re.sub(r'http[s]?://\S+', '', text)
     # Remove emojis and other symbols (keep ASCII, common punctuation, and accents)

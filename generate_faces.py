@@ -229,33 +229,72 @@ def draw_mouth(draw, type="straight", open_amount=0, width_param=MOUTH_W):
 # GENERATORS
 def gen_idle(base_dir="faces/idle"):
     ensure_dir(base_dir)
-    # A standard long idle waiting for a blink
-    for i in range(1, 15):
-        create_face(f"{base_dir}/idle_{i:02d}.png", lambda d: (draw_regular_eyes(d, 0.0), draw_mouth(d, "straight")))
-    # Blink sequence
-    create_face(f"{base_dir}/idle_15.png", lambda d: (draw_regular_eyes(d, 0.5), draw_mouth(d, "straight")))
-    create_face(f"{base_dir}/idle_16.png", lambda d: (draw_regular_eyes(d, 1.0), draw_mouth(d, "straight")))
-    create_face(f"{base_dir}/idle_17.png", lambda d: (draw_regular_eyes(d, 1.0), draw_mouth(d, "straight")))
-    create_face(f"{base_dir}/idle_18.png", lambda d: (draw_regular_eyes(d, 0.5), draw_mouth(d, "straight")))
+    # A more dynamic idle: blink, look left, look right, look up
+    frames = []
+    
+    # 0-9: Just standing still
+    for _ in range(10): frames.append((0, 0, 0.0))
+    # 10-13: Blink
+    frames.append((0, 0, 0.5))
+    frames.append((0, 0, 1.0))
+    frames.append((0, 0, 1.0))
+    frames.append((0, 0, 0.5))
+    # 14-19: Still
+    for _ in range(6): frames.append((0, 0, 0.0))
+    # 20-25: Look left
+    for i in range(1, 4): frames.append((-i*2, 0, 0.0))
+    for i in range(3, 0, -1): frames.append((-i*2, 0, 0.0))
+    # 26-30: Still
+    for _ in range(5): frames.append((0, 0, 0.0))
+    # 31-36: Look right
+    for i in range(1, 4): frames.append((i*2, 0, 0.0))
+    for i in range(3, 0, -1): frames.append((i*2, 0, 0.0))
+    # 37-40: Still
+    for _ in range(4): frames.append((0, 0, 0.0))
+    # 41-44: Quick double blink
+    frames.append((0, 0, 0.8))
+    frames.append((0, 0, 0.0))
+    frames.append((0, 0, 0.8))
+    frames.append((0, 0, 0.0))
+    # 45-50: Look up slightly
+    for i in range(1, 3): frames.append((0, -i*2, 0.0))
+    for i in range(2, 0, -1): frames.append((0, -i*2, 0.0))
+
+    for i, (ox, oy, blink) in enumerate(frames):
+        def draw_idle(d, xoff=ox, yoff=oy, b=blink):
+            # Regular eyes with offset and blink
+            if b >= 0.9:
+                draw_line(d, LEFT_EYE_X - EYE_R + xoff, EYE_VISUAL_Y + yoff, LEFT_EYE_X + EYE_R + xoff, EYE_VISUAL_Y + yoff)
+                draw_line(d, RIGHT_EYE_X - EYE_R + xoff, EYE_VISUAL_Y + yoff, RIGHT_EYE_X + EYE_R + xoff, EYE_VISUAL_Y + yoff)
+            elif b > 0.0:
+                draw_arc_eye(d, LEFT_EYE_X + xoff, EYE_Y + yoff - int((EYE_R/2) * b), EYE_R, 345, 195)
+                draw_arc_eye(d, RIGHT_EYE_X + xoff, EYE_Y + yoff - int((EYE_R/2) * b), EYE_R, 345, 195)
+            else:
+                draw_arc_eye(d, LEFT_EYE_X + xoff, EYE_Y + yoff, EYE_R, 335, 205)
+                draw_arc_eye(d, RIGHT_EYE_X + xoff, EYE_Y + yoff, EYE_R, 335, 205)
+            draw_mouth(d, "straight")
+        create_face(f"{base_dir}/idle_{i+1:02d}.png", draw_idle)
 
 def gen_speaking(base_dir="faces/speaking"):
     ensure_dir(base_dir)
-    # Natural speech rhythm: (height, width)
-    # Simulates vowel shapes (tall, narrow) vs consonants (short, wide)
+    # More varied shapes for better perceived lip-sync
+    # (height, width)
     shapes = [
-        (0, MOUTH_W),       # 00: closed
-        (20, 80), (35, 70), # 01-02: opening
-        (50, 60),           # 03: tall "O" vowel
-        (25, 85),           # 04: wide consonant slit
-        (45, 65),           # 05: mid open
-        (0, MOUTH_W),       # 06: word boundary
-        (30, 75), (55, 55), # 07-08: stressed tall vowel
-        (20, 90),           # 09: wide consonant
-        (40, 70), (25, 80), # 10-11: trailing off
-        (0, MOUTH_W),       # 12: closed
-        (30, 80), (45, 60), # 13-14: second phrase start
-        (35, 75),           # 15: mid
-        (0, MOUTH_W)        # 16: closed loop back
+        (0, MOUTH_W),       # 01: closed
+        (15, 90),           # 02: slight open
+        (30, 80),           # 03: mid
+        (50, 60),           # 04: tall O
+        (40, 70),           # 05: mid
+        (20, 95),           # 06: wide (ee/eh)
+        (45, 65),           # 07: mid tall
+        (10, 85),           # 08: near closed
+        (35, 75),           # 09: mid
+        (60, 50),           # 10: very tall (aa)
+        (25, 90),           # 11: wide
+        (40, 60),           # 12: mid
+        (0, MOUTH_W),       # 13: closed
+        (20, 80), (45, 65), (30, 85), (10, 90), # 14-17: quick chatter
+        (55, 55), (0, MOUTH_W) # 18-19: end
     ]
     for i, (h, w) in enumerate(shapes):
         def draw_spk(d, hm=h, wm=w):
@@ -265,7 +304,7 @@ def gen_speaking(base_dir="faces/speaking"):
                 draw_mouth(d, "straight", width_param=wm)
             else:
                 draw_mouth(d, "speaking", hm, width_param=wm)
-        create_face(f"{base_dir}/speaking_{i:02d}.png", draw_spk)
+        create_face(f"{base_dir}/speaking_{i+1:02d}.png", draw_spk)
 
 def gen_happy(base_dir="faces/happy"):
     ensure_dir(base_dir)

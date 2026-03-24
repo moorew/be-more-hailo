@@ -141,7 +141,14 @@ def _build_display_image_action(user_text: str) -> str:
 def strip_prompt_leakage(content: str) -> str:
     """Remove text that looks like the model echoing system prompt instructions."""
     # First, strip <think> blocks entirely as they are internal reasoning
-    content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+    # Handle both closed and unclosed <think> tags
+    if "<think>" in content.lower():
+        if "</think>" in content.lower():
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+        else:
+            # If it's unclosed, it was likely cut off - strip everything from <think> onwards
+            parts = re.split(r'<think>', content, flags=re.IGNORECASE)
+            content = parts[0].strip()
     
     # If the model uses our new [BMO] tag, strip everything before it (including the tag)
     if "[BMO]" in content:
@@ -262,7 +269,7 @@ class Brain:
             "stream": False,
             "options": {
                 "temperature": 0.4,
-                "num_predict": 180,  # increased to prevent responses getting cut off
+                "num_predict": 512,  # increased to prevent responses getting cut off
             }
         }
 
@@ -459,7 +466,7 @@ class Brain:
             "stream": True,
             "options": {
                 "temperature": 0.4,
-                "num_predict": 180,  # increased to prevent responses getting cut off
+                "num_predict": 512,  # increased to prevent responses getting cut off
             }
         }
 

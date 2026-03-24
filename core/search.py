@@ -22,13 +22,12 @@ def search_web(query: str) -> str:
         
         try:
             import requests
-            # Using format 3 for a nice one-liner: "Brantford: 🌦️  +8°C"
-            # Or use a custom format for more detail
-            url = f"https://wttr.in/{location}?format=%l:+%C+%t+(feels+like+%f),+Humidity:+%h,+Wind:+%w"
+            # Using format v2 with 0 days (just today's detailed table)
+            url = f"https://wttr.in/{location}?format=v2&0"
             resp = requests.get(url, timeout=10)
             if resp.status_code == 200:
                 result = f"LIVE WEATHER DATA for {location}:\n{resp.text}"
-                logger.info(f"Weather fetched from wttr.in: {resp.text}")
+                logger.info(f"Weather fetched from wttr.in: {location}")
                 return result
         except Exception as e:
             logger.warning(f"wttr.in Weather Error: {e}")

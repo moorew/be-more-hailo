@@ -346,16 +346,17 @@ class BotGUI:
                 
             self.background_label.config(image=frames[self.current_frame])
         
-        # Match web UI animation speeds
-        speed = 500
+        # Match web UI animation speeds (faster and more dynamic)
         if self.current_state == BotStates.SPEAKING:
-            speed = 90   # Fix: 90ms for natural lip sync
+            speed = 80   # Snappy lip sync
         elif self.current_state == BotStates.THINKING:
-            speed = 500
+            speed = 200
         elif self.current_state == BotStates.LISTENING:
-            speed = 400
+            speed = 300
+        elif self.current_state == BotStates.IDLE:
+            speed = 120  # Animate the new idle 'looking around' sequence
         elif self.current_state == BotStates.SCREENSAVER or self.current_state == BotStates.SHHH:
-            speed = 400 # Smooth animation speed for sequences
+            speed = 150  # Faster, smoother expressions
 
         self.master.after(speed, self.update_animation)
 
@@ -1204,7 +1205,7 @@ class BotGUI:
                     {"role": "user", "content": thought_prompt},
                 ],
                 "stream": False,
-                "options": {"temperature": 0.8, "num_predict": 200}
+                "options": {"temperature": 0.8, "num_predict": 512}
             }
             resp = http_requests.post(LLM_URL, json=payload, timeout=60)
             if resp.status_code == 200:
@@ -1342,16 +1343,37 @@ class BotGUI:
                         self.set_state(BotStates.SCREENSAVER, "Screensaver...")
                 self.master.after(8000, revert_persona)
             
-            # Ponder a thought (~4% chance every 30s)
+            # Random Pondering (~4% chance every 30s)
             elif random.random() < 0.04:
                 if is_llm_reachable():
                     try:
-                        topic = random.choice(search_topics)
-                        for _ in range(3):
-                            if topic in self.recent_topics:
-                                topic = random.choice(search_topics)
-                            else:
-                                break
+                        # 1. Ask the LLM for a random topic
+                        topic = None
+                        try:
+                            topic_messages = [
+                                {"role": "system", "content": "You are BMO's brain. Suggest one very specific, random, and interesting topic for BMO to learn about today. Examples: 'history of the first toaster', 'why do wombats have square poop', 'the mystery of the Voynich manuscript'. Keep it under 10 words. Provide ONLY the topic, no quotes or preamble."},
+                                {"role": "user", "content": "Give me a random topic."}
+                            ]
+                            topic_payload = {
+                                "model": FAST_LLM_MODEL,
+                                "messages": topic_messages,
+                                "stream": False,
+                                "options": {"temperature": 1.0, "num_predict": 20}
+                            }
+                            topic_resp = http_requests.post(LLM_URL, json=topic_payload, timeout=10)
+                            if topic_resp.status_code == 200:
+                                topic = topic_resp.json().get("message", {}).get("content", "").strip().strip('"').strip("'")
+                                topic = re.sub(r'^Topic:|^BMO topic:|^I want to learn about: ', '', topic, flags=re.IGNORECASE)
+                        except Exception as e:
+                            print(f"[SCREENSAVER] LLM topic generation failed: {e}")
+
+                        if not topic or len(topic) < 3:
+                            topic = random.choice(search_topics)
+                            for _ in range(3):
+                                if topic in self.recent_topics:
+                                    topic = random.choice(search_topics)
+                                else:
+                                    break
                                 
                         print(f"[SCREENSAVER] Searching for: {topic}")
                         search_result = search_web(topic)

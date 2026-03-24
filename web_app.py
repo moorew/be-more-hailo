@@ -323,76 +323,72 @@ async def get_screensaver_thought():
     from core.search import search_web, search_images
     from core.config import LLM_URL, FAST_LLM_MODEL
 
-    search_topics = [
-        "interesting fun fact of the day",
-        "weather forecast today in Brantford, Ontario",
-        "this day in history",
-        "cool science discovery this week",
-        "funny animal fact",
-        "random wholesome internet story",
-        "video game history fact",
-        "weird food fact",
-        "Adventure Time lore or trivia",
-        "today's astronomy picture",
-        "best joke of the day",
-        "random Wikipedia article summary",
-        "latest space news from NASA",
-        "strange laws in Canada",
-        "mythology fun fact",
-        "how a computer works for kids",
-        "cool deep sea creatures",
-        "interesting insect facts",
-        "history of robots",
-        "why do cats purr",
-        "fastest land animals",
-        "tallest buildings in the world",
-        "invention of the telephone",
-        "what is a black hole",
-        "funny dad jokes",
-        "hilarious puns",
-        "knock knock jokes",
-        "short funny stories",
-        "unusual world records",
-        "history of board games",
-        "how honey is made",
-        "origins of common idioms",
-        "mysteries of the pyramids",
-        "first mission to the moon",
-        "evolution of video game consoles",
-        "how to make a paper airplane",
-        "why the sky is blue",
-        "fun facts about penguins",
-        "discovery of dinosaurs",
-        "life on Mars possibilities",
-        "history of ice cream",
-        "how the internet works for kids",
-        "cool chemistry experiments",
-        "amazing origami facts",
-        "the world's oldest trees",
-    ]
     fallback_phrases = [
         "I wonder what Finn and Jake are doing right now.",
         "Does anyone want to play a video game? No? ...Okay.",
         "La la la la la... BMO is the best!",
         "Sometimes BMO just likes to hum a little tune.",
         "Football... is a tough little guy.",
+        "Is it time for a video game yet? I have a new one!",
+        "I hope everyone is having a wonderful day. Especially you!",
+        "Sometimes I like to just sit and think about... well, everything!",
+        "Being a robot is pretty cool, but being BMO is even better!",
     ]
 
     phrase = None
     image_url = None
 
     try:
-        # Avoid picking the same topic too often if we have many
-        topic = random.choice(search_topics)
+        # 1. Ask the LLM for a random, weird, or interesting topic to search for
+        # This ensures the thoughts are always fresh and diverse.
+        topic = None
+        try:
+            topic_messages = [
+                {"role": "system", "content": "You are BMO's brain. Suggest one very specific, random, and interesting topic for BMO to learn about today. Examples: 'history of the first toaster', 'why do wombats have square poop', 'the mystery of the Voynich manuscript'. Keep it under 10 words. Provide ONLY the topic, no quotes or preamble."},
+                {"role": "user", "content": "Give me a random topic."}
+            ]
+            topic_payload = {
+                "model": FAST_LLM_MODEL,
+                "messages": topic_messages,
+                "stream": False,
+                "options": {"temperature": 1.0, "num_predict": 20}
+            }
+            import requests as http_requests
+            topic_resp = http_requests.post(LLM_URL, json=topic_payload, timeout=10)
+            if topic_resp.status_code == 200:
+                topic = topic_resp.json().get("message", {}).get("content", "").strip().strip('"').strip("'")
+                # Remove any BMO tags or prefix if the LLM leaked them
+                topic = re.sub(r'^Topic:|^BMO topic:|^I want to learn about: ', '', topic, flags=re.IGNORECASE)
+        except Exception as e:
+            logger.warning(f"[SCREENSAVER-WEB] LLM topic generation failed: {e}")
+
+        # Fallback to a fixed list if LLM fails
+        if not topic or len(topic) < 3:
+            search_topics = [
+                "interesting fun fact of the day",
+                "weather forecast today in Brantford, Ontario",
+                "this day in history",
+                "cool science discovery this week",
+                "funny animal fact",
+                "Adventure Time lore or trivia",
+                "latest space news from NASA",
+                "strange laws in Canada",
+                "history of robots",
+                "cool deep sea creatures",
+                "unusual world records",
+                "mysteries of the pyramids",
+                "evolution of video game consoles",
+                "fun facts about penguins",
+            ]
+            topic = random.choice(search_topics)
+            # Avoid picking the same topic too often
+            for _ in range(3):
+                if topic in recent_thoughts:
+                    topic = random.choice(search_topics)
+                else:
+                    break
         
-        # Limit attempts to find a new thought
-        for _ in range(3):
-            if topic in recent_thoughts:
-                topic = random.choice(search_topics)
-            else:
-                break
-        
-        logger.info(f"[SCREENSAVER-WEB] Searching for: {topic}")
+        logger.info(f"[SCREENSAVER-WEB] Pondering about: {topic}")
         search_result = search_web(topic)
 
         if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
@@ -407,6 +403,7 @@ async def get_screensaver_thought():
                 "   {\"action\": \"display_image\", \"subject\": \"[CUTE_WHIMSICAL_DESCRIPTION]\"} \n"
                 "5. CRITICAL: Your entire response MUST be under 60 words. You must finish your thought completely. \n"
                 "6. Do NOT include labels like 'Summarize:' or 'Fact:' or repeat these rules.\n"
+                f"Topic: {topic}\n"
                 f"Info: {search_result[:1500]}"
             )
             messages = [
@@ -416,12 +413,11 @@ async def get_screensaver_thought():
 
             # Try local LLM
             try:
-                import requests as http_requests
                 payload = {
                     "model": FAST_LLM_MODEL,
                     "messages": messages,
                     "stream": False,
-                    "options": {"temperature": 0.8, "num_predict": 200}
+                    "options": {"temperature": 0.8, "num_predict": 512}
                 }
                 resp = http_requests.post(LLM_URL, json=payload, timeout=60)
                 if resp.status_code == 200:
