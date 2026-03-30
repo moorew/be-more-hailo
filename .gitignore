@@ -11,6 +11,9 @@ venv/
 # --- Large Models & Binaries (Auto-downloaded) ---
 # Ignore the Piper TTS folder (it's huge and OS-specific)
 piper/
+# Keep the custom BMO voice
+!piper/bmo.onnx
+!piper/bmo.onnx.json
 
 # Ignore large model files
 *.onnx
@@ -38,6 +41,9 @@ chat_memory.json
 !favicon.png
 !faces/**/*.png
 !sounds/music/*.wav
+# Keep the generated BMO voice greetings and thinking sounds
+!sounds/greeting_sounds/*.wav
+!sounds/thinking_sounds/*.wav
 camera_capture.jpg
 current_image.jpg
 test_audio.wav

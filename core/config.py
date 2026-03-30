@@ -71,7 +71,7 @@ def get_system_prompt():
 
 # TTS Settings
 PIPER_CMD = "./piper/piper"
-PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
+PIPER_MODEL = "./piper/bmo.onnx"
 
 # STT Settings (CPU whisper.cpp)
 WHISPER_CMD = "./whisper.cpp/build/bin/whisper-cli"

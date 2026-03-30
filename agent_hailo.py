@@ -5,7 +5,7 @@
 
 import tkinter as tk
 from tkinter import ttk
-from PIL import Image, ImageTk, ImageOps
+from PIL import Image, ImageTk, ImageOps, ImageDraw
 import threading
 import time
 import json
@@ -18,6 +18,7 @@ import select
 import traceback
 import atexit
 import datetime
+import math
 from collections import deque
 import warnings
 import wave
@@ -79,6 +80,9 @@ class BotStates:
     SIR_MANO = "sir_mano"
     LOW_BATTERY = "low_battery"
     BEE = "bee"
+    DAYDREAM = "daydream"
+    BORED = "bored"
+    CURIOUS = "curious"
 
 class BotGUI:
 
@@ -100,6 +104,7 @@ class BotGUI:
         self.last_state_change = time.time()
         
         # Audio State
+        self.active_sounds = []
         self.current_audio_process = None
         self.tts_queue = []
         
@@ -111,6 +116,23 @@ class BotGUI:
         # Memory
         self.brain = Brain()
         self.recent_thoughts = deque(maxlen=20)
+        
+        # Mood System
+        self.current_mood = 'neutral'
+        self.last_mood_change = 0
+        self.mood_duration = 300 # 5 minutes
+        self.mouth_open = 0 # For lip sync
+        self.eye_offset_x = 0
+        self.eye_offset_y = 0
+        self.blink_state = 0 # 0=open, 1=closed, 0.5=half
+        
+        self.expressions_map = {
+            'happy': [BotStates.HAPPY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.FOOTBALL],
+            'neutral': [BotStates.IDLE, BotStates.DETECTIVE, BotStates.SIR_MANO, BotStates.BEE, BotStates.BORED, BotStates.CURIOUS],
+            'sad': [BotStates.SAD, BotStates.CONFUSED],
+            'sleepy': [BotStates.SLEEPY, BotStates.DAYDREAM],
+            'jamming': [BotStates.JAMMING]
+        }
 
 
         # Init UI
@@ -202,13 +224,16 @@ class BotGUI:
         self.is_muted = not self.is_muted
         if self.is_muted:
             self.mute_label.place(relx=0.95, rely=0.05, anchor=tk.NE)
-            try:
-                # Kill any hardware audio playing via aplay immediately
-                subprocess.run(["killall", "-9", "aplay"], capture_output=True)
-                print("[MUTE] Killed aplay process.")
-            except Exception as e:
-                print(f"[MUTE] Error stopping aplay: {e}")
-                
+            
+            # Stop all active audio processes cleanly
+            for proc in self.active_sounds[:]: # Copy to avoid mutation during iteration
+                try:
+                    proc.terminate()
+                    print(f"[MUTE] Terminated active sound process: {proc.pid}")
+                except Exception:
+                    pass
+            self.active_sounds = []
+
             old_state = self.current_state
             self.set_state(BotStates.SHHH, "Muted")
             
@@ -255,119 +280,93 @@ class BotGUI:
             return None
         sound_file = random.choice(sounds)
         try:
-            return subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', sound_file])
+            proc = subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', sound_file])
+            self.active_sounds.append(proc)
+            # Cleanup thread to remove finished processes
+            def cleanup():
+                proc.wait()
+                if proc in self.active_sounds:
+                    self.active_sounds.remove(proc)
+            threading.Thread(target=cleanup, daemon=True).start()
+            return proc
         except Exception as e:
             print(f"Error playing sound {sound_file}: {e}")
             return None
 
     def load_animations(self):
-        base = "faces"
-        all_face_paths = []
-        for state in [BotStates.IDLE, BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.ERROR, BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.CONFUSED, BotStates.SHHH, BotStates.JAMMING, BotStates.FOOTBALL, BotStates.DETECTIVE, BotStates.SIR_MANO, BotStates.LOW_BATTERY, BotStates.BEE]:
-            path = os.path.join(base, state)
-            self.animations[state] = []
-            if os.path.exists(path):
-                files = sorted([f for f in os.listdir(path) if f.lower().endswith('.png')])
-                for f in files:
-                    img_path = os.path.join(path, f)
-                    img = Image.open(img_path).resize((self.BG_WIDTH, self.BG_HEIGHT))
-                    self.animations[state].append(ImageTk.PhotoImage(img))
-                    
-        # Load screensaver as full animation sequences per expression
-        # Only include expressions that make sense without audio context
-        SCREENSAVER_STATES = [
-            "idle", "happy", "sleepy", "heart", "starry_eyed",
-            "cheeky", "dizzy", "confused",
-            "daydream", "bored", "jamming", "curious",
-            "football", "detective", "sir_mano", "low_battery", "bee"
-        ]
-        self.screensaver_sequences = []  # List of (state_name, [frames])
-        for state_dir in SCREENSAVER_STATES:
-            path = os.path.join(base, state_dir)
-            if not os.path.isdir(path):
-                continue
+        """Load PNG frames for each state from the faces/ directory."""
+        self.animations = {}
+        states = [d for d in os.listdir("faces") if os.path.isdir(os.path.join("faces", d))]
+        for state in states:
+            path = os.path.join("faces", state)
             files = sorted([f for f in os.listdir(path) if f.lower().endswith('.png')])
-            if files:
-                seq_frames = []
-                for f in files:
-                    try:
-                        img = Image.open(os.path.join(path, f)).resize((self.BG_WIDTH, self.BG_HEIGHT))
-                        seq_frames.append(ImageTk.PhotoImage(img))
-                    except Exception as e:
-                        print(f"Failed to load screensaver image {f}: {e}")
-                if seq_frames:
-                    self.screensaver_sequences.append((state_dir, seq_frames))
+            frames = []
+            for f in files:
+                try:
+                    img = Image.open(os.path.join(path, f))
+                    # Ensure it's the right size
+                    if img.size != (self.BG_WIDTH, self.BG_HEIGHT):
+                        img = img.resize((self.BG_WIDTH, self.BG_HEIGHT), Image.Resampling.LANCZOS)
+                    frames.append(ImageTk.PhotoImage(img))
+                except Exception as e:
+                    print(f"Error loading frame {f}: {e}")
+            if frames:
+                self.animations[state] = frames
         
-        # Build the screensaver animation: play each expression's full sequence
-        random.shuffle(self.screensaver_sequences)
-        self.animations[BotStates.SCREENSAVER] = []
-        for name, seq in self.screensaver_sequences:
-            # Play each expression's sequence 2x so you can see the animation
-            self.animations[BotStates.SCREENSAVER].extend(seq * 2)
-    
+        print(f"Loaded animations for: {list(self.animations.keys())}")
+        self.tk_img = None
+
     def update_animation(self):
         if self.current_state == BotStates.DISPLAY_IMAGE:
-            # Don't animate, just wait
             self.master.after(500, self.update_animation)
             return
 
-        # Check for screensaver trigger
-        if self.current_state == BotStates.IDLE and (time.time() - self.last_state_change) > 60:
+        now = time.time()
+        # Mood Logic
+        if now - self.last_mood_change > self.mood_duration:
+            self.current_mood = random.choice(list(self.expressions_map.keys()))
+            self.last_mood_change = now
+            print(f"[MOOD] BMO is now feeling: {self.current_mood}")
+
+        # Screensaver Auto-Trigger
+        if self.current_state == BotStates.IDLE and (now - self.last_state_change) > 60:
             self.set_state(BotStates.SCREENSAVER, "Screensaver...")
 
-        # If entering listening from screensaver, immediately break out
-        if self.current_state == BotStates.LISTENING and self.current_frame > 0 and 'screensaver' in str(self.animations.get(self.current_state, [])):
-            self.current_frame = 0 # reset cleanly
+        # If in screensaver, pick expression from current mood
+        display_state = self.current_state
+        if self.current_state == BotStates.SCREENSAVER:
+            # Change expression every 10 seconds
+            expr_idx = int((now / 10) % len(self.expressions_map[self.current_mood]))
+            display_state = self.expressions_map[self.current_mood][expr_idx]
 
         # Hide text status label during screensaver
         if self.current_state == BotStates.SCREENSAVER:
-            if self.status_label.winfo_ismapped():
-                self.status_label.place_forget()
+            if self.status_label.winfo_ismapped(): self.status_label.place_forget()
         else:
             if not self.status_label.winfo_ismapped():
                 self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
 
-        # Buttons should look like permanent physical features, except maybe when showing a full image
-        if self.current_state == BotStates.DISPLAY_IMAGE:
-            pass
-        else:
-            pass
-
-        frames = self.animations.get(self.current_state, []) or self.animations.get(BotStates.IDLE, [])
+        # Animation Loop
+        frames = self.animations.get(display_state, self.animations.get(BotStates.IDLE, []))
         if frames:
-            self.current_frame = (self.current_frame + 1) % len(frames)
-            
-            # Re-shuffle screensaver sequences when loop completes
-            if self.current_state == BotStates.SCREENSAVER and self.current_frame == 0:
-                random.shuffle(self.screensaver_sequences)
-                self.animations[BotStates.SCREENSAVER] = []
-                for name, seq in self.screensaver_sequences:
-                    self.animations[BotStates.SCREENSAVER].extend(seq * 2)
-                
-            self.background_label.config(image=frames[self.current_frame])
-        
-        # Match web UI animation speeds (faster and more dynamic)
-        speed = 200 # Default speed
-        if self.current_state == BotStates.SPEAKING:
-            speed = 80   # Snappy lip sync
-        elif self.current_state == BotStates.THINKING:
-            speed = 200
-        elif self.current_state == BotStates.LISTENING:
-            speed = 300
-        elif self.current_state == BotStates.IDLE:
-            speed = 120  # Animate the new idle 'looking around' sequence
-        elif self.current_state == BotStates.SCREENSAVER or self.current_state == BotStates.SHHH:
-            speed = 150  # Faster, smoother expressions
-        elif self.current_state in [BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.CONFUSED]:
-            speed = 150  # Expression speed
-        elif self.current_state in [BotStates.FOOTBALL, BotStates.DETECTIVE, BotStates.SIR_MANO, BotStates.LOW_BATTERY, BotStates.BEE, BotStates.JAMMING]:
-            speed = 150  # Persona/Special speed
+            if display_state == BotStates.SPEAKING:
+                # Lip sync logic: if mouth is open, cycle frames. If closed, stay on first/closed frame.
+                if self.mouth_open > 2:
+                    self.current_frame = (self.current_frame + 1) % len(frames)
+                else:
+                    self.current_frame = 0 # Assume first frame is closed mouth
+            else:
+                self.current_frame = (self.current_frame + 1) % len(frames)
 
-        self.master.after(speed, self.update_animation)
+            self.tk_img = frames[self.current_frame]
+            self.background_label.config(image=self.tk_img)
+
+        # Frame rate: slowed down from 50ms to 120ms for more natural movement
+        self.master.after(120, self.update_animation)
 
     # --- AUDIO INPUT ---
     def wait_for_wakeword(self, oww):
-        """Block until wake word is heard."""
+        """Block until wake word is heard with retry logic for mic errors."""
         CHUNK = 1280
         capture_rate = MIC_SAMPLE_RATE # 48000
         target_rate = 16000
@@ -375,42 +374,44 @@ class BotGUI:
         
         print(f"[EARS] Waiting for wake word... (Index: {MIC_DEVICE_INDEX}, Rate: {capture_rate})")
         
-        try:
-            with sd.InputStream(samplerate=capture_rate, device=MIC_DEVICE_INDEX, channels=1, dtype='int16') as stream:
-                while not self.stop_event.is_set():
-                    if self.is_busy:
-                        # If a background thread hijacked the state (e.g. music/timer), pause ears
-                        time.sleep(0.5)
-                        continue
+        retry_count = 0
+        while not self.stop_event.is_set():
+            try:
+                with sd.InputStream(samplerate=capture_rate, device=MIC_DEVICE_INDEX, channels=1, dtype='int16') as stream:
+                    retry_count = 0 # Reset on success
+                    while not self.stop_event.is_set():
+                        if self.is_busy:
+                            time.sleep(0.5)
+                            continue
+                            
+                        data, _ = stream.read(CHUNK * downsample_factor)
+                        if not data.any(): continue
+                        audio_16k = data[::downsample_factor].flatten() 
+                        oww.predict(audio_16k)
                         
-                    data, _ = stream.read(CHUNK * downsample_factor)
-                    if not data.any():
-                        continue # silence/null data
-                        
-                    # Simple integer decimation for 48k -> 16k
-                    audio_16k = data[::downsample_factor].flatten() 
-                    
-                    # Feed to model
-                    oww.predict(audio_16k)
-                    
-                    # Check scores
-                    for key in oww.prediction_buffer.keys():
-                        score = oww.prediction_buffer[key][-1]
-                        if score > WAKE_WORD_THRESHOLD:
-                            print(f"[EARS] Wake Word Detected: {key} (Score: {score:.2f})")
-                            oww.reset()
-                            return True
-        except Exception as e:
-            print(f"[EARS] Audio Input Error: {e}")
-            self.set_state(BotStates.ERROR, "Mic Error")
-            time.sleep(5) # Cooldown
-            return False
-            
+                        for key in oww.prediction_buffer.keys():
+                            score = oww.prediction_buffer[key][-1]
+                            if score > WAKE_WORD_THRESHOLD:
+                                print(f"[EARS] Wake Word Detected: {key} (Score: {score:.2f})")
+                                oww.reset()
+                                return True
+            except Exception as e:
+                retry_count += 1
+                print(f"[EARS] Audio Input Error (Attempt {retry_count}): {e}")
+                self.set_state(BotStates.ERROR, "Mic Error")
+                if retry_count > 5:
+                    print("[EARS] Too many mic errors, restarting audio system...")
+                    # Possible attempt to reset ALSA? subprocess.run(["alsactl", "init"])
+                    time.sleep(5)
+                    retry_count = 0
+                time.sleep(2)
+                # Try to go back to IDLE if we were in ERROR
+                if self.current_state == BotStates.ERROR:
+                    self.set_state(BotStates.IDLE, "Retrying mic...")
         return False
 
-
     def record_audio(self):
-        """Record until silence"""
+        """Record until silence with volume-driven lip sync, with retry logic for mic errors."""
         print("Recording...")
         filename = "input.wav"
         frames = []
@@ -419,37 +420,42 @@ class BotGUI:
 
         def callback(indata, frames_count, time, status):
             nonlocal silent_chunks, has_spoken
-            vol = np.linalg.norm(indata) * 10 
+            vol = np.linalg.norm(indata)
+            # Update mouth_open for real-time lip sync during recording (listening mode)
+            if self.current_state == BotStates.LISTENING:
+                self.mouth_open = min(60, vol / 500)
+
             frames.append(indata.copy())
-            if vol < 50000: # Silence threshold
+            if vol < 500: # Silence threshold
                 silent_chunks += 1
             else:
                 silent_chunks = 0
                 has_spoken = True
-            
-        try:
-            with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', callback=callback):
-                while not self.stop_event.is_set():
-                    sd.sleep(50)
-                    if not has_spoken and silent_chunks > 100:
-                        break
-                    if has_spoken and silent_chunks > 40:
-                        break
-                    if len(frames) > (MIC_SAMPLE_RATE * 10 / 512): # Max 10 seconds approx
-                        break 
-        except Exception as e:
-            print(f"Recording Error: {e}")
-            return None
-        
-        # Save file
-        if not frames:
-            return None
 
+        retry_count = 0
+        while retry_count < 3:
+            try:
+                with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', callback=callback):
+                    while not self.stop_event.is_set():
+                        sd.sleep(50)
+                        if not has_spoken and silent_chunks > 100: break
+                        if has_spoken and silent_chunks > 40: break
+                        if len(frames) > (MIC_SAMPLE_RATE * 10 / 512): break
+                    break # Success!
+            except Exception as e:
+                retry_count += 1
+                print(f"Recording Error (Attempt {retry_count}): {e}")
+                time.sleep(1)
+                if retry_count >= 3:
+                    self.set_state(BotStates.ERROR, "Mic Error")
+                    return None
+
+        self.mouth_open = 0 # Reset
+        if not frames: return None
         data = np.concatenate(frames, axis=0)
         import scipy.io.wavfile
         scipy.io.wavfile.write(filename, MIC_SAMPLE_RATE, data)
         return filename
-
     # --- TIMERS & REMINDERS ---
     def start_timer_thread(self, minutes, message):
         def timer_worker():
@@ -483,27 +489,87 @@ class BotGUI:
         print("Transcribing...")
         return transcribe_audio(filename)
 
+    def play_audio_with_sync(self, audio_data_input):
+        """Play PCM audio and update mouth_open in real-time for sync. 
+        Supports both bytes and file-like streams."""
+        from core.config import ALSA_DEVICE
+        import io
+
+        # 22050 Hz, 16-bit, Mono (Piper default)
+        sample_rate = 22050
+        chunk_size = 1024 # samples
+
+        if isinstance(audio_data_input, bytes):
+            stream = io.BytesIO(audio_data_input)
+        else:
+            stream = audio_data_input
+
+        # Start aplay with a much smaller buffer to minimize sound-to-mouth lag
+        # --buffer-time=50000 is 50ms, which is roughly one animation frame (50ms)
+        aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", str(sample_rate), "-f", "S16_LE", "-t", "raw", "-q", "--buffer-time=50000"]
+        proc = subprocess.Popen(aplay_cmd, stdin=subprocess.PIPE)
+
+        try:
+            start_time = time.time()
+            chunk_idx = 0
+
+            while not self.stop_event.is_set():
+                if self.is_muted: break
+                
+                # 1024 samples * 2 bytes per sample (S16_LE)
+                raw_chunk = stream.read(chunk_size * 2)
+                if not raw_chunk:
+                    break
+
+                try:
+                    proc.stdin.write(raw_chunk)
+                    proc.stdin.flush()
+                except (BrokenPipeError, OSError):
+                    break
+
+                # volume analysis on the chunk we just fed to the speaker
+                audio_chunk = np.frombuffer(raw_chunk, dtype=np.int16)
+                vol = np.sqrt(np.mean(audio_chunk.astype(np.float32)**2))
+
+                # Scale volume for better mouth movement sensitivity
+                if self.current_state == BotStates.SPEAKING:
+                    # Increased sensitivity (vol/25 instead of 100)
+                    self.mouth_open = min(60, vol / 25)
+
+                # Basic sync: sleep to match playback rate
+                chunk_idx += 1
+                elapsed = time.time() - start_time
+                expected = (chunk_idx * chunk_size) / sample_rate
+                if expected > elapsed:
+                    time.sleep(expected - elapsed)
+        finally:
+            if proc.stdin:
+                try: proc.stdin.close()
+                except Exception: pass
+            try:
+                proc.terminate()
+                proc.wait(timeout=0.2)
+            except Exception: pass
+            self.mouth_open = 0
+
     def speak(self, text, msg="Speaking..."):
         from core.tts import clean_text_for_speech
-        from core.config import PIPER_CMD, PIPER_MODEL, ALSA_DEVICE
-        
+        from core.config import PIPER_CMD, PIPER_MODEL
+
         clean_text = clean_text_for_speech(text)
         if not clean_text or not any(c.isalnum() for c in clean_text):
             return
-            
+
         print(f"Speaking: {clean_text[:30]}...")
-        
+
         with self.speak_lock:
             try:
-                # 1. Synthesize audio first. (Runs silently, mouth stays idle/thinking)
+                # 1. Start streaming synthesis for instant response
                 safe_text = clean_text.replace("'", "'\\''")
                 piper_cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_raw"
-                res = subprocess.run(piper_cmd, shell=True, capture_output=True, timeout=30)
-                if res.returncode != 0:
-                    print(f"Piper error: {res.stderr}")
-                    return
-                
-                # 2. Audio is ready! Set SPEAKING state so mouth starts moving, unless we're showing a picture.
+                proc = subprocess.Popen(piper_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+                # 2. Set SPEAKING state immediately
                 if self.current_state != BotStates.DISPLAY_IMAGE:
                     if msg is not None:
                         self.set_state(BotStates.SPEAKING, msg)
@@ -511,19 +577,21 @@ class BotGUI:
                         self.current_state = BotStates.SPEAKING
                         self.current_frame = 0
                         self.last_state_change = time.time()
-                else:
-                    print(f"BMO is speaking during DISPLAY_IMAGE: {clean_text[:30]}")
-                
-                # 3. Play the generated audio bytes
+
+                # 3. Play stream with real-time lip-sync
                 if not self.is_muted:
-                    # Added 45s timeout to aplay to prevent hangs on busy audio devices
-                    aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", "22050", "-f", "S16_LE", "-t", "raw", "-q"]
-                    subprocess.run(aplay_cmd, input=res.stdout, timeout=45)
+                    self.play_audio_with_sync(proc.stdout)
                 else:
-                    # If muted, just hold the speaking pose for a moment to simulate talking
                     time.sleep(1.5)
-                
-                # 4. Enforce an immediate IDLE state and a short visual breath pause
+
+                # Cleanup Piper process
+                try:
+                    proc.wait(timeout=0.5)
+                except Exception:
+                    try: proc.terminate()
+                    except: pass
+
+                # 4. Return to IDLE state
                 if self.current_state == BotStates.SPEAKING:
                     if msg is not None:
                         self.set_state(BotStates.IDLE, "Ready...")
@@ -531,13 +599,10 @@ class BotGUI:
                         self.current_state = BotStates.IDLE
                         self.current_frame = 0
                         self.last_state_change = time.time()
-                    time.sleep(0.3)
-                
-            except subprocess.TimeoutExpired:
-                print("TTS or Audio Playback timed out!")
+
             except Exception as e:
                 print(f"Hardware TTS Error: {e}")
-
+                self.mouth_open = 0
 
     def record_followup(self, timeout_sec=8):
         """

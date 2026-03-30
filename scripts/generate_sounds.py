@@ -2,7 +2,7 @@ import os
 import subprocess
 
 PIPER_CMD = "./piper/piper"
-PIPER_MODEL = "./piper/en_GB-semaine-medium.onnx"
+PIPER_MODEL = "./piper/bmo.onnx"
 
 greetings = [
     "Hello! BMO is here!",

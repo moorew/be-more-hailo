@@ -91,10 +91,17 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Piper voice model
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[6/13] Downloading voice model...${NC}"
+echo -e "${YELLOW}[6/13] Downloading voice models...${NC}"
+
+# 6.1 Base Voice (En-GB Semaine)
 BASE_VOICE="https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium"
 wget -nc -q -O piper/en_GB-semaine-medium.onnx      "$BASE_VOICE/en_GB-semaine-medium.onnx"
 wget -nc -q -O piper/en_GB-semaine-medium.onnx.json "$BASE_VOICE/en_GB-semaine-medium.onnx.json"
+
+# 6.2 Custom BMO Voice (Fine-tuned from Amy)
+BMO_VOICE="https://github.com/brenpoly/be-more-agent/releases/download/v1.0-voice"
+wget -nc -q -O piper/bmo.onnx      "$BMO_VOICE/bmo.onnx"
+wget -nc -q -O piper/bmo.onnx.json "$BMO_VOICE/bmo.onnx.json"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. whisper.cpp (CPU-based STT)

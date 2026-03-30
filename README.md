@@ -82,6 +82,14 @@ Your BMO is then reachable from your phone, laptop, or any device on your Tailne
 
 ---
 
+## Credits & Acknowledgments
+
+- **Original Project:** This is a fork of [@brenpoly's be-more-agent](https://github.com/brenpoly/be-more-agent).
+- **Custom BMO Voice:** Huge thanks to **Brenpoly** for his work fine-tuning the custom BMO neural voice model (`v1.0-voice`). This model provides the more accurate, charming BMO voice you hear today!
+- **Hardware Support:** Built for the Raspberry Pi 5 + Hailo-10H NPU.
+
+---
+
 ## Project structure
 
 ```
