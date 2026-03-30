@@ -269,7 +269,8 @@ class Brain:
             "stream": False,
             "options": {
                 "temperature": 0.4,
-                "num_predict": 512,  # increased to prevent responses getting cut off
+                "num_predict": 1024,  # increased to prevent responses getting cut off
+                "num_ctx": 4096,
             }
         }
 
@@ -466,7 +467,8 @@ class Brain:
             "stream": True,
             "options": {
                 "temperature": 0.4,
-                "num_predict": 512,  # increased to prevent responses getting cut off
+                "num_predict": 1024,  # Increased to prevent responses getting cut off
+                "num_ctx": 4096,      # Ensure context window is large enough
             }
         }
 

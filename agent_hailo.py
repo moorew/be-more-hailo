@@ -280,8 +280,22 @@ class BotGUI:
             return None
         sound_file = random.choice(sounds)
         try:
+            # For pre-recorded sounds, we'll manually set mouth_open to animate
+            # while the sound plays, since aplay doesn't give us volume data.
+            def animate_mouth_simple(proc):
+                while proc.poll() is None:
+                    # Randomly fluctuate mouth between 15 and 45 for pre-recorded speech
+                    self.mouth_open = random.randint(15, 45)
+                    time.sleep(0.08)
+                self.mouth_open = 0
+
             proc = subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', sound_file])
             self.active_sounds.append(proc)
+            
+            # Start mouth animation thread for this sound
+            if category in ["greeting_sounds", "thinking_sounds"]:
+                threading.Thread(target=animate_mouth_simple, args=(proc,), daemon=True).start()
+
             # Cleanup thread to remove finished processes
             def cleanup():
                 proc.wait()
@@ -350,15 +364,21 @@ class BotGUI:
         frames = self.animations.get(display_state, self.animations.get(BotStates.IDLE, []))
         if frames:
             if display_state == BotStates.SPEAKING:
-                # Lip sync logic: Map mouth_open (0-60) directly to frame index (0-18)
-                # This ensures the mouth's physical opening matches the audio intensity
-                num_speaking_frames = len(frames)
+                # Advanced lip sync: Viseme-like behavior with variety
+                num_frames = len(frames)
                 if self.mouth_open > 1:
-                    # Scale 0-60 to 0-(num_frames-1)
-                    idx = int((self.mouth_open / 60) * (num_speaking_frames - 1))
-                    self.current_frame = min(num_speaking_frames - 1, max(0, idx))
+                    # 1. Base intensity mapping
+                    base_idx = int((self.mouth_open / 60) * (num_frames - 1))
+                    
+                    # 2. Shape variety: Shift the frame window based on time
+                    # This simulates different mouth positions for different phonemes
+                    # even if volume is constant.
+                    time_shift = int(time.time() * 15) % 3 # Shift by up to 3 frames
+                    idx = (base_idx + time_shift) % num_frames
+                    
+                    self.current_frame = min(num_frames - 1, max(0, idx))
                 else:
-                    self.current_frame = 0 # Closed mouth
+                    self.current_frame = 0 # Closed
             else:
                 self.current_frame = (self.current_frame + 1) % len(frames)
 
