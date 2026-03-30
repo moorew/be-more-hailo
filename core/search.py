@@ -37,15 +37,17 @@ def search_web(query: str) -> str:
         with DDGS(timeout=10) as ddgs:
             results = []
             
-            # Use Canadian region if Ontario is mentioned
-            region = 'ca-en' if 'ontario' in query_lower or 'canada' in query_lower else 'us-en'
+            # Use Canadian region if Ontario is mentioned or if it's a general request in this fork
+            # This makes BMO feel more local to the user's setup.
+            region = 'ca-en' if any(k in query_lower for k in ['ontario', 'canada', 'brantford', 'toronto']) else 'wt-wt'
             
-            # 1. Try News search first (skip for weather)
-            if "weather" not in query_lower:
+            # 1. Try News search first for current events (skip for weather)
+            if any(k in query_lower for k in ["news", "latest", "today", "happening", "current"]):
                 try:
-                    results = list(ddgs.news(query, region=region, max_results=3))
+                    logger.info(f"Searching News (region={region})...")
+                    results = list(ddgs.news(query, region=region, max_results=5))
                     if results:
-                        logger.info(f"Found News: {results[0].get('title')}")
+                        logger.info(f"Found {len(results)} news items.")
                 except Exception as e:
                     logger.warning(f"News Search Error: {e}")
             

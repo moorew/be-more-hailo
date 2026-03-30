@@ -86,11 +86,23 @@ Your BMO is then reachable from your phone, laptop, or any device on your Tailne
 
 - **Original Project:** This is a fork of [@brenpoly's be-more-agent](https://github.com/brenpoly/be-more-agent).
 - **Custom BMO Voice:** Huge thanks to **Brenpoly** for his work fine-tuning the custom BMO neural voice model (`v1.0-voice`). This model provides the more accurate, charming BMO voice you hear today!
-- **Hardware Support:** Built for the Raspberry Pi 5 + Hailo-10H NPU.
+- **Community Features:** This fork imports several interactivity and utility features from the upstream `be-more-agent` project, including DuckDuckGo News search, fast nearest-neighbor audio resampling, and robust silence detection (VAD).
+- **Hardware Support:** Built for the Raspberry Pi 5 + Raspberry Pi AI HAT 2+ (Hailo-10H).
+
+---
+
+## Features & Recent Updates
+
+- **Web UI Refactor:** Fully responsive, mobile-friendly interface for interacting with BMO from any device.
+- **Improved Aliveness:** Interactive "Pondering" mode — BMO will periodically share fun facts, news, and quirky thoughts when idle.
+- **Enhanced Search:** BMO can now search for current news and regional information (Canada/Ontario prioritized).
+- **Audio Stability:** Fast nearest-neighbor resampling and improved ALSA contention handling for more reliable wake-word detection and voice recording.
+- **Desktop Ready:** Includes a `.desktop` launcher and automated GUI startup.
 
 ---
 
 ## Project structure
+
 
 ```
 be-more-agent/

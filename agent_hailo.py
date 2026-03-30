@@ -374,19 +374,33 @@ class BotGUI:
         
         print(f"[EARS] Waiting for wake word... (Index: {MIC_DEVICE_INDEX}, Rate: {capture_rate})")
         
+        # Prepare fast resampling indices once
+        # Downsample from capture_rate to 16000 by picking every Nth sample
+        resample_indices = np.arange(0, CHUNK * downsample_factor, downsample_factor).astype(np.int32)
+        
         retry_count = 0
         while not self.stop_event.is_set():
             try:
-                with sd.InputStream(samplerate=capture_rate, device=MIC_DEVICE_INDEX, channels=1, dtype='int16') as stream:
+                # Use a smaller blocksize to reduce latency
+                with sd.InputStream(samplerate=capture_rate, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', blocksize=CHUNK * downsample_factor) as stream:
                     retry_count = 0 # Reset on success
                     while not self.stop_event.is_set():
                         if self.is_busy:
                             time.sleep(0.5)
                             continue
                             
-                        data, _ = stream.read(CHUNK * downsample_factor)
+                        data, overflowed = stream.read(CHUNK * downsample_factor)
                         if not data.any(): continue
-                        audio_16k = data[::downsample_factor].flatten() 
+                        
+                        # 1. Quick Volume Check (Skip OWW if it's too quiet)
+                        current_max = np.max(np.abs(data))
+                        if current_max < 250: # Adjust threshold as needed
+                            continue
+
+                        # 2. Fast Resampling (Nearest Neighbor slicing is much faster than scipy.signal.resample)
+                        audio_16k = data[resample_indices].flatten() 
+                        
+                        # 3. Predict
                         oww.predict(audio_16k)
                         
                         for key in oww.prediction_buffer.keys():
