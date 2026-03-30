@@ -169,6 +169,8 @@ class BotGUI:
 
         self.animations = {}
         self.current_frame = 0
+        self.mouth_ema = 0.0 # Exponential moving average for smooth transitions
+        self.mouth_viseme_jitter = 0 # Offset for different "phoneme" looks
         self.load_animations()
         self.load_sounds()
         self.update_animation()
@@ -203,20 +205,25 @@ class BotGUI:
             return
 
         x, y = event.x, event.y
-        # Hot corner dimensions
-        corner_w, corner_h = 200, 150
+        # Get actual current window size for relative corner math
+        win_w = self.master.winfo_width()
+        win_h = self.master.winfo_height()
+        
+        # Corners are roughly the outer 25% of the screen
+        corner_w = win_w // 4
+        corner_h = win_h // 4
         
         if x < corner_w and y < corner_h:
-            print("[CLICK] Top-Left Hot Corner: Generate Image")
+            print(f"[CLICK] Top-Left Hot Corner: Generate Image (at {x},{y})")
             self.trigger_generate_image()
-        elif x > self.BG_WIDTH - corner_w and y < corner_h:
-            print("[CLICK] Top-Right Hot Corner: Random Thought")
+        elif x > win_w - corner_w and y < corner_h:
+            print(f"[CLICK] Top-Right Hot Corner: Random Pondering (at {x},{y})")
             self.trigger_random_thought()
-        elif x > self.BG_WIDTH - corner_w and y > self.BG_HEIGHT - corner_h:
-            print("[CLICK] Bottom-Right Hot Corner: Play Music")
+        elif x > win_w - corner_w and y > win_h - corner_h:
+            print(f"[CLICK] Bottom-Right Hot Corner: Play Music (at {x},{y})")
             self.trigger_music()
         else:
-            print("[CLICK] Center/Mouth: Toggle Mute")
+            print(f"[CLICK] Center/Body: Toggle Mute (at {x},{y})")
             self.mute_bmo()
 
     def mute_bmo(self, event=None):
@@ -364,18 +371,23 @@ class BotGUI:
         frames = self.animations.get(display_state, self.animations.get(BotStates.IDLE, []))
         if frames:
             if display_state == BotStates.SPEAKING:
-                # Advanced lip sync: Viseme-like behavior with variety
+                # 1. Smooth out mouth movement with Exponential Moving Average (EMA)
+                # This prevents the mouth from "jumping" instantly to closed
+                # 0.4 weight on new value, 0.6 on old gives a nice ~100ms decay
+                self.mouth_ema = (self.mouth_ema * 0.6) + (self.mouth_open * 0.4)
+                
                 num_frames = len(frames)
-                if self.mouth_open > 1:
-                    # 1. Base intensity mapping
-                    base_idx = int((self.mouth_open / 60) * (num_frames - 1))
+                if self.mouth_ema > 1:
+                    # 2. Base intensity mapping from smoothed EMA
+                    base_idx = int((self.mouth_ema / 60) * (num_frames - 1))
                     
-                    # 2. Shape variety: Shift the frame window based on time
-                    # This simulates different mouth positions for different phonemes
-                    # even if volume is constant.
-                    time_shift = int(time.time() * 15) % 3 # Shift by up to 3 frames
-                    idx = (base_idx + time_shift) % num_frames
-                    
+                    # 3. Simulate Visemes (different mouth positions for different sounds)
+                    # We cycle a 'jitter' offset every few frames to simulate shifting phonemes
+                    # even when the volume is relatively steady.
+                    if int(time.time() * 20) % 2 == 0:
+                        self.mouth_viseme_jitter = random.randint(-2, 2)
+                        
+                    idx = (base_idx + self.mouth_viseme_jitter) % num_frames
                     self.current_frame = min(num_frames - 1, max(0, idx))
                 else:
                     self.current_frame = 0 # Closed
@@ -591,6 +603,7 @@ class BotGUI:
                 proc.wait(timeout=0.2)
             except Exception: pass
             self.mouth_open = 0
+            self.mouth_ema = 0 # Final reset to closed
 
     def speak(self, text, msg="Speaking...", end_of_turn=True):
         from core.tts import clean_text_for_speech
@@ -1017,61 +1030,64 @@ class BotGUI:
             from core.config import LLM_URL, FAST_LLM_MODEL
             import requests as http_requests
 
-            self.is_busy = True
-            topics = [
-                "interesting fun fact of the day", "weather forecast today in Brantford, Ontario",
-                "this day in history", "cool science discovery this week", "funny animal fact",
-                "random wholesome internet story", "video game history fact", "weird food fact",
-                "Adventure Time lore or trivia", "today's astronomy picture", "best joke of the day",
-                "funny dad jokes", "hilarious puns", "unusual world records"
-            ]
+            try:
+                self.is_busy = True
+                topics = [
+                    "interesting fun fact of the day", "weather forecast today in Brantford, Ontario",
+                    "this day in history", "cool science discovery this week", "funny animal fact",
+                    "random wholesome internet story", "video game history fact", "weird food fact",
+                    "Adventure Time lore or trivia", "today's astronomy picture", "best joke of the day",
+                    "funny dad jokes", "hilarious puns", "unusual world records"
+                ]
 
-            topic = random.choice(topics)
-            for _ in range(3):
-                if topic in self.recent_thoughts:
-                    topic = random.choice(topics)
-                else:
-                    break
-
-            print(f"[BUTTON] Manually triggering thought for: {topic}")
-            self.set_state(BotStates.THINKING, "Thinking...")
-
-            search_result = search_web(topic)
-            if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
-                phrase = self.generate_thought_internal(search_result)
-
-                if phrase:
-                    self.recent_thoughts.append(topic)
-                    # Check for image URL or subject
-                    image_url = None
-                    json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
-                    if json_match:
-                        try:
-                            action_data = json.loads(json_match.group(0))
-                            if action_data.get("action") == "display_image":
-                                subject = action_data.get("subject") or action_data.get("image_url")
-                                if subject:
-                                    if "://" in subject:
-                                        image_url = subject
-                                    else:
-                                        image_url = search_images(subject)
-                                phrase = phrase.replace(json_match.group(0), '').strip()
-                        except Exception: pass
-
-                    self.speak(phrase, msg="Pondering...")
-                    if image_url:
-                        # Wait for BMO to start speaking before showing image
-                        time.sleep(1.5)
-                        self.display_remote_image(image_url, commentary_prompt=topic)
+                topic = random.choice(topics)
+                for _ in range(3):
+                    if topic in self.recent_thoughts:
+                        topic = random.choice(topics)
                     else:
-                        self.is_busy = False
+                        break
+
+                print(f"[BUTTON] Manually triggering thought for: {topic}")
+                self.set_state(BotStates.THINKING, "Thinking...")
+
+                search_result = search_web(topic)
+                if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
+                    phrase = self.generate_thought_internal(search_result)
+
+                    if phrase:
+                        self.recent_thoughts.append(topic)
+                        # Check for image URL or subject
+                        image_url = None
+                        json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
+                        if json_match:
+                            try:
+                                action_data = json.loads(json_match.group(0))
+                                if action_data.get("action") == "display_image":
+                                    subject = action_data.get("subject") or action_data.get("image_url")
+                                    if subject:
+                                        if "://" in subject:
+                                            image_url = subject
+                                        else:
+                                            image_url = search_images(subject)
+                                    phrase = phrase.replace(json_match.group(0), '').strip()
+                            except Exception: pass
+
+                        self.speak(phrase, msg="Pondering...")
+                        if image_url:
+                            # Wait for BMO to start speaking before showing image
+                            time.sleep(1.5)
+                            self.display_remote_image(image_url, commentary_prompt=topic)
+                        else:
+                            self.set_state(BotStates.IDLE, "Ready...")
+                    else:
                         self.set_state(BotStates.IDLE, "Ready...")
                 else:
-                    self.is_busy = False
                     self.set_state(BotStates.IDLE, "Ready...")
-            else:
-                self.is_busy = False
+            except Exception as e:
+                print(f"[BUTTON] Thought error: {e}")
                 self.set_state(BotStates.IDLE, "Ready...")
+            finally:
+                self.is_busy = False
 
         threading.Thread(target=run_thought, daemon=True).start()
 
@@ -1081,31 +1097,32 @@ class BotGUI:
             return
             
         def run_music():
-            # Wait for current speaking to finish if any
-            while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
-                time.sleep(0.5)
-            
-            intros = [
-                "Oh yeah! BMO is going to jam out!",
-                "Time for music! La la la!",
-                "BMO loves this song!",
-                "Let BMO play you a tune!",
-                "Music time! BMO is so excited!",
-            ]
-            self.speak(random.choice(intros), msg="Getting ready to jam...")
-            print("[MUSIC] Starting music playback...")
-            music_proc = self.play_sound("music")
-            if music_proc:
-                self.set_state(BotStates.JAMMING, "Jamming!")
-                print("[MUSIC] Now playing! State set to JAMMING")
-                music_proc.wait()
-                print("[MUSIC] Playback finished")
-                time.sleep(1) # Extra buffer
-                if self.current_state == BotStates.JAMMING:
-                    self.set_state(BotStates.IDLE, "Ready")
-            else:
-                print("[MUSIC] No music files found or muted!")
-                self.speak("BMO wants to play music, but there are no songs loaded!")
+            try:
+                self.is_busy = True
+                # Wait for current speaking to finish if any
+                while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
+                    time.sleep(0.5)
+                
+                intros = [
+                    "Oh yeah! BMO is going to jam out!",
+                    "Time for music! La la la!",
+                    "BMO loves this song!",
+                    "Let BMO play you a tune!",
+                    "Music time! BMO is so excited!",
+                ]
+                self.speak(random.choice(intros), msg="Getting ready to jam...")
+                print("[MUSIC] Starting music playback...")
+                music_proc = self.play_sound("music")
+                if music_proc:
+                    self.set_state(BotStates.JAMMING, "Jamming!")
+                    music_proc.wait()
+                    time.sleep(1) # Extra buffer
+                    if self.current_state == BotStates.JAMMING:
+                        self.set_state(BotStates.IDLE, "Ready")
+                else:
+                    self.speak("BMO wants to play music, but there are no songs loaded!")
+            finally:
+                self.is_busy = False
                 
         threading.Thread(target=run_music, daemon=True).start()
 
@@ -1119,35 +1136,47 @@ class BotGUI:
             from core.search import search_images
             import requests as http_requests
             
-            self.is_busy = True
-            self.set_state(BotStates.THINKING, "Imagining...")
-            
-            # Say something generic first
-            intros = [
-                "BMO is feeling creative! Let me draw something for you.",
-                "I am going to make some art!",
-                "Time for BMO's art class! One moment...",
-                "Let me paint a beautiful picture for you."
-            ]
-            self.speak(random.choice(intros), msg="Imagining...")
-            
-            prompt = "You are BMO. You want to show a picture. Output ONLY a short, vivid 3-5 word descriptive search term for an image (e.g. 'cute baby penguin' or 'colorful deep space nebula'). Do NOT say anything else."
-            payload = {
-                "model": FAST_LLM_MODEL,
-                "messages": [
-                    {"role": "system", "content": "You are BMO. You only output short image search terms."},
-                    {"role": "user", "content": prompt}
-                ],
-                "stream": False,
-                "options": {"temperature": 0.9, "num_predict": 20}
-            }
             try:
+                self.is_busy = True
+                self.set_state(BotStates.THINKING, "Imagining...")
+                
+                # Say something generic first
+                intros = [
+                    "BMO is feeling creative! Let me draw something for you.",
+                    "I am going to make some art!",
+                    "Time for BMO's art class! One moment...",
+                    "Let me paint a beautiful picture for you."
+                ]
+                self.speak(random.choice(intros), msg="Imagining...")
+                
+                prompt = "You are BMO. You want to show a picture. Output ONLY a short, vivid 3-5 word descriptive search term for an image (e.g. 'cute baby penguin' or 'colorful deep space nebula'). Do NOT say anything else."
+                payload = {
+                    "model": FAST_LLM_MODEL,
+                    "messages": [
+                        {"role": "system", "content": "You are BMO. You only output short image search terms."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "stream": False,
+                    "options": {"temperature": 0.9, "num_predict": 20}
+                }
+                
+                search_term = "cute robot"
                 resp = http_requests.post(LLM_URL, json=payload, timeout=30)
                 if resp.status_code == 200:
                     search_term = resp.json().get("message", {}).get("content", "").strip()
                     search_term = search_term.replace('"', '').replace('\n', '').strip()
-                    if not search_term:
-                        search_term = "cute robot"
+                
+                image_url = search_images(search_term)
+                if image_url:
+                    self.display_remote_image(image_url, commentary_prompt=f"a picture of {search_term}")
+                else:
+                    self.speak("My imagination is a bit fuzzy right now, I couldn't draw that.")
+                    self.set_state(BotStates.IDLE, "Ready...")
+            except Exception as e:
+                print(f"[BUTTON] Image generation error: {e}")
+                self.set_state(BotStates.IDLE, "Ready...")
+            finally:
+                self.is_busy = False
                         
                     # Find a real image
                     url = search_images(search_term)
