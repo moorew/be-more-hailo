@@ -248,8 +248,8 @@ cat <<EOF > ~/Desktop/BMO.desktop
 Name=BMO
 Comment=Launch BMO Agent
 Exec=bash -c 'cd "$PWD" && ./start_agent.sh'
-Icon=$PWD/static/favicon.png
-Terminal=true
+Icon=$PWD/static/bmo_stylized_icon.png
+Terminal=false
 Type=Application
 Categories=Utility;Application;
 EOF
