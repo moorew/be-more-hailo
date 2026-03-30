@@ -385,8 +385,9 @@ class BotGUI:
             self.tk_img = frames[self.current_frame]
             self.background_label.config(image=self.tk_img)
 
-        # Frame rate: Sped up from 120ms to 40ms (25fps) for reactive lip-sync
-        self.master.after(40, self.update_animation)
+        # Dynamic frame rate: 40ms (25fps) for speaking lip-sync, 120ms for everything else
+        interval = 40 if display_state == BotStates.SPEAKING else 120
+        self.master.after(interval, self.update_animation)
 
     # --- AUDIO INPUT ---
     def wait_for_wakeword(self, oww):
@@ -591,7 +592,7 @@ class BotGUI:
             except Exception: pass
             self.mouth_open = 0
 
-    def speak(self, text, msg="Speaking..."):
+    def speak(self, text, msg="Speaking...", end_of_turn=True):
         from core.tts import clean_text_for_speech
         from core.config import PIPER_CMD, PIPER_MODEL
 
@@ -612,7 +613,7 @@ class BotGUI:
                 if self.current_state != BotStates.DISPLAY_IMAGE:
                     if msg is not None:
                         self.set_state(BotStates.SPEAKING, msg)
-                    else:
+                    elif self.current_state != BotStates.SPEAKING:
                         self.current_state = BotStates.SPEAKING
                         self.current_frame = 0
                         self.last_state_change = time.time()
@@ -621,7 +622,7 @@ class BotGUI:
                 if not self.is_muted:
                     self.play_audio_with_sync(proc.stdout)
                 else:
-                    time.sleep(1.5)
+                    time.sleep(1.0) # Shorter wait for muted streaming chunks
 
                 # Cleanup Piper process
                 try:
@@ -630,8 +631,8 @@ class BotGUI:
                     try: proc.terminate()
                     except: pass
 
-                # 4. Return to IDLE state
-                if self.current_state == BotStates.SPEAKING:
+                # 4. Return to IDLE state ONLY if this is the last chunk
+                if end_of_turn and self.current_state == BotStates.SPEAKING:
                     if msg is not None:
                         self.set_state(BotStates.IDLE, "Ready...")
                     else:
@@ -807,12 +808,14 @@ class BotGUI:
                     
                     # Lock LLM access to prevent screensaver interference
                     with self.llm_lock:
-                        for chunk in self.brain.stream_think(user_text):
+                        chunks = list(self.brain.stream_think(user_text))
+                        for i, chunk in enumerate(chunks):
                             if not chunk.strip():
                                 continue
-                                
+                            
+                            is_last = (i == len(chunks) - 1)
                             full_response += chunk
-                            print(f"[AGENT] Chunk received: '{chunk[:80]}'")
+                            print(f"[AGENT] Chunk {i+1}/{len(chunks)}: '{chunk[:40]}...'")
                             
                             # Handle json actions
                             if '{"action": "take_photo"}' in chunk:
@@ -822,63 +825,32 @@ class BotGUI:
                                 
                             json_match = re.search(r'\{.*?\}', chunk, re.DOTALL)
                             if json_match:
-                                print(f"[AGENT] JSON regex matched: '{json_match.group(0)[:80]}'")
                                 try:
                                     action_data = json.loads(json_match.group(0))
-                                    print(f"[AGENT] Parsed action: {action_data.get('action', 'unknown')}")
-                                    if action_data.get("action") == "display_image" and action_data.get("image_url"):
+                                    if action_data.get("action") == "display_image":
                                         image_url = action_data.get("image_url")
-                                        print(f"[AGENT] display_image URL set: {image_url[:80]}")
                                         chunk = chunk.replace(json_match.group(0), '').strip()
-                                    elif action_data.get("action") == "set_expression" and action_data.get("value"):
+                                    elif action_data.get("action") == "set_expression":
                                         expr = action_data.get("value").lower()
                                         if expr in [BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.CONFUSED]:
                                             self.set_state(expr, f"Feeling {expr}...")
                                         chunk = chunk.replace(json_match.group(0), '').strip()
-                                    elif action_data.get("action") == "set_timer" and action_data.get("minutes") is not None:
-                                        mins = float(action_data.get("minutes"))
-                                        msg = action_data.get("message", "Timer is up!")
-                                        self.start_timer_thread(mins, msg)
-                                        chunk = chunk.replace(json_match.group(0), '').strip()
                                     elif action_data.get("action") == "play_music":
-                                        # Spawns a background thread to play music and animate
                                         def music_worker():
-                                            # Wait for current speaking to finish
                                             while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
                                                 time.sleep(0.5)
-                                            
-                                            # Say something fun before playing
-                                            intros = [
-                                                "Oh yeah! BMO is going to jam out!",
-                                                "Time for music! La la la!",
-                                                "BMO loves this song!",
-                                                "Let BMO play you a tune!",
-                                                "Music time! BMO is so excited!",
-                                            ]
-                                            self.speak(random.choice(intros), msg="Getting ready to jam...")
-                                            
-                                            print("[MUSIC] Starting music playback...")
                                             music_proc = self.play_sound("music")
                                             if music_proc:
-                                                old_state = self.current_state
                                                 self.set_state(BotStates.JAMMING, "Jamming!")
-                                                print("[MUSIC] Now playing! State set to JAMMING")
                                                 music_proc.wait()
-                                                print("[MUSIC] Playback finished")
-                                                time.sleep(1) # Extra buffer
                                                 if self.current_state == BotStates.JAMMING:
                                                     self.set_state(BotStates.IDLE, "Ready")
-                                            else:
-                                                print("[MUSIC] No music files found or muted!")
-                                                self.speak("BMO wants to play music, but there are no songs loaded!")
-                                        
                                         threading.Thread(target=music_worker, daemon=True).start()
                                         chunk = chunk.replace(json_match.group(0), '').strip()
-                                except Exception as e:
-                                    print(f"[AGENT] JSON Parse Error: {e} for: '{json_match.group(0)[:50]}'")
+                                except Exception: pass
                                     
                             if chunk.strip():
-                                self.speak(chunk, msg=None)
+                                self.speak(chunk, msg=None, end_of_turn=is_last)
 
 
                     if taking_photo:
