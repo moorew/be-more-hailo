@@ -350,19 +350,23 @@ class BotGUI:
         frames = self.animations.get(display_state, self.animations.get(BotStates.IDLE, []))
         if frames:
             if display_state == BotStates.SPEAKING:
-                # Lip sync logic: if mouth is open, cycle frames. If closed, stay on first/closed frame.
-                if self.mouth_open > 2:
-                    self.current_frame = (self.current_frame + 1) % len(frames)
+                # Lip sync logic: Map mouth_open (0-60) directly to frame index (0-18)
+                # This ensures the mouth's physical opening matches the audio intensity
+                num_speaking_frames = len(frames)
+                if self.mouth_open > 1:
+                    # Scale 0-60 to 0-(num_frames-1)
+                    idx = int((self.mouth_open / 60) * (num_speaking_frames - 1))
+                    self.current_frame = min(num_speaking_frames - 1, max(0, idx))
                 else:
-                    self.current_frame = 0 # Assume first frame is closed mouth
+                    self.current_frame = 0 # Closed mouth
             else:
                 self.current_frame = (self.current_frame + 1) % len(frames)
 
             self.tk_img = frames[self.current_frame]
             self.background_label.config(image=self.tk_img)
 
-        # Frame rate: slowed down from 50ms to 120ms for more natural movement
-        self.master.after(120, self.update_animation)
+        # Frame rate: Sped up from 120ms to 40ms (25fps) for reactive lip-sync
+        self.master.after(40, self.update_animation)
 
     # --- AUDIO INPUT ---
     def wait_for_wakeword(self, oww):
@@ -511,7 +515,8 @@ class BotGUI:
 
         # 22050 Hz, 16-bit, Mono (Piper default)
         sample_rate = 22050
-        chunk_size = 1024 # samples
+        # Reduced chunk size for more reactive lip-sync updates (roughly every 23ms)
+        chunk_size = 512 # samples 
 
         if isinstance(audio_data_input, bytes):
             stream = io.BytesIO(audio_data_input)

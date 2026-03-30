@@ -51,8 +51,14 @@ class BMOFaceRenderer {
         else if (this.state === 'listening') { this.eyePulseR = Math.sin(frame * 0.2) * 2; eyeType = 'circle'; }
         else if (this.state === 'speaking') {
             eyeType = 'circle'; mouthType = 'speaking';
-            const s = this.speakingShapes[Math.floor(frame / 6) % this.speakingShapes.length];
-            if (this.mouthOpen < 1) { curH = 0; curW = this.mouthW; } else { curH = s[0]; curW = s[1]; }
+            // True lip-sync mapping: Map mouthOpen intensity to physical height/width
+            // Scale the mouth up/down based on instantaneous volume
+            if (this.mouthOpen > 0.5) {
+                curH = Math.min(65, this.mouthOpen * 1.5);
+                curW = Math.min(105, 80 + (this.mouthOpen * 0.5));
+            } else {
+                curH = 0; curW = this.mouthW;
+            }
         }
         switch (this.state) {
             case 'happy': eyeType = 'happy'; mouthType = 'smile'; break;
