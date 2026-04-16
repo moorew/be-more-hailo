@@ -1161,42 +1161,33 @@ class BotGUI:
                 }
                 
                 search_term = "cute robot"
-                resp = http_requests.post(LLM_URL, json=payload, timeout=30)
-                if resp.status_code == 200:
-                    search_term = resp.json().get("message", {}).get("content", "").strip()
-                    search_term = search_term.replace('"', '').replace('\n', '').strip()
+                try:
+                    resp = http_requests.post(LLM_URL, json=payload, timeout=30)
+                    if resp.status_code == 200:
+                        search_term = resp.json().get("message", {}).get("content", "").strip()
+                        search_term = search_term.replace('"', '').replace('\n', '').strip()
+                except Exception as e:
+                    print(f"[IMAGE] LLM call failed: {e}")
+
+                # Find a real image
+                url = search_images(search_term)
                 
-                image_url = search_images(search_term)
-                if image_url:
-                    self.display_remote_image(image_url, commentary_prompt=f"a picture of {search_term}")
-                else:
-                    self.speak("My imagination is a bit fuzzy right now, I couldn't draw that.")
-                    self.set_state(BotStates.IDLE, "Ready...")
+                if not url:
+                    # Fallback to a placeholder if search fails
+                    import random
+                    lock_id = random.randint(1, 100000)
+                    url = f"https://loremflickr.com/640/480/{search_term.replace(' ', ',')}?lock={lock_id}"
+                
+                # Wait for BMO to finish speaking the intro
+                while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
+                    time.sleep(0.5)
+                    
+                self.display_remote_image(url, commentary_prompt=search_term)
             except Exception as e:
-                print(f"[BUTTON] Image generation error: {e}")
+                print(f"[IMAGE] Generator failed: {e}")
                 self.set_state(BotStates.IDLE, "Ready...")
             finally:
                 self.is_busy = False
-                        
-                    # Find a real image
-                    url = search_images(search_term)
-                    
-                    if not url:
-                        # Fallback to a placeholder if search fails
-                        import random
-                        lock_id = random.randint(1, 100000)
-                        url = f"https://loremflickr.com/640/480/{search_term.replace(' ', ',')}?lock={lock_id}"
-                    
-                    # Wait for BMO to finish speaking the intro
-                    while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
-                        time.sleep(0.5)
-                        
-                    self.display_remote_image(url, commentary_prompt=search_term)
-                    return
-            except Exception as e:
-                print(f"[IMAGE] Generator failed: {e}")
-                self.is_busy = False
-                self.set_state(BotStates.IDLE, "Ready...")
 
         threading.Thread(target=run_image_thought, daemon=True).start()
 
