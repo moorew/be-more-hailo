@@ -18,7 +18,7 @@ echo -e "${YELLOW}Detected HailoRT version: ${HAILORT_VER}${NC}"
 echo -e "${YELLOW}[1/13] Installing system packages...${NC}"
 sudo apt update
 sudo apt install -y \
-    python3-tk python3-venv libasound2-dev libportaudio2 libopenblas-dev \
+    python3-tk python3-venv python3-pil.imagetk libasound2-dev libportaudio2 libopenblas-dev \
     cmake build-essential git curl ffmpeg libssl-dev \
     libcamera-apps python3-libcamera \
     hailo-h10-all  # Hailo-10H PCIe driver, firmware, and runtime
