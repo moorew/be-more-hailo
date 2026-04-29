@@ -296,7 +296,7 @@ class Brain:
             "messages": self.history,
             "stream": False,
             "options": {
-                "temperature": 0.4,
+                "temperature": 0.7,
                 "num_predict": 1024,  # increased to prevent responses getting cut off
                 "num_ctx": 4096,
             }
@@ -494,7 +494,7 @@ class Brain:
             "messages": self.history,
             "stream": True,
             "options": {
-                "temperature": 0.4,
+                "temperature": 0.7,
                 "num_predict": 1024,  # Increased to prevent responses getting cut off
                 "num_ctx": 4096,      # Ensure context window is large enough
             }
@@ -522,7 +522,8 @@ class Brain:
                                 full_content += chunk
                                 
                                 # If buffer ends with punctuation or newline, yield it
-                                if any(buffer.endswith(punc) for punc in ['.', '!', '?', '\n']) or "\n\n" in buffer:
+                                # Added commas and semicolons to start speaking even faster
+                                if any(buffer.endswith(punc) for punc in ['.', '!', '?', ',', ';', '\n']) or "\n\n" in buffer:
                                     # Strip system prompt leakage
                                     cleaned = strip_prompt_leakage(buffer)
                                     # Ensure BMO spelling before yielding

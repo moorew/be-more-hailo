@@ -50,6 +50,18 @@ thinking = [
     "Processing..."
 ]
 
+acks = [
+    "Okay!", "Got it!", "BMO is on it!", "Sure thing!", "I can do that!",
+    "Processing your request!", "Right away!", "Beep boop, acknowledged!",
+    "Understood!", "BMO understands!"
+]
+
+errors = [
+    "Oh no! BMO's brain hurts!", "Something went wrong...", "I couldn't quite get that.",
+    "Error! Error! Just kidding, but I am stuck.", "BMO is having a technical glitch.",
+    "My circuits are a little confused.", "Can you say that again?", "I'm sorry, I missed that."
+]
+
 def generate_audio(text, filename):
     print(f"Generating {filename}...")
     # Replace BMO with Beemo for correct pronunciation
@@ -58,13 +70,19 @@ def generate_audio(text, filename):
     cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_file {filename}"
     subprocess.run(cmd, shell=True, check=True)
 
-os.makedirs("sounds/greeting_sounds", exist_ok=True)
-os.makedirs("sounds/thinking_sounds", exist_ok=True)
+for folder in ["sounds/greeting_sounds", "sounds/thinking_sounds", "sounds/ack_sounds", "sounds/error_sounds"]:
+    os.makedirs(folder, exist_ok=True)
 
 for i, text in enumerate(greetings):
     generate_audio(text, f"sounds/greeting_sounds/greeting_{i+1:02d}.wav")
 
 for i, text in enumerate(thinking):
     generate_audio(text, f"sounds/thinking_sounds/thinking_{i+1:02d}.wav")
+
+for i, text in enumerate(acks):
+    generate_audio(text, f"sounds/ack_sounds/ack_{i+1:02d}.wav")
+
+for i, text in enumerate(errors):
+    generate_audio(text, f"sounds/error_sounds/error_{i+1:02d}.wav")
 
 print("Done!")

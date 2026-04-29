@@ -123,10 +123,32 @@ def play_audio_on_hardware(text: str):
             return
             
         logger.info(f"Playing audio on hardware: {clean_text[:30]}...")
-        # Escape single quotes in text to prevent shell injection
-        safe_text = clean_text.replace("'", "'\\''")
-        piper_cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_raw | aplay -D {ALSA_DEVICE} -r 22050 -f S16_LE -t raw"
-        subprocess.run(piper_cmd, shell=True, check=True)
+        
+        # Use a temp file for the text to avoid shell command length limits
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+            tf.write(clean_text)
+            temp_text_path = tf.name
+
+        try:
+            piper_cmd = f"cat {temp_text_path} | {PIPER_CMD} --model {PIPER_MODEL} --output_raw | aplay -D {ALSA_DEVICE} -r 22050 -f S16_LE -t raw --buffer-time=500000"
+            
+            # Retry loop for busy audio device
+            for attempt in range(5):
+                try:
+                    subprocess.run(piper_cmd, shell=True, check=True, stderr=subprocess.PIPE)
+                    break
+                except subprocess.CalledProcessError as e:
+                    if b"Device or resource busy" in e.stderr:
+                        logger.warning(f"Audio device busy, retrying (attempt {attempt+1}/5)...")
+                        import time
+                        time.sleep(0.5)
+                    else:
+                        logger.error(f"Hardware TTS Error: {e.stderr.decode()}")
+                        break
+        finally:
+            if os.path.exists(temp_text_path):
+                os.remove(temp_text_path)
     except Exception as e:
         logger.error(f"Hardware TTS Error: {e}")
 
@@ -138,11 +160,20 @@ def generate_audio_file(text: str, filename: str) -> str:
             return None
             
         logger.info(f"Generating audio file: {filename}")
-        safe_text = clean_text.replace("'", "'\\''")
-        filepath = os.path.join("static", "audio", filename)
-        piper_cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_file {filepath}"
-        subprocess.run(piper_cmd, shell=True, check=True)
-        return f"/static/audio/{filename}"
+        
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+            tf.write(clean_text)
+            temp_text_path = tf.name
+
+        try:
+            filepath = os.path.join("static", "audio", filename)
+            piper_cmd = f"cat {temp_text_path} | {PIPER_CMD} --model {PIPER_MODEL} --output_file {filepath}"
+            subprocess.run(piper_cmd, shell=True, check=True)
+            return f"/static/audio/{filename}"
+        finally:
+            if os.path.exists(temp_text_path):
+                os.remove(temp_text_path)
     except Exception as e:
         logger.error(f"File TTS Error: {e}")
         return None

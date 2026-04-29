@@ -296,7 +296,7 @@ class BotGUI:
                     time.sleep(0.08)
                 self.mouth_open = 0
 
-            proc = subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', sound_file])
+            proc = subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', '--buffer-time=500000', sound_file])
             self.active_sounds.append(proc)
             
             # Start mouth animation thread for this sound
@@ -570,10 +570,39 @@ class BotGUI:
         else:
             stream = audio_data_input
 
-        # Start aplay with a slightly larger buffer to prevent stuttering during CPU/NPU spikes.
-        # --buffer-time=200000 is 200ms, which provides a good balance between stability and lip-sync lag.
-        aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", str(sample_rate), "-f", "S16_LE", "-t", "raw", "-q", "--buffer-time=200000"]
-        proc = subprocess.Popen(aplay_cmd, stdin=subprocess.PIPE)
+        # Start aplay with a much larger buffer to prevent stuttering during CPU/NPU spikes.
+        # --buffer-time=500000 is 500ms, which provides a very stable buffer for the Pi 5.
+        aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", str(sample_rate), "-f", "S16_LE", "-t", "raw", "-q", "--buffer-time=500000"]
+        
+        # Hardware Retry Loop: If the thinking sound hasn't fully released the hardware yet,
+        # we retry a few times before giving up.
+        proc = None
+        for attempt in range(10):
+            try:
+                # Force-kill any lingering aplay thinking sounds before we try to take the hardware
+                if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+                    try: 
+                        self.thinking_audio_process.terminate()
+                        self.thinking_audio_process.wait(timeout=0.2)
+                    except: pass
+                
+                proc = subprocess.Popen(aplay_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+                # Quick check if it failed immediately (e.g. Device Busy)
+                time.sleep(0.1)
+                if proc.poll() is not None:
+                    _, err = proc.communicate()
+                    if b"Device or resource busy" in err:
+                        print(f"[DEBUG] Audio device busy (attempt {attempt+1}/10), retrying...")
+                        time.sleep(0.3)
+                        continue
+                break # Success
+            except Exception as e:
+                print(f"[DEBUG] Audio startup error: {e}")
+                time.sleep(0.3)
+
+        if not proc or proc.poll() is not None:
+            print("[DEBUG] Failed to open audio device after retries.")
+            return
 
         try:
             start_time = time.time()
@@ -590,7 +619,8 @@ class BotGUI:
                 try:
                     proc.stdin.write(raw_chunk)
                     proc.stdin.flush()
-                except (BrokenPipeError, OSError):
+                except (BrokenPipeError, OSError) as e:
+                    print(f"[DEBUG] aplay write error: {e}")
                     break
 
                 # volume analysis on the chunk we just fed to the speaker
@@ -627,36 +657,44 @@ class BotGUI:
         if not clean_text or not any(c.isalnum() for c in clean_text):
             return
 
-        print(f"Speaking: {clean_text[:30]}...")
+        print(f"[DEBUG] Speaking: '{clean_text}'")
 
         with self.speak_lock:
             try:
                 # 1. Start streaming synthesis for instant response
-                safe_text = clean_text.replace("'", "'\\''")
-                piper_cmd = f"echo '{safe_text}' | {PIPER_CMD} --model {PIPER_MODEL} --output_raw"
-                proc = subprocess.Popen(piper_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+                    tf.write(clean_text)
+                    temp_text_path = tf.name
 
-                # 2. Set SPEAKING state immediately
-                if self.current_state != BotStates.DISPLAY_IMAGE:
-                    if msg is not None:
-                        self.set_state(BotStates.SPEAKING, msg)
-                    elif self.current_state != BotStates.SPEAKING:
-                        self.current_state = BotStates.SPEAKING
-                        self.current_frame = 0
-                        self.last_state_change = time.time()
-
-                # 3. Play stream with real-time lip-sync
-                if not self.is_muted:
-                    self.play_audio_with_sync(proc.stdout)
-                else:
-                    time.sleep(1.0) # Shorter wait for muted streaming chunks
-
-                # Cleanup Piper process
                 try:
-                    proc.wait(timeout=0.5)
-                except Exception:
-                    try: proc.terminate()
-                    except: pass
+                    piper_cmd = f"cat {temp_text_path} | {PIPER_CMD} --model {PIPER_MODEL} --output_raw"
+                    proc = subprocess.Popen(piper_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+                    # 2. Set SPEAKING state immediately
+                    if self.current_state != BotStates.DISPLAY_IMAGE:
+                        if msg is not None:
+                            self.set_state(BotStates.SPEAKING, msg)
+                        elif self.current_state != BotStates.SPEAKING:
+                            self.current_state = BotStates.SPEAKING
+                            self.current_frame = 0
+                            self.last_state_change = time.time()
+
+                    # 3. Play stream with real-time lip-sync
+                    if not self.is_muted:
+                        self.play_audio_with_sync(proc.stdout)
+                    else:
+                        time.sleep(1.0) # Shorter wait for muted streaming chunks
+
+                    # Cleanup Piper process
+                    try:
+                        proc.wait(timeout=2.0)
+                    except Exception:
+                        try: proc.terminate()
+                        except: pass
+                finally:
+                    if os.path.exists(temp_text_path):
+                        os.remove(temp_text_path)
 
                 # 4. Return to IDLE state ONLY if this is the last chunk
                 if end_of_turn and self.current_state == BotStates.SPEAKING:
@@ -687,9 +725,11 @@ class BotGUI:
         silent_chunks = 0
         has_spoken = False
         max_vol_seen = 0.0                        
-        ignore_until = time.time() + 0.2          # ignore first 0.2s for ALSA buffer clear
-        deadline = time.time() + timeout_sec       # give up if no speech by here
-        max_deadline = time.time() + timeout_sec + 8  # hard cap regardless
+        # Increased echo dead-zone window from 0.2s to 0.8s to ensure 
+        # ALSA buffers are clear and speaker has physically stopped.
+        ignore_until = time.time() + 0.8          
+        deadline = time.time() + timeout_sec       
+        max_deadline = time.time() + timeout_sec + 8  
 
         def callback(indata, frames_count, time_info, status):
             nonlocal silent_chunks, has_spoken, max_vol_seen
@@ -699,7 +739,10 @@ class BotGUI:
             max_vol_seen = max(max_vol_seen, vol)
             
             frames.append(indata.copy())
-            if vol < 50000:  # Matching main record_audio silence threshold
+            
+            # Use a slightly more robust threshold for follow-ups
+            # (55000 vs 50000) to avoid room noise triggers
+            if vol < 55000:  
                 silent_chunks += 1
             else:
                 silent_chunks = 0
@@ -752,6 +795,51 @@ class BotGUI:
         return filename
 
 
+
+    def _handle_response_chunk(self, chunk, is_last=True):
+        """Processes a single chunk from the LLM, handling actions and speech."""
+        if not chunk.strip():
+            return
+            
+        # These will be updated in the main loop via side effects on self
+        # or we can just use self.current_image_url etc.
+        # But to match existing logic, we'll use regex here
+        
+        # 1. Handle JSON actions
+        if '{"action": "take_photo"}' in chunk:
+            self.taking_photo = True
+            return
+
+        json_match = re.search(r'\{.*?\}', chunk, re.DOTALL)
+        if json_match:
+            try:
+                action_data = json.loads(json_match.group(0))
+                if action_data.get("action") == "display_image":
+                    self.current_image_url = action_data.get("image_url")
+                    chunk = chunk.replace(json_match.group(0), '').strip()
+                elif action_data.get("action") == "set_expression":
+                    expr = action_data.get("value").lower()
+                    if expr in [BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.CONFUSED]:
+                        self.set_state(expr, f"Feeling {expr}...")
+                    chunk = chunk.replace(json_match.group(0), '').strip()
+                elif action_data.get("action") == "play_music":
+                    def music_worker():
+                        while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
+                            time.sleep(0.5)
+                        music_proc = self.play_sound("music")
+                        if music_proc:
+                            self.set_state(BotStates.JAMMING, "Jamming!")
+                            music_proc.wait()
+                            if self.current_state == BotStates.JAMMING:
+                                self.set_state(BotStates.IDLE, "Ready")
+                    threading.Thread(target=music_worker, daemon=True).start()
+                    chunk = chunk.replace(json_match.group(0), '').strip()
+            except Exception:
+                pass
+
+        # 2. Speak the remaining text
+        if chunk.strip():
+            self.speak(chunk, msg=None, end_of_turn=is_last)
 
     # --- MAIN LOOP ---
     def main_loop(self):
@@ -830,56 +918,33 @@ class BotGUI:
 
                 try:
                     full_response = ""
-                    image_url = None
-                    taking_photo = False
+                    self.current_image_url = None
+                    self.taking_photo = False
                     
                     # Lock LLM access to prevent screensaver interference
                     with self.llm_lock:
-                        chunks = list(self.brain.stream_think(user_text))
-                        for i, chunk in enumerate(chunks):
-                            if not chunk.strip():
-                                continue
-                            
-                            is_last = (i == len(chunks) - 1)
-                            full_response += chunk
-                            print(f"[AGENT] Chunk {i+1}/{len(chunks)}: '{chunk[:40]}...'")
-                            
-                            # Handle json actions
-                            if '{"action": "take_photo"}' in chunk:
-                                print("[AGENT] take_photo action detected!")
-                                taking_photo = True
-                                break
-                                
-                            json_match = re.search(r'\{.*?\}', chunk, re.DOTALL)
-                            if json_match:
+                        # Use a peekable-style approach to detect the last chunk
+                        gen = self.brain.stream_think(user_text)
+                        try:
+                            chunk = next(gen)
+                            while True:
                                 try:
-                                    action_data = json.loads(json_match.group(0))
-                                    if action_data.get("action") == "display_image":
-                                        image_url = action_data.get("image_url")
-                                        chunk = chunk.replace(json_match.group(0), '').strip()
-                                    elif action_data.get("action") == "set_expression":
-                                        expr = action_data.get("value").lower()
-                                        if expr in [BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.CONFUSED]:
-                                            self.set_state(expr, f"Feeling {expr}...")
-                                        chunk = chunk.replace(json_match.group(0), '').strip()
-                                    elif action_data.get("action") == "play_music":
-                                        def music_worker():
-                                            while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
-                                                time.sleep(0.5)
-                                            music_proc = self.play_sound("music")
-                                            if music_proc:
-                                                self.set_state(BotStates.JAMMING, "Jamming!")
-                                                music_proc.wait()
-                                                if self.current_state == BotStates.JAMMING:
-                                                    self.set_state(BotStates.IDLE, "Ready")
-                                        threading.Thread(target=music_worker, daemon=True).start()
-                                        chunk = chunk.replace(json_match.group(0), '').strip()
-                                except Exception: pass
-                                    
-                            if chunk.strip():
-                                self.speak(chunk, msg=None, end_of_turn=is_last)
+                                    next_chunk = next(gen)
+                                    # If we got here, 'chunk' is not the last one
+                                    self._handle_response_chunk(chunk, is_last=False)
+                                    full_response += chunk
+                                    chunk = next_chunk
+                                except StopIteration:
+                                    # 'chunk' was the last one
+                                    self._handle_response_chunk(chunk, is_last=True)
+                                    full_response += chunk
+                                    break
+                        except StopIteration:
+                            pass
 
-
+                    image_url = self.current_image_url
+                    taking_photo = self.taking_photo
+                    
                     if taking_photo:
                         self.set_state(BotStates.CAPTURING, "Taking Photo...")
                         try:
@@ -1017,9 +1082,19 @@ class BotGUI:
                         
                     try:
                         with self.llm_lock:
-                            for chunk in self.brain.stream_think(user_text):
-                                if chunk.strip():
-                                    self.speak(chunk)
+                            gen = self.brain.stream_think(user_text)
+                            try:
+                                chunk = next(gen)
+                                while True:
+                                    try:
+                                        next_chunk = next(gen)
+                                        self._handle_response_chunk(chunk, is_last=False)
+                                        chunk = next_chunk
+                                    except StopIteration:
+                                        self._handle_response_chunk(chunk, is_last=True)
+                                        break
+                            except StopIteration:
+                                pass
                     except Exception as e:
                         print(f"Follow-up LLM error: {e}")
 
@@ -1448,7 +1523,7 @@ class BotGUI:
                 sound_file = os.path.join("sounds", "personas", f"{persona}.wav")
                 if not self.is_muted and os.path.exists(sound_file):
                     try:
-                        subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', sound_file])
+                        subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', '--buffer-time=500000', sound_file])
                     except Exception as e:
                         pass
                 

@@ -96,7 +96,8 @@ def find_audio_devices():
     
     found_mic = False
     for i, dev in enumerate(devices):
-        if pref_mic in dev['name'] and dev['max_input_channels'] > 0:
+        # Ensure the device actually has input channels before picking it
+        if pref_mic in dev['name'] and dev.get('max_input_channels', 0) > 0:
             mic_idx = i
             found_mic = True
             print(f"[CONFIG] Found Mic by name: {dev['name']} at index {i}")
