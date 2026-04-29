@@ -170,9 +170,36 @@ def strip_prompt_leakage(content: str) -> str:
     return content.strip()
 
 
+MEMORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory.json")
+
 class Brain:
     def __init__(self):
-        self.history = [{"role": "system", "content": get_system_prompt()}]
+        self.history = []
+        self.load_history()
+        # Ensure system prompt is always present and up to date
+        if not self.history or self.history[0].get("role") != "system":
+            self.history.insert(0, {"role": "system", "content": get_system_prompt()})
+        else:
+            self.history[0]["content"] = get_system_prompt()
+
+    def load_history(self):
+        """Load chat history from memory.json if it exists."""
+        if os.path.exists(MEMORY_FILE):
+            try:
+                with open(MEMORY_FILE, 'r') as f:
+                    self.history = json.load(f)
+                logger.info(f"Loaded {len(self.history)} messages from memory.")
+            except Exception as e:
+                logger.error(f"Failed to load memory: {e}")
+                self.history = []
+
+    def save_history(self):
+        """Persist chat history to disk."""
+        try:
+            with open(MEMORY_FILE, 'w') as f:
+                json.dump(self.history, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save memory: {e}")
 
     def _trim_history(self):
         """Keep the system prompt + the most recent MAX_HISTORY_MESSAGES messages."""
@@ -180,6 +207,7 @@ class Brain:
         non_system = self.history[1:]
         if len(non_system) > MAX_HISTORY_MESSAGES:
             self.history = [self.history[0]] + non_system[-MAX_HISTORY_MESSAGES:]
+        self.save_history()
 
     def think(self, user_text: str) -> str:
         """
@@ -520,6 +548,7 @@ class Brain:
                         pass 
                     
                     self.history.append({"role": "assistant", "content": full_content})
+                    self.save_history()
 
                     # Clean injected search context from history so it doesn't
                     # accumulate and confuse the model on future turns.

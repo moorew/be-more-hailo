@@ -362,6 +362,18 @@ wget -O models/Qwen2-VL-2B-Instruct.hef \
     "https://dev-public.hailo.ai/v${HAILORT_VER}/blob/Qwen2-VL-2B-Instruct.hef"
 ```
 
+**TTS Audio Stuttering / Staccato Speech**
+
+If Piper sounds like it's "tripping" or only playing short bursts of noise, it's likely an ALSA buffer underrun caused by high CPU/NPU load. We increased the default buffer to 200ms in `agent_hailo.py` (`--buffer-time=200000`) to solve this. If it persists, ensure you are using the official 27W Power Supply.
+
+**Mic stops listening (Watchdog Trigger)**
+
+If BMO stops responding to the wake word, the mic stream may have stalled. We've added a 10-second watchdog in the `agent_hailo.py` ear loop that automatically restarts the stream if no data is received.
+
+**Persistent Memory**
+
+Chat history is now persisted to `memory.json`. BMO will remember your previous conversations even after a restart!
+
 **Camera vision says "my eyes aren't working"**
 
 If the VLM HEF is present but inference still fails, check that `hailo_platform` is importable:

@@ -302,12 +302,16 @@ class BotGUI:
             # Start mouth animation thread for this sound
             if category in ["greeting_sounds", "thinking_sounds"]:
                 threading.Thread(target=animate_mouth_simple, args=(proc,), daemon=True).start()
+            elif category == "music":
+                self.set_state(BotStates.JAMMING, "Jamming!")
 
             # Cleanup thread to remove finished processes
             def cleanup():
                 proc.wait()
                 if proc in self.active_sounds:
                     self.active_sounds.remove(proc)
+                if category == "music" and self.current_state == BotStates.JAMMING:
+                    self.set_state(BotStates.IDLE, "Ready")
             threading.Thread(target=cleanup, daemon=True).start()
             return proc
         except Exception as e:
@@ -421,13 +425,23 @@ class BotGUI:
                 # Use a smaller blocksize to reduce latency
                 with sd.InputStream(samplerate=capture_rate, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', blocksize=CHUNK * downsample_factor) as stream:
                     retry_count = 0 # Reset on success
+                    last_data_time = time.time()
                     while not self.stop_event.is_set():
                         if self.is_busy:
                             time.sleep(0.5)
+                            last_data_time = time.time() # Reset watchdog
                             continue
                             
                         data, overflowed = stream.read(CHUNK * downsample_factor)
-                        if not data.any(): continue
+                        
+                        if data is None or not data.any(): 
+                            if time.time() - last_data_time > 10.0:
+                                print("[EARS] Watchdog: Mic stream is silent/stalled. Restarting...")
+                                break
+                            time.sleep(0.01)
+                            continue
+                        
+                        last_data_time = time.time() # Pet the watchdog
                         
                         # 1. Quick Volume Check (Skip OWW if it's too quiet)
                         current_max = np.max(np.abs(data))
@@ -556,9 +570,9 @@ class BotGUI:
         else:
             stream = audio_data_input
 
-        # Start aplay with a much smaller buffer to minimize sound-to-mouth lag
-        # --buffer-time=50000 is 50ms, which is roughly one animation frame (50ms)
-        aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", str(sample_rate), "-f", "S16_LE", "-t", "raw", "-q", "--buffer-time=50000"]
+        # Start aplay with a slightly larger buffer to prevent stuttering during CPU/NPU spikes.
+        # --buffer-time=200000 is 200ms, which provides a good balance between stability and lip-sync lag.
+        aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", str(sample_rate), "-f", "S16_LE", "-t", "raw", "-q", "--buffer-time=200000"]
         proc = subprocess.Popen(aplay_cmd, stdin=subprocess.PIPE)
 
         try:
@@ -878,7 +892,7 @@ class BotGUI:
                                     break
                             if cam_cmd is None:
                                 raise FileNotFoundError("No camera command found (libcamera-still / rpicam-still)")
-                            subprocess.run([cam_cmd, '-o', 'temp.jpg', '--width', '640', '--height', '480', '--nopreview', '-t', '1000'], check=True)
+                            subprocess.run([cam_cmd, '-o', 'temp.jpg', '--width', '640', '--height', '480', '--nopreview', '-t', '2000', '--autofocus-mode', 'continuous'], check=True)
                             import base64
                             with open('temp.jpg', 'rb') as img_file:
                                 b64_string = base64.b64encode(img_file.read()).decode('utf-8')
