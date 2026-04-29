@@ -580,6 +580,7 @@ class BotGUI:
         for attempt in range(10):
             try:
                 # Force-kill any lingering aplay thinking sounds before we try to take the hardware
+                self.is_thinking_sound_playing = False
                 if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
                     try: 
                         self.thinking_audio_process.terminate()
@@ -874,18 +875,19 @@ class BotGUI:
                 # 3. Transcribe
                 self.set_state(BotStates.THINKING, "Transcribing...")
                 
+                self.is_thinking_sound_playing = True
                 def play_thinking_sequence():
                     ack_proc = self.play_sound("ack_sounds")
                     if ack_proc:
                         ack_proc.wait()
                     
-                    while self.current_state == BotStates.THINKING:
+                    while self.current_state == BotStates.THINKING and getattr(self, 'is_thinking_sound_playing', False):
                         self.thinking_audio_process = self.play_sound("thinking_sounds")
                         if self.thinking_audio_process:
                             self.thinking_audio_process.wait()
                         # Wait 8 seconds before playing again, but check state frequently
                         for _ in range(80):
-                            if self.current_state != BotStates.THINKING:
+                            if self.current_state != BotStates.THINKING or not getattr(self, 'is_thinking_sound_playing', False):
                                 break
                             time.sleep(0.1)
                 
@@ -897,6 +899,7 @@ class BotGUI:
                 if len(user_text) < 2:
                     self.set_state(BotStates.IDLE, "Ready")
                     self.is_busy = False
+                    self.is_thinking_sound_playing = False
                     if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
                         try:
                             self.thinking_audio_process.terminate()
@@ -908,13 +911,9 @@ class BotGUI:
                 # 4. LLM
                 self.set_state(BotStates.THINKING, "Thinking...")
 
-                # Stop the thinking sound loop
-                if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
-                    try:
-                        self.thinking_audio_process.terminate()
-                    except Exception:
-                        pass
-                    self.thinking_audio_process = None
+                # We DO NOT stop the thinking sound loop here.
+                # Let it continue playing its current sound seamlessly while the LLM thinks.
+
 
                 try:
                     full_response = ""
@@ -962,8 +961,10 @@ class BotGUI:
                             with open('temp.jpg', 'rb') as img_file:
                                 b64_string = base64.b64encode(img_file.read()).decode('utf-8')
                             self.set_state(BotStates.THINKING, "Analyzing...")
+                            self.is_thinking_sound_playing = True
                             threading.Thread(target=play_thinking_sequence, daemon=True).start()
                             response = self.brain.analyze_image(b64_string, user_text)
+                            self.is_thinking_sound_playing = False
                             if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
                                 try:
                                     self.thinking_audio_process.terminate()
@@ -1057,12 +1058,14 @@ class BotGUI:
                         break
                         
                     self.set_state(BotStates.THINKING, "Transcribing...")
+                    self.is_thinking_sound_playing = True
                     threading.Thread(target=play_thinking_sequence, daemon=True).start()
                     user_text = self.transcribe(followup_wav)
                     print(f"Follow-up Transcribed: {user_text}")
                     
                     if len(user_text) < 2:
                         # Mic picked up noise, but no actual speech. End conversation.
+                        self.is_thinking_sound_playing = False
                         if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
                             try:
                                 self.thinking_audio_process.terminate()
@@ -1073,12 +1076,8 @@ class BotGUI:
                         break
 
                     self.set_state(BotStates.THINKING, "Thinking...")
-                    if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
-                        try:
-                            self.thinking_audio_process.terminate()
-                        except Exception:
-                            pass
-                        self.thinking_audio_process = None
+                    # We DO NOT stop the thinking sound loop here.
+                    # Let it continue playing its current sound seamlessly while the LLM thinks.
                         
                     try:
                         with self.llm_lock:
