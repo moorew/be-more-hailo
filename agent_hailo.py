@@ -100,6 +100,7 @@ class BotGUI:
         self.stop_event = threading.Event()
         self.thinking_sound_active = threading.Event()
         self.tts_active = threading.Event()
+        self.manual_wake_event = threading.Event()
         self.current_state = BotStates.WARMUP
         self.last_state_change = time.time()
         
@@ -113,7 +114,6 @@ class BotGUI:
         self.llm_lock = threading.Lock()
         self.is_busy = False # True when interacting with human
         self._tts_aplay = None   # Shared aplay process kept alive across sentences in a turn
-        self.awaiting_followup = False  # True while "Tap to respond" prompt is on screen
         
         # Memory
         self.brain = Brain()
@@ -203,7 +203,7 @@ class BotGUI:
         # Only process clicks if not currently displaying a full-screen image
         if self.current_state == BotStates.DISPLAY_IMAGE:
             # Clicking an image clears it back to IDLE/SCREENSAVER
-            self.set_state(BotStates.IDLE, "Ready...")
+            self.set_state(BotStates.IDLE, "Tap to speak")
             return
 
         x, y = event.x, event.y
@@ -224,13 +224,15 @@ class BotGUI:
         elif x > win_w - corner_w and y > win_h - corner_h:
             print(f"[CLICK] Bottom-Right Hot Corner: Play Music (at {x},{y})")
             self.trigger_music()
-        elif self.awaiting_followup:
-            print(f"[CLICK] Center/Body: Follow-up tap (at {x},{y})")
-            if hasattr(self, '_followup_tap_event'):
-                self._followup_tap_event.set()
-        else:
-            print(f"[CLICK] Center/Body: Toggle Mute (at {x},{y})")
+        elif x < corner_w and y > win_h - corner_h:
+            print(f"[CLICK] Bottom-Left Hot Corner: Toggle Mute (at {x},{y})")
             self.mute_bmo()
+        else:
+            if self.current_state in [BotStates.IDLE, BotStates.SCREENSAVER]:
+                print(f"[CLICK] Center/Body: Manual Wake (at {x},{y})")
+                self.manual_wake_event.set()
+            else:
+                print(f"[CLICK] Center/Body: Ignored (current state: {self.current_state})")
 
     def mute_bmo(self, event=None):
         """Toggle audio mute and sets the whimsical 'shhh' face."""
@@ -268,7 +270,7 @@ class BotGUI:
             self.set_state(BotStates.HAPPY, "Unmuted!")
             def revert_state():
                 if self.current_state == BotStates.HAPPY:
-                    self.set_state(BotStates.IDLE, "Ready...")
+                    self.set_state(BotStates.IDLE, "Tap to speak")
             self.master.after(2000, revert_state)
 
     # --- ANIMATION & SOUND ENGINE ---
@@ -317,7 +319,7 @@ class BotGUI:
                 if proc in self.active_sounds:
                     self.active_sounds.remove(proc)
                 if category == "music" and self.current_state == BotStates.JAMMING:
-                    self.set_state(BotStates.IDLE, "Ready")
+                    self.set_state(BotStates.IDLE, "Tap to speak")
             threading.Thread(target=cleanup, daemon=True).start()
             return proc
         except Exception as e:
@@ -433,6 +435,11 @@ class BotGUI:
                     retry_count = 0 # Reset on success
                     last_data_time = time.time()
                     while not self.stop_event.is_set():
+                        if self.manual_wake_event.is_set():
+                            self.manual_wake_event.clear()
+                            print("[EARS] Wake triggered via tap.")
+                            return True
+
                         if self.is_busy:
                             time.sleep(0.5)
                             last_data_time = time.time() # Reset watchdog
@@ -724,7 +731,7 @@ class BotGUI:
                 # Return to IDLE only after the final sentence of the turn
                 if end_of_turn and self.current_state == BotStates.SPEAKING:
                     if msg is not None:
-                        self.set_state(BotStates.IDLE, "Ready...")
+                        self.set_state(BotStates.IDLE, "Tap to speak")
                     else:
                         self.current_state = BotStates.IDLE
                         self.current_frame = 0
@@ -836,103 +843,6 @@ class BotGUI:
         self.mouth_open = 0
         self.mouth_ema = 0
 
-    def wait_for_followup_tap(self, timeout_sec=10):
-        """Show a 'Tap to respond' prompt and wait for a screen tap to continue."""
-        self._followup_tap_event = threading.Event()
-        self.awaiting_followup = True
-        self.set_state(BotStates.IDLE, "Tap to respond...")
-        tapped = self._followup_tap_event.wait(timeout=timeout_sec)
-        self.awaiting_followup = False
-        return tapped
-
-    def record_followup(self, timeout_sec=8):
-        """
-        After BMO responds, listen briefly for a follow-up question.
-        Returns audio filepath if speech was detected within timeout_sec, or None.
-
-        Notes:
-        - A 1-second ignore window at the start lets the echo of BMO's own voice
-          die down before we start watching for human speech.
-        - A hard cap (max_deadline) ensures we always exit even if the mic
-          keeps picking up ambient noise and has_spoken stays True.
-        """
-        print("Listening for follow-up...")
-        frames = []
-        silent_chunks = 0
-        has_spoken = False
-        max_vol_seen = 0.0
-        last_speech_time = None  # Timestamp of the most recent above-threshold sample
-        ignore_until = time.time() + 0.8
-        deadline = time.time() + timeout_sec
-        max_deadline = time.time() + timeout_sec + 8
-
-        def callback(indata, frames_count, time_info, status):
-            nonlocal silent_chunks, has_spoken, max_vol_seen, last_speech_time
-            if time.time() < ignore_until:
-                return  # still in echo dead-zone — ignore all audio
-            vol = np.linalg.norm(indata) * 10
-            max_vol_seen = max(max_vol_seen, vol)
-
-            frames.append(indata.copy())
-
-            if vol < 55000:
-                silent_chunks += 1
-            else:
-                silent_chunks = 0
-                has_spoken = True
-                last_speech_time = time.time()  # stamp when speech is heard
-
-        try:
-            with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX,
-                                channels=1, dtype='int16', callback=callback):
-                while not self.stop_event.is_set():
-                    sd.sleep(50)
-                    now = time.time()
-                    # Primary exit: chunk-based silence (works in quiet rooms)
-                    if has_spoken and silent_chunks > 40:
-                        break
-                    # Fallback exit: time-based silence — if 1.5s have passed since the
-                    # user last spoke and silent_chunks never reached 40 (noisy room or
-                    # large ALSA blocksize makes the chunk counter unreliable).
-                    if has_spoken and last_speech_time and (now - last_speech_time > 1.5):
-                        print(f"[FOLLOWUP] Time-based silence exit (1.5s since last speech).")
-                        break
-                    # No speech in the listen window — give up quietly
-                    if now > deadline and not has_spoken:
-                        print(f"Follow-up timeout. Max mic volume detected was: {max_vol_seen:.2f} (threshold is 55000)")
-                        return None
-                    # Hard cap — break out and attempt transcription rather than discarding!
-                    if now > max_deadline:
-                        print(f"Follow-up max deadline hit. Breaking to transcribe. Max volume: {max_vol_seen:.2f}")
-                        break
-        except Exception as e:
-            print(f"Follow-up listen error: {e}")
-            return None
-
-        # Give ALSA/PortAudio time to fully close the stream context at OS level
-        time.sleep(0.5)
-
-        print(f"Speech finished! Max mic volume was: {max_vol_seen:.2f}")
-        if not has_spoken or not frames:
-            return None
-
-        filename = "followup.wav"
-        try:
-            # Filter out any empty arrays from the callback race before concatenating
-            valid_frames = [f for f in frames if f is not None and len(f) > 0]
-            if not valid_frames:
-                return None
-            audio_data = np.concatenate(valid_frames)
-        except Exception as e:
-            print(f"Follow-up audio concat error: {e}")
-            return None
-
-        with wave.open(filename, 'w') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(MIC_SAMPLE_RATE)
-            wf.writeframes(audio_data.tobytes())
-        return filename
 
 
 
@@ -971,7 +881,7 @@ class BotGUI:
                             self.set_state(BotStates.JAMMING, "Jamming!")
                             music_proc.wait()
                             if self.current_state == BotStates.JAMMING:
-                                self.set_state(BotStates.IDLE, "Ready")
+                                self.set_state(BotStates.IDLE, "Tap to speak")
                     threading.Thread(target=music_worker, daemon=True).start()
                     chunk = chunk.replace(json_match.group(0), '').strip()
             except Exception:
@@ -998,9 +908,9 @@ class BotGUI:
         greeting_proc = self.play_sound("greeting_sounds")
         if greeting_proc:
             # Wait for greeting to finish before going idle
-            threading.Thread(target=lambda: (greeting_proc.wait(), self.set_state(BotStates.IDLE, "Waiting...") if self.current_state == BotStates.SPEAKING else None), daemon=True).start()
+            threading.Thread(target=lambda: (greeting_proc.wait(), self.set_state(BotStates.IDLE, "Tap to speak") if self.current_state == BotStates.SPEAKING else None), daemon=True).start()
         else:
-            self.set_state(BotStates.IDLE, "Waiting...")
+            self.set_state(BotStates.IDLE, "Tap to speak")
 
         while not self.stop_event.is_set():
             # 1. Wait for Wake Word
@@ -1036,7 +946,7 @@ class BotGUI:
                 print(f"User Transcribed: {user_text}")
                 
                 if len(user_text) < 2:
-                    self.set_state(BotStates.IDLE, "Ready")
+                    self.set_state(BotStates.IDLE, "Tap to speak")
                     self.is_busy = False
                     self.is_thinking_sound_playing = False
                     if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
@@ -1184,60 +1094,7 @@ class BotGUI:
                     print(f"ERROR in LLM/TTS pipeline: {e}")
                     traceback.print_exc()
 
-                self.set_state(BotStates.IDLE, "Ready")
-
-                # Conversation follow-up — tap the screen to keep talking, up to 5 turns
-                for _followup_turn in range(5):
-                    tapped = self.wait_for_followup_tap(timeout_sec=10)
-                    if not tapped:
-                        self.set_state(BotStates.IDLE, "Waiting...")
-                        break
-
-                    # Record exactly like a normal wake-word turn — no echo issues
-                    self.set_state(BotStates.LISTENING, "Listening...")
-                    wav_file = self.record_audio()
-                    if not wav_file:
-                        self.set_state(BotStates.IDLE, "Waiting...")
-                        break
-
-                    self.set_state(BotStates.THINKING, "Transcribing...")
-                    self.is_thinking_sound_playing = True
-                    threading.Thread(target=play_thinking_sequence, daemon=True).start()
-                    user_text = self.transcribe(wav_file)
-                    print(f"Follow-up Transcribed: {user_text}")
-
-                    if len(user_text) < 2:
-                        self.is_thinking_sound_playing = False
-                        if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
-                            try:
-                                self.thinking_audio_process.terminate()
-                            except Exception:
-                                pass
-                            self.thinking_audio_process = None
-                        self.set_state(BotStates.IDLE, "Waiting...")
-                        break
-
-                    self.set_state(BotStates.THINKING, "Thinking...")
-
-                    try:
-                        with self.llm_lock:
-                            gen = self.brain.stream_think(user_text)
-                            try:
-                                chunk = next(gen)
-                                while True:
-                                    try:
-                                        next_chunk = next(gen)
-                                        self._handle_response_chunk(chunk, is_last=False)
-                                        chunk = next_chunk
-                                    except StopIteration:
-                                        self._handle_response_chunk(chunk, is_last=True)
-                                        break
-                            except StopIteration:
-                                pass
-                    except Exception as e:
-                        print(f"Follow-up LLM error: {e}")
-
-                    self.set_state(BotStates.IDLE, "Ready")
+                self.set_state(BotStates.IDLE, "Tap to speak")
                 
                 self.is_busy = False
                 # Guarantee a 1 second cool-down before we loop all the way back up
@@ -1304,14 +1161,14 @@ class BotGUI:
                             time.sleep(1.5)
                             self.display_remote_image(image_url, commentary_prompt=topic)
                         else:
-                            self.set_state(BotStates.IDLE, "Ready...")
+                            self.set_state(BotStates.IDLE, "Tap to speak")
                     else:
-                        self.set_state(BotStates.IDLE, "Ready...")
+                        self.set_state(BotStates.IDLE, "Tap to speak")
                 else:
-                    self.set_state(BotStates.IDLE, "Ready...")
+                    self.set_state(BotStates.IDLE, "Tap to speak")
             except Exception as e:
                 print(f"[BUTTON] Thought error: {e}")
-                self.set_state(BotStates.IDLE, "Ready...")
+                self.set_state(BotStates.IDLE, "Tap to speak")
             finally:
                 self.is_busy = False
 
@@ -1344,7 +1201,7 @@ class BotGUI:
                     music_proc.wait()
                     time.sleep(1) # Extra buffer
                     if self.current_state == BotStates.JAMMING:
-                        self.set_state(BotStates.IDLE, "Ready")
+                        self.set_state(BotStates.IDLE, "Tap to speak")
                 else:
                     self.speak("BMO wants to play music, but there are no songs loaded!")
             finally:
@@ -1411,7 +1268,7 @@ class BotGUI:
                 self.display_remote_image(url, commentary_prompt=search_term)
             except Exception as e:
                 print(f"[IMAGE] Generator failed: {e}")
-                self.set_state(BotStates.IDLE, "Ready...")
+                self.set_state(BotStates.IDLE, "Tap to speak")
             finally:
                 self.is_busy = False
 
@@ -1494,10 +1351,10 @@ class BotGUI:
                 
                 time.sleep(12)
                 if self.current_state == BotStates.DISPLAY_IMAGE:
-                    self.set_state(BotStates.IDLE, "Ready...")
+                    self.set_state(BotStates.IDLE, "Tap to speak")
             except Exception as e:
                 print(f"[IMAGE] Failed to display: {e}")
-                self.set_state(BotStates.IDLE, "Ready...")
+                self.set_state(BotStates.IDLE, "Tap to speak")
             finally:
                 self.is_busy = False
         
@@ -1625,7 +1482,7 @@ class BotGUI:
             if self.is_busy and (time.time() - self.last_state_change > 120):
                 print("[WATCHDOG] BMO was busy for > 120s. Force-clearing is_busy.")
                 self.is_busy = False
-                self.set_state(BotStates.IDLE, "Ready...")
+                self.set_state(BotStates.IDLE, "Tap to speak")
 
             if self.current_state != BotStates.SCREENSAVER or self.is_busy:
                 continue
