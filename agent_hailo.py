@@ -582,10 +582,11 @@ class BotGUI:
                 # Force-kill any lingering aplay thinking sounds before we try to take the hardware
                 self.is_thinking_sound_playing = False
                 if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
-                    try: 
+                    try:
                         self.thinking_audio_process.terminate()
-                        self.thinking_audio_process.wait(timeout=0.2)
+                        self.thinking_audio_process.wait(timeout=0.5)  # 0.5s gives ALSA time to release
                     except: pass
+                    self.thinking_audio_process = None  # Clear immediately to stop retry loop
                 
                 proc = subprocess.Popen(aplay_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
                 # Quick check if it failed immediately (e.g. Device Busy)
@@ -740,29 +741,27 @@ class BotGUI:
         frames = []
         silent_chunks = 0
         has_spoken = False
-        max_vol_seen = 0.0                        
-        # Increased echo dead-zone window from 0.2s to 0.8s to ensure 
-        # ALSA buffers are clear and speaker has physically stopped.
-        ignore_until = time.time() + 0.8          
-        deadline = time.time() + timeout_sec       
-        max_deadline = time.time() + timeout_sec + 8  
+        max_vol_seen = 0.0
+        last_speech_time = None  # Timestamp of the most recent above-threshold sample
+        ignore_until = time.time() + 0.8
+        deadline = time.time() + timeout_sec
+        max_deadline = time.time() + timeout_sec + 8
 
         def callback(indata, frames_count, time_info, status):
-            nonlocal silent_chunks, has_spoken, max_vol_seen
+            nonlocal silent_chunks, has_spoken, max_vol_seen, last_speech_time
             if time.time() < ignore_until:
                 return  # still in echo dead-zone — ignore all audio
             vol = np.linalg.norm(indata) * 10
             max_vol_seen = max(max_vol_seen, vol)
-            
+
             frames.append(indata.copy())
-            
-            # Use a slightly more robust threshold for follow-ups
-            # (55000 vs 50000) to avoid room noise triggers
-            if vol < 55000:  
+
+            if vol < 55000:
                 silent_chunks += 1
             else:
                 silent_chunks = 0
                 has_spoken = True
+                last_speech_time = time.time()  # stamp when speech is heard
 
         try:
             with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX,
@@ -770,12 +769,18 @@ class BotGUI:
                 while not self.stop_event.is_set():
                     sd.sleep(50)
                     now = time.time()
-                    # Human speech detected and gone quiet — we have a follow-up
+                    # Primary exit: chunk-based silence (works in quiet rooms)
                     if has_spoken and silent_chunks > 40:
+                        break
+                    # Fallback exit: time-based silence — if 1.5s have passed since the
+                    # user last spoke and silent_chunks never reached 40 (noisy room or
+                    # large ALSA blocksize makes the chunk counter unreliable).
+                    if has_spoken and last_speech_time and (now - last_speech_time > 1.5):
+                        print(f"[FOLLOWUP] Time-based silence exit (1.5s since last speech).")
                         break
                     # No speech in the listen window — give up quietly
                     if now > deadline and not has_spoken:
-                        print(f"Follow-up timeout. Max mic volume detected was: {max_vol_seen:.2f} (threshold is 50000)")
+                        print(f"Follow-up timeout. Max mic volume detected was: {max_vol_seen:.2f} (threshold is 55000)")
                         return None
                     # Hard cap — break out and attempt transcription rather than discarding!
                     if now > max_deadline:
@@ -1062,8 +1067,8 @@ class BotGUI:
 
                 self.set_state(BotStates.IDLE, "Ready")
 
-                # Conversation follow-up: let user reply repeatedly as long as they respond within 8 seconds
-                while True:
+                # Conversation follow-up: let user reply repeatedly, capped at 5 turns
+                for _followup_turn in range(5):
                     self.set_state(BotStates.LISTENING, "Still listening...")
                     followup_wav = self.record_followup(timeout_sec=8)
                     
