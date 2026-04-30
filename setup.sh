@@ -116,6 +116,7 @@ if [ ! -f "whisper.cpp/build/bin/whisper-cli" ]; then
 fi
 
 # Download Whisper base.en model
+# IMPORTANT: this filename must match WHISPER_MODEL in core/config.py
 if [ ! -f "models/ggml-base.en.bin" ]; then
     echo -e "${YELLOW}Downloading Whisper base.en model...${NC}"
     wget -q -O models/ggml-base.en.bin \

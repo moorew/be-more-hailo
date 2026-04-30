@@ -605,13 +605,16 @@ class BotGUI:
             print("[DEBUG] Failed to open audio device after retries.")
             return
 
+        interrupted = False
         try:
             start_time = time.time()
             chunk_idx = 0
 
             while not self.stop_event.is_set():
-                if self.is_muted: break
-                
+                if self.is_muted:
+                    interrupted = True
+                    break
+
                 # 1024 samples * 2 bytes per sample (S16_LE)
                 raw_chunk = stream.read(chunk_size * 2)
                 if not raw_chunk:
@@ -639,14 +642,26 @@ class BotGUI:
                 expected = (chunk_idx * chunk_size) / sample_rate
                 if expected > elapsed:
                     time.sleep(expected - elapsed)
+
+            # stop_event firing mid-stream is also an interruption
+            if self.stop_event.is_set():
+                interrupted = True
         finally:
             if proc.stdin:
                 try: proc.stdin.close()
                 except Exception: pass
-            try:
-                proc.terminate()
-                proc.wait(timeout=0.2)
-            except Exception: pass
+            if not interrupted:
+                # Natural end of stream — let aplay drain its 500ms ALSA buffer fully
+                # before we exit, otherwise the last words are cut off.
+                try:
+                    proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    try: proc.terminate()
+                    except Exception: pass
+            else:
+                # Muted or stopped — kill immediately for instant silence
+                try: proc.terminate()
+                except Exception: pass
             self.mouth_open = 0
             self.mouth_ema = 0 # Final reset to closed
 

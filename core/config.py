@@ -6,6 +6,10 @@ load_dotenv()
 
 # Shared Configuration for BMO
 
+# Resolve all file paths from the project root so both the GUI and the web app
+# use the correct binaries and models regardless of working directory.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # LLM Settings
 # To offload to your Linux server, change this to: "http://blackbox.clevercode.ts.net:11434/api/chat"
 # Make sure Ollama is running on the blackbox server and listening on 0.0.0.0
@@ -16,7 +20,7 @@ VISION_MODEL = "qwen2-vl-instruct:2b" # Legacy Ollama name (unused — VLM runs 
 
 # VLM (Vision Language Model) Settings — uses HailoRT Python API directly
 # The HEF file is a precompiled model binary from Hailo's model zoo
-VLM_HEF_PATH = os.environ.get("VLM_HEF_PATH", "./models/Qwen2-VL-2B-Instruct.hef")
+VLM_HEF_PATH = os.environ.get("VLM_HEF_PATH", os.path.join(_PROJECT_ROOT, "models", "Qwen2-VL-2B-Instruct.hef"))
 
 
 def get_system_prompt():
@@ -69,18 +73,26 @@ def get_system_prompt():
         "This will automatically trigger your internal chiptune synthesizers and start your dancing animation!"
     )
 
-# TTS Settings
-PIPER_CMD = "./piper/piper"
-PIPER_MODEL = "./piper/bmo.onnx"
+# TTS Settings — absolute paths ensure the BMO voice is always used,
+# regardless of which directory the process was launched from.
+PIPER_CMD = os.path.join(_PROJECT_ROOT, "piper", "piper")
+PIPER_MODEL = os.path.join(_PROJECT_ROOT, "piper", "bmo.onnx")
+
+# Validate at import time so a missing model surfaces immediately in the logs.
+if not os.path.exists(PIPER_MODEL):
+    print(f"[CONFIG] WARNING: BMO voice model not found at {PIPER_MODEL}!")
+else:
+    print(f"[CONFIG] BMO voice model: {PIPER_MODEL}")
 
 # STT Settings (CPU whisper.cpp)
-WHISPER_CMD = "./whisper.cpp/build/bin/whisper-cli"
-WHISPER_MODEL = "./models/ggml-small.en.bin"
+# setup.sh downloads ggml-base.en.bin — keep this in sync with that filename.
+WHISPER_CMD = os.path.join(_PROJECT_ROOT, "whisper.cpp", "build", "bin", "whisper-cli")
+WHISPER_MODEL = os.path.join(_PROJECT_ROOT, "models", "ggml-base.en.bin")
 
 # Audio Settings
 
 MIC_SAMPLE_RATE = 48000
-WAKE_WORD_MODEL = "./wakeword.onnx"
+WAKE_WORD_MODEL = os.path.join(_PROJECT_ROOT, "wakeword.onnx")
 WAKE_WORD_THRESHOLD = 0.35
 
 # Robustly find Audio Devices

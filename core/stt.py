@@ -27,7 +27,10 @@ def transcribe_audio(audio_filepath: str) -> str:
         )
 
         # 2. Run whisper.cpp
-        cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", temp_wav, "-nt"]
+        # -nt  no timestamps (we strip them anyway, skip the compute)
+        # -t 4 use all four Pi 5 CPU cores for faster inference
+        # -l en force English, skipping the language-detection pass
+        cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", temp_wav, "-nt", "-t", "4", "-l", "en"]
         logger.info(f"Running whisper.cpp transcription on the CPU... CMD: {' '.join(cmd)}")
         try:
             # stderr=DEVNULL: whisper prints verbose debug/timing info to stderr.
