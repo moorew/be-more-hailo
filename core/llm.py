@@ -265,8 +265,8 @@ class Brain:
             "what", "who", "when", "where", "find", "search", "tell me",
             "look up", "check", "is there", "did", "?",
         ]
-        has_realtime_kw = any(kw in lower_text for kw in realtime_keywords)
-        has_question = any(q in lower_text for q in question_markers)
+        has_realtime_kw = False  # Disabled pre-LLM web search for latency optimization
+        has_question = False
         search_injected = False
         if has_realtime_kw and has_question:
             try:
@@ -460,8 +460,8 @@ class Brain:
             "what", "who", "when", "where", "find", "search", "tell me",
             "look up", "check", "is there", "did", "?",
         ]
-        has_realtime_kw = any(kw in lower_text for kw in realtime_keywords)
-        has_question = any(q in lower_text for q in question_markers)
+        has_realtime_kw = False  # Disabled pre-LLM web search for latency optimization
+        has_question = False
         needs_search = has_realtime_kw and has_question
         search_injected = False
         if needs_search:
@@ -521,9 +521,9 @@ class Brain:
                                 buffer += chunk
                                 full_content += chunk
                                 
-                                # If buffer ends with punctuation or newline, yield it
-                                # Added commas and semicolons to start speaking even faster
-                                if any(buffer.endswith(punc) for punc in ['.', '!', '?', ',', ';', '\n']) or "\n\n" in buffer:
+                                # If buffer ends with strong punctuation or newline, yield it
+                                # Removed commas and semicolons to improve flow and prevent choppy speech
+                                if any(buffer.endswith(punc) for punc in ['.', '!', '?', '\n']) or "\n\n" in buffer:
                                     # Strip system prompt leakage
                                     cleaned = strip_prompt_leakage(buffer)
                                     # Ensure BMO spelling before yielding
