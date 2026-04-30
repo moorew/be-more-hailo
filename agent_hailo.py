@@ -112,6 +112,8 @@ class BotGUI:
         self.speak_lock = threading.Lock()
         self.llm_lock = threading.Lock()
         self.is_busy = False # True when interacting with human
+        self._tts_aplay = None   # Shared aplay process kept alive across sentences in a turn
+        self.awaiting_followup = False  # True while "Tap to respond" prompt is on screen
         
         # Memory
         self.brain = Brain()
@@ -222,6 +224,10 @@ class BotGUI:
         elif x > win_w - corner_w and y > win_h - corner_h:
             print(f"[CLICK] Bottom-Right Hot Corner: Play Music (at {x},{y})")
             self.trigger_music()
+        elif self.awaiting_followup:
+            print(f"[CLICK] Center/Body: Follow-up tap (at {x},{y})")
+            if hasattr(self, '_followup_tap_event'):
+                self._followup_tap_event.set()
         else:
             print(f"[CLICK] Center/Body: Toggle Mute (at {x},{y})")
             self.mute_bmo()
@@ -672,13 +678,14 @@ class BotGUI:
 
         clean_text = clean_text_for_speech(text)
         if not clean_text or not any(c.isalnum() for c in clean_text):
+            if end_of_turn:
+                self._end_tts_turn()
             return
 
         print(f"[DEBUG] Speaking: '{clean_text}'")
 
         with self.speak_lock:
             try:
-                # 1. Start streaming synthesis for instant response
                 import tempfile
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
                     tf.write(clean_text)
@@ -686,9 +693,9 @@ class BotGUI:
 
                 try:
                     piper_cmd = f"cat {temp_text_path} | {PIPER_CMD} --model {PIPER_MODEL} --output_raw"
-                    proc = subprocess.Popen(piper_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    piper_proc = subprocess.Popen(piper_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-                    # 2. Set SPEAKING state immediately
+                    # Set SPEAKING state immediately
                     if self.current_state != BotStates.DISPLAY_IMAGE:
                         if msg is not None:
                             self.set_state(BotStates.SPEAKING, msg)
@@ -697,23 +704,24 @@ class BotGUI:
                             self.current_frame = 0
                             self.last_state_change = time.time()
 
-                    # 3. Play stream with real-time lip-sync
+                    # Pipe into the shared turn-level aplay (no gap between sentences)
                     if not self.is_muted:
-                        self.play_audio_with_sync(proc.stdout)
+                        self._pipe_piper_to_turn_aplay(piper_proc.stdout, end_of_turn)
                     else:
-                        time.sleep(1.0) # Shorter wait for muted streaming chunks
+                        time.sleep(0.5)
+                        if end_of_turn:
+                            self._end_tts_turn()
 
-                    # Cleanup Piper process
                     try:
-                        proc.wait(timeout=2.0)
+                        piper_proc.wait(timeout=2.0)
                     except Exception:
-                        try: proc.terminate()
+                        try: piper_proc.terminate()
                         except: pass
                 finally:
                     if os.path.exists(temp_text_path):
                         os.remove(temp_text_path)
 
-                # 4. Return to IDLE state ONLY if this is the last chunk
+                # Return to IDLE only after the final sentence of the turn
                 if end_of_turn and self.current_state == BotStates.SPEAKING:
                     if msg is not None:
                         self.set_state(BotStates.IDLE, "Ready...")
@@ -725,6 +733,117 @@ class BotGUI:
             except Exception as e:
                 print(f"Hardware TTS Error: {e}")
                 self.mouth_open = 0
+                self._end_tts_turn(drain=False)
+
+    def _pipe_piper_to_turn_aplay(self, piper_stdout, end_of_turn):
+        """Stream Piper audio into a persistent aplay for gapless multi-sentence output.
+
+        Keeps the same aplay alive across all speak() calls in one turn so there is
+        no per-sentence startup gap. Only drains/closes aplay at end_of_turn=True.
+        """
+        from core.config import ALSA_DEVICE
+        sample_rate = 22050
+        chunk_size = 512
+
+        # Start aplay once at the beginning of a turn
+        if self._tts_aplay is None or self._tts_aplay.poll() is not None:
+            self.is_thinking_sound_playing = False
+            if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+                try:
+                    self.thinking_audio_process.terminate()
+                    self.thinking_audio_process.wait(timeout=0.5)
+                except: pass
+                self.thinking_audio_process = None
+
+            aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", str(sample_rate), "-f", "S16_LE",
+                         "-t", "raw", "-q", "--buffer-time=500000"]
+            for attempt in range(10):
+                try:
+                    self._tts_aplay = subprocess.Popen(aplay_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+                    time.sleep(0.05)
+                    if self._tts_aplay.poll() is not None:
+                        _, err = self._tts_aplay.communicate()
+                        if b"Device or resource busy" in err:
+                            print(f"[TTS] Audio device busy (attempt {attempt+1}/10), retrying...")
+                            time.sleep(0.3)
+                            continue
+                    break
+                except Exception as e:
+                    print(f"[TTS] Audio startup error: {e}")
+                    time.sleep(0.3)
+
+            if self._tts_aplay is None or self._tts_aplay.poll() is not None:
+                print("[TTS] Failed to open audio device after retries.")
+                return
+
+        # Stream Piper output into the live aplay with lip-sync
+        interrupted = False
+        start_time = time.time()
+        chunk_idx = 0
+
+        while not self.stop_event.is_set():
+            if self.is_muted:
+                interrupted = True
+                break
+            raw_chunk = piper_stdout.read(chunk_size * 2)
+            if not raw_chunk:
+                break
+            try:
+                self._tts_aplay.stdin.write(raw_chunk)
+                self._tts_aplay.stdin.flush()
+            except (BrokenPipeError, OSError) as e:
+                print(f"[TTS] aplay write error: {e}")
+                break
+
+            audio_chunk = np.frombuffer(raw_chunk, dtype=np.int16)
+            vol = np.sqrt(np.mean(audio_chunk.astype(np.float32)**2))
+            if self.current_state == BotStates.SPEAKING:
+                self.mouth_open = min(60, vol / 25)
+
+            chunk_idx += 1
+            elapsed = time.time() - start_time
+            expected = (chunk_idx * chunk_size) / sample_rate
+            if expected > elapsed:
+                time.sleep(expected - elapsed)
+
+        if self.stop_event.is_set():
+            interrupted = True
+
+        if interrupted:
+            self._end_tts_turn(drain=False)
+        elif end_of_turn:
+            self._end_tts_turn(drain=True)
+        # else: leave aplay open — next sentence streams in without a gap
+
+    def _end_tts_turn(self, drain=True):
+        """Close the shared TTS aplay at the end of a speaking turn."""
+        if self._tts_aplay is None:
+            return
+        try:
+            self._tts_aplay.stdin.close()
+        except Exception:
+            pass
+        if drain:
+            try:
+                self._tts_aplay.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                try: self._tts_aplay.terminate()
+                except: pass
+        else:
+            try: self._tts_aplay.terminate()
+            except: pass
+        self._tts_aplay = None
+        self.mouth_open = 0
+        self.mouth_ema = 0
+
+    def wait_for_followup_tap(self, timeout_sec=10):
+        """Show a 'Tap to respond' prompt and wait for a screen tap to continue."""
+        self._followup_tap_event = threading.Event()
+        self.awaiting_followup = True
+        self.set_state(BotStates.IDLE, "Tap to respond...")
+        tapped = self._followup_tap_event.wait(timeout=timeout_sec)
+        self.awaiting_followup = False
+        return tapped
 
     def record_followup(self, timeout_sec=8):
         """
@@ -1067,24 +1186,27 @@ class BotGUI:
 
                 self.set_state(BotStates.IDLE, "Ready")
 
-                # Conversation follow-up: let user reply repeatedly, capped at 5 turns
+                # Conversation follow-up — tap the screen to keep talking, up to 5 turns
                 for _followup_turn in range(5):
-                    self.set_state(BotStates.LISTENING, "Still listening...")
-                    followup_wav = self.record_followup(timeout_sec=8)
-                    
-                    if not followup_wav:
-                        # User didn't reply within 8 seconds, end conversation thread
+                    tapped = self.wait_for_followup_tap(timeout_sec=10)
+                    if not tapped:
                         self.set_state(BotStates.IDLE, "Waiting...")
                         break
-                        
+
+                    # Record exactly like a normal wake-word turn — no echo issues
+                    self.set_state(BotStates.LISTENING, "Listening...")
+                    wav_file = self.record_audio()
+                    if not wav_file:
+                        self.set_state(BotStates.IDLE, "Waiting...")
+                        break
+
                     self.set_state(BotStates.THINKING, "Transcribing...")
                     self.is_thinking_sound_playing = True
                     threading.Thread(target=play_thinking_sequence, daemon=True).start()
-                    user_text = self.transcribe(followup_wav)
+                    user_text = self.transcribe(wav_file)
                     print(f"Follow-up Transcribed: {user_text}")
-                    
+
                     if len(user_text) < 2:
-                        # Mic picked up noise, but no actual speech. End conversation.
                         self.is_thinking_sound_playing = False
                         if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
                             try:
@@ -1096,9 +1218,7 @@ class BotGUI:
                         break
 
                     self.set_state(BotStates.THINKING, "Thinking...")
-                    # We DO NOT stop the thinking sound loop here.
-                    # Let it continue playing its current sound seamlessly while the LLM thinks.
-                        
+
                     try:
                         with self.llm_lock:
                             gen = self.brain.stream_think(user_text)
@@ -1117,9 +1237,7 @@ class BotGUI:
                     except Exception as e:
                         print(f"Follow-up LLM error: {e}")
 
-                        
                     self.set_state(BotStates.IDLE, "Ready")
-                    # Loop back around and listen again!
                 
                 self.is_busy = False
                 # Guarantee a 1 second cool-down before we loop all the way back up
