@@ -28,7 +28,7 @@ STT runs on the CPU by design. Pushing 16kHz audio arrays through the Hailo PCIe
 ## Interfaces
 
 ### On-Device (`agent_hailo.py`)
-BMO in its natural habitat. Plug in a screen, a USB mic, and a USB speaker and you get the full experience: animated faces, wake word detection, and the whole listen → think → speak loop running locally. After each response, BMO stays in "Still listening..." mode for 8 seconds so you can keep a conversation going without re-saying the wake word every time.
+BMO in its natural habitat. Plug in a screen, a USB mic, and a USB speaker and you get the full experience: animated faces, wake word detection, and the whole listen → think → speak loop running locally. After a response, tap the screen (or the tap button) to speak again without repeating the wake word — the screen shows "Tap to speak" when BMO is ready.
 
 ### Web (`web_app.py`)
 A FastAPI server with a browser-based UI — useful if you want to talk to BMO from another room, or you'd rather not have a screen hanging off your Pi. Hold a button to record, and BMO responds with audio in your browser.
@@ -93,11 +93,14 @@ Your BMO is then reachable from your phone, laptop, or any device on your Tailne
 
 ## Features & Recent Updates
 
+- **Gapless TTS:** Piper is held open for the entire speaking turn — sentences stream out one after another with no startup gap between them, so long answers sound natural rather than staccato.
+- **Tap to Speak:** After BMO answers, tap the screen to speak again immediately without re-saying the wake word. BMO shows "Tap to speak" when ready.
+- **Persistent Chat History:** Conversations are saved to `memory.json` and reloaded on restart so BMO remembers previous exchanges.
 - **Web UI Refactor:** Fully responsive, mobile-friendly interface for interacting with BMO from any device.
 - **Improved Aliveness:** Interactive "Pondering" mode — BMO will periodically share fun facts, news, and quirky thoughts when idle.
 - **Enhanced Search:** BMO can now search for current news and regional information (Canada/Ontario prioritized).
 - **Audio Stability:** Fast nearest-neighbor resampling and improved ALSA contention handling for more reliable wake-word detection and voice recording.
-- **Desktop Ready:** Includes a `.desktop` launcher and automated GUI startup.
+- **Desktop Ready:** Includes a `.desktop` launcher (`install.sh` creates it automatically).
 
 ---
 
@@ -115,7 +118,7 @@ be-more-agent/
 │   └── stt.py              # Speech-to-text via whisper.cpp
 ├── templates/              # Jinja2 HTML templates for the web UI
 ├── static/                 # CSS, JS, favicon
-├── setup.sh                # Automated installation script
+├── install.sh              # Automated installation script
 ├── setup_services.sh       # Installs systemd background services
 ├── start_web.sh            # Starts the web server
 ├── start_agent.sh          # Starts the on-device GUI
@@ -156,7 +159,7 @@ be-more-agent/
 ### Automated install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/moorew/be-more-hailo/main/setup.sh | bash
+curl -sSL https://raw.githubusercontent.com/moorew/be-more-hailo/main/install.sh | bash
 cd be-more-agent
 ```
 
@@ -179,7 +182,7 @@ The script handles everything:
 git clone https://github.com/moorew/be-more-hailo.git be-more-agent
 cd be-more-agent
 chmod +x *.sh
-./setup.sh
+./install.sh
 ```
 
 ---
@@ -332,7 +335,7 @@ If the service isn't set up yet, start it manually:
 export OLLAMA_HOST=0.0.0.0:8000
 hailo-ollama serve
 ```
-If `hailo-ollama` isn't found, re-run `./setup.sh` — it will build and install it from source.
+If `hailo-ollama` isn't found, re-run `./install.sh` — it will build and install it from source.
 
 **Hailo NPU not detected (`/dev/hailo0` missing)**
 
@@ -364,7 +367,7 @@ wget -O models/Qwen2-VL-2B-Instruct.hef \
 
 **TTS Audio Stuttering / Staccato Speech**
 
-If Piper sounds like it's "tripping" or only playing short bursts of noise, it's likely an ALSA buffer underrun caused by high CPU/NPU load. We increased the default buffer to 200ms in `agent_hailo.py` (`--buffer-time=200000`) to solve this. If it persists, ensure you are using the official 27W Power Supply.
+If Piper sounds like it's "tripping" or only playing short bursts of noise, it's likely an ALSA buffer underrun caused by high CPU/NPU load. The default ALSA buffer is 500ms (`--buffer-time=500000`) in `agent_hailo.py`. If it persists, ensure you are using the official 27W Power Supply.
 
 **Mic stops listening (Watchdog Trigger)**
 

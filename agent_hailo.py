@@ -810,9 +810,11 @@ class BotGUI:
             except Exception:
                 pass
 
-        # Wait for reader thread to pump all remaining audio into aplay
+        # Wait for reader thread to pump all remaining audio into aplay.
+        # The thread paces itself at real-time audio speed, so a 60-second
+        # response takes ~60 seconds — use a generous timeout here.
         if self._piper_reader_thread is not None:
-            self._piper_reader_thread.join(timeout=8.0)
+            self._piper_reader_thread.join(timeout=300.0)
             self._piper_reader_thread = None
 
         # Reap Piper process
