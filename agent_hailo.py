@@ -1359,8 +1359,6 @@ class BotGUI:
                 url = search_images(search_term)
                 
                 if not url:
-                    # Fallback to a placeholder if search fails
-                    import random
                     lock_id = random.randint(1, 100000)
                     url = f"https://loremflickr.com/640/480/{search_term.replace(' ', ',')}?lock={lock_id}"
                 
