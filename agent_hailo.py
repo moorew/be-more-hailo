@@ -114,6 +114,8 @@ class BotGUI:
         self.llm_lock = threading.Lock()
         self.is_busy = False # True when interacting with human
         self._tts_aplay = None   # Shared aplay process kept alive across sentences in a turn
+        self._piper_proc = None  # Persistent Piper process for the turn
+        self._piper_reader_thread = None  # Thread piping Piper stdout → aplay stdin
         
         # Memory
         self.brain = Brain()
@@ -259,6 +261,9 @@ class BotGUI:
                 except Exception:
                     pass
                 self.thinking_audio_process = None
+
+            # Kill any active TTS pipeline immediately on mute
+            self._kill_tts_pipeline()
 
             # After 3 seconds, resume natural state
             def revert_state():
@@ -679,122 +684,85 @@ class BotGUI:
             self.mouth_open = 0
             self.mouth_ema = 0 # Final reset to closed
 
-    def speak(self, text, msg="Speaking...", end_of_turn=True):
-        from core.tts import clean_text_for_speech
-        from core.config import PIPER_CMD, PIPER_MODEL
+    def _start_tts_turn(self):
+        """Start a persistent Piper + aplay pipeline for a single speaking turn.
 
-        clean_text = clean_text_for_speech(text)
-        if not clean_text or not any(c.isalnum() for c in clean_text):
-            if end_of_turn:
-                self._end_tts_turn()
+        Piper is kept alive for the entire turn so the TTS model is loaded only
+        once.  Every sentence is written to Piper's stdin; a reader thread pumps
+        the raw PCM output into aplay continuously — no per-sentence startup gap.
+        """
+        from core.config import PIPER_CMD, PIPER_MODEL, ALSA_DEVICE
+
+        # Hard-kill any leftover pipeline from a previous turn
+        self._kill_tts_pipeline()
+
+        # Release ALSA by stopping the thinking sound before we try to open aplay
+        self.is_thinking_sound_playing = False
+        if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+            try:
+                self.thinking_audio_process.terminate()
+                self.thinking_audio_process.wait(timeout=0.5)
+            except Exception:
+                pass
+            self.thinking_audio_process = None
+
+        # Start aplay (retry on busy ALSA device)
+        aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", "22050", "-f", "S16_LE",
+                     "-t", "raw", "-q", "--buffer-time=500000"]
+        for attempt in range(10):
+            try:
+                self._tts_aplay = subprocess.Popen(aplay_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+                time.sleep(0.05)
+                if self._tts_aplay.poll() is not None:
+                    _, err = self._tts_aplay.communicate()
+                    if b"Device or resource busy" in err:
+                        print(f"[TTS] Audio device busy (attempt {attempt+1}/10), retrying...")
+                        time.sleep(0.3)
+                        continue
+                break
+            except Exception as e:
+                print(f"[TTS] aplay startup error: {e}")
+                time.sleep(0.3)
+
+        if self._tts_aplay is None or self._tts_aplay.poll() is not None:
+            print("[TTS] Failed to open audio device after retries.")
+            self._tts_aplay = None
             return
 
-        print(f"[DEBUG] Speaking: '{clean_text}'")
+        # Start Piper — reads text lines from stdin, writes raw PCM to stdout
+        self._piper_proc = subprocess.Popen(
+            [PIPER_CMD, "--model", PIPER_MODEL, "--output_raw"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
 
-        with self.speak_lock:
-            try:
-                import tempfile
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
-                    tf.write(clean_text)
-                    temp_text_path = tf.name
+        # Reader thread: Piper stdout → aplay stdin (with lip-sync)
+        self._piper_reader_thread = threading.Thread(
+            target=self._piper_to_aplay_loop, daemon=True
+        )
+        self._piper_reader_thread.start()
 
-                try:
-                    piper_cmd = f"cat {temp_text_path} | {PIPER_CMD} --model {PIPER_MODEL} --output_raw"
-                    piper_proc = subprocess.Popen(piper_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-                    # Set SPEAKING state immediately
-                    if self.current_state != BotStates.DISPLAY_IMAGE:
-                        if msg is not None:
-                            self.set_state(BotStates.SPEAKING, msg)
-                        elif self.current_state != BotStates.SPEAKING:
-                            self.current_state = BotStates.SPEAKING
-                            self.current_frame = 0
-                            self.last_state_change = time.time()
-
-                    # Pipe into the shared turn-level aplay (no gap between sentences)
-                    if not self.is_muted:
-                        self._pipe_piper_to_turn_aplay(piper_proc.stdout, end_of_turn)
-                    else:
-                        time.sleep(0.5)
-                        if end_of_turn:
-                            self._end_tts_turn()
-
-                    try:
-                        piper_proc.wait(timeout=2.0)
-                    except Exception:
-                        try: piper_proc.terminate()
-                        except: pass
-                finally:
-                    if os.path.exists(temp_text_path):
-                        os.remove(temp_text_path)
-
-                # Return to IDLE only after the final sentence of the turn
-                if end_of_turn and self.current_state == BotStates.SPEAKING:
-                    if msg is not None:
-                        self.set_state(BotStates.IDLE, "Tap to speak")
-                    else:
-                        self.current_state = BotStates.IDLE
-                        self.current_frame = 0
-                        self.last_state_change = time.time()
-
-            except Exception as e:
-                print(f"Hardware TTS Error: {e}")
-                self.mouth_open = 0
-                self._end_tts_turn(drain=False)
-
-    def _pipe_piper_to_turn_aplay(self, piper_stdout, end_of_turn):
-        """Stream Piper audio into a persistent aplay for gapless multi-sentence output.
-
-        Keeps the same aplay alive across all speak() calls in one turn so there is
-        no per-sentence startup gap. Only drains/closes aplay at end_of_turn=True.
-        """
-        from core.config import ALSA_DEVICE
-        sample_rate = 22050
-        chunk_size = 512
-
-        # Start aplay once at the beginning of a turn
-        if self._tts_aplay is None or self._tts_aplay.poll() is not None:
-            self.is_thinking_sound_playing = False
-            if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
-                try:
-                    self.thinking_audio_process.terminate()
-                    self.thinking_audio_process.wait(timeout=0.5)
-                except: pass
-                self.thinking_audio_process = None
-
-            aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", str(sample_rate), "-f", "S16_LE",
-                         "-t", "raw", "-q", "--buffer-time=500000"]
-            for attempt in range(10):
-                try:
-                    self._tts_aplay = subprocess.Popen(aplay_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-                    time.sleep(0.05)
-                    if self._tts_aplay.poll() is not None:
-                        _, err = self._tts_aplay.communicate()
-                        if b"Device or resource busy" in err:
-                            print(f"[TTS] Audio device busy (attempt {attempt+1}/10), retrying...")
-                            time.sleep(0.3)
-                            continue
-                    break
-                except Exception as e:
-                    print(f"[TTS] Audio startup error: {e}")
-                    time.sleep(0.3)
-
-            if self._tts_aplay is None or self._tts_aplay.poll() is not None:
-                print("[TTS] Failed to open audio device after retries.")
-                return
-
-        # Stream Piper output into the live aplay with lip-sync
-        interrupted = False
-        start_time = time.time()
+    def _piper_to_aplay_loop(self):
+        """Read Piper's raw PCM output and stream it into aplay with lip-sync."""
+        chunk_size = 512  # samples (~23 ms at 22050 Hz)
+        start_time = None
         chunk_idx = 0
 
-        while not self.stop_event.is_set():
-            if self.is_muted:
-                interrupted = True
+        while True:
+            try:
+                raw_chunk = self._piper_proc.stdout.read(chunk_size * 2)
+            except Exception:
                 break
-            raw_chunk = piper_stdout.read(chunk_size * 2)
             if not raw_chunk:
-                break
+                break  # Piper stdout closed — all audio transferred
+
+            if self.is_muted:
+                break  # mute_bmo will kill the pipeline
+
+            if start_time is None:
+                start_time = time.time()
+
             try:
                 self._tts_aplay.stdin.write(raw_chunk)
                 self._tts_aplay.stdin.flush()
@@ -802,46 +770,181 @@ class BotGUI:
                 print(f"[TTS] aplay write error: {e}")
                 break
 
+            # Lip-sync: map RMS volume → mouth_open
             audio_chunk = np.frombuffer(raw_chunk, dtype=np.int16)
-            vol = np.sqrt(np.mean(audio_chunk.astype(np.float32)**2))
+            vol = np.sqrt(np.mean(audio_chunk.astype(np.float32) ** 2))
             if self.current_state == BotStates.SPEAKING:
                 self.mouth_open = min(60, vol / 25)
 
+            # Pace writes to match real-time playback (natural back-pressure)
             chunk_idx += 1
             elapsed = time.time() - start_time
-            expected = (chunk_idx * chunk_size) / sample_rate
+            expected = (chunk_idx * chunk_size) / 22050
             if expected > elapsed:
                 time.sleep(expected - elapsed)
 
-        if self.stop_event.is_set():
-            interrupted = True
-
-        if interrupted:
-            self._end_tts_turn(drain=False)
-        elif end_of_turn:
-            self._end_tts_turn(drain=True)
-        # else: leave aplay open — next sentence streams in without a gap
-
-    def _end_tts_turn(self, drain=True):
-        """Close the shared TTS aplay at the end of a speaking turn."""
-        if self._tts_aplay is None:
-            return
-        try:
-            self._tts_aplay.stdin.close()
-        except Exception:
-            pass
-        if drain:
-            try:
-                self._tts_aplay.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
-                try: self._tts_aplay.terminate()
-                except: pass
-        else:
-            try: self._tts_aplay.terminate()
-            except: pass
-        self._tts_aplay = None
         self.mouth_open = 0
         self.mouth_ema = 0
+
+    def _write_to_piper(self, text):
+        """Write one line of cleaned text to the persistent Piper process."""
+        if self._piper_proc is None or self._piper_proc.poll() is not None:
+            return
+        try:
+            self._piper_proc.stdin.write((text + "\n").encode("utf-8"))
+            self._piper_proc.stdin.flush()
+        except (BrokenPipeError, OSError) as e:
+            print(f"[TTS] Piper stdin write error: {e}")
+
+    def _end_tts_turn(self, drain=True):
+        """Close the Piper + aplay pipeline at the end of a speaking turn.
+
+        Closing Piper's stdin signals it to finish processing.  We then wait for
+        the reader thread to transfer all remaining audio into aplay, then close
+        aplay's stdin and optionally wait for its hardware buffer to drain.
+        """
+        # Signal Piper to finish — it will write remaining audio then close stdout
+        if self._piper_proc is not None:
+            try:
+                self._piper_proc.stdin.close()
+            except Exception:
+                pass
+
+        # Wait for reader thread to pump all remaining audio into aplay
+        if self._piper_reader_thread is not None:
+            self._piper_reader_thread.join(timeout=8.0)
+            self._piper_reader_thread = None
+
+        # Reap Piper process
+        if self._piper_proc is not None:
+            try:
+                self._piper_proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    self._piper_proc.terminate()
+                except Exception:
+                    pass
+            self._piper_proc = None
+
+        # Close aplay — it will drain its hardware buffer then exit
+        if self._tts_aplay is not None:
+            try:
+                self._tts_aplay.stdin.close()
+            except Exception:
+                pass
+            if drain:
+                try:
+                    self._tts_aplay.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    try:
+                        self._tts_aplay.terminate()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    self._tts_aplay.terminate()
+                except Exception:
+                    pass
+            self._tts_aplay = None
+
+        self.mouth_open = 0
+        self.mouth_ema = 0
+
+    def _kill_tts_pipeline(self):
+        """Hard-kill the Piper + aplay pipeline without draining (used by mute / turn start)."""
+        if self._piper_proc is not None:
+            try:
+                self._piper_proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                self._piper_proc.terminate()
+            except Exception:
+                pass
+
+        if self._piper_reader_thread is not None:
+            self._piper_reader_thread.join(timeout=1.0)
+            self._piper_reader_thread = None
+
+        if self._piper_proc is not None:
+            try:
+                self._piper_proc.wait(timeout=1.0)
+            except Exception:
+                pass
+            self._piper_proc = None
+
+        if self._tts_aplay is not None:
+            try:
+                self._tts_aplay.terminate()
+            except Exception:
+                pass
+            self._tts_aplay = None
+
+        self.mouth_open = 0
+        self.mouth_ema = 0
+
+    def speak(self, text, msg="Speaking...", end_of_turn=True):
+        """Synthesize text via Piper and play it through aplay.
+
+        Uses a persistent Piper process for the entire turn so the TTS model is
+        loaded only once — eliminating the per-sentence startup gap that caused
+        unnatural pauses in multi-sentence responses.
+        """
+        from core.tts import clean_text_for_speech
+
+        clean_text = clean_text_for_speech(text)
+        if not clean_text or not any(c.isalnum() for c in clean_text):
+            if end_of_turn:
+                self._end_tts_turn()
+            return
+
+        print(f"[TTS] {'Final' if end_of_turn else 'Mid'}: '{clean_text[:70]}'")
+
+        # Transition to SPEAKING state immediately for responsive lip-sync
+        if self.current_state != BotStates.DISPLAY_IMAGE:
+            if msg is not None:
+                self.set_state(BotStates.SPEAKING, msg)
+            elif self.current_state != BotStates.SPEAKING:
+                self.current_state = BotStates.SPEAKING
+                self.current_frame = 0
+                self.last_state_change = time.time()
+
+        with self.speak_lock:
+            try:
+                if not self.is_muted:
+                    # Lazily start the pipeline on the first sentence of a turn
+                    if self._piper_proc is None or self._piper_proc.poll() is not None:
+                        self._start_tts_turn()
+                        if self._piper_proc is None:
+                            # Failed to start — skip audio, still transition state
+                            if end_of_turn and self.current_state == BotStates.SPEAKING:
+                                self.set_state(BotStates.IDLE, "Tap to speak")
+                            return
+
+                    # Write text to the running Piper (returns immediately)
+                    self._write_to_piper(clean_text)
+
+                    if end_of_turn:
+                        # Block until all audio has finished playing
+                        self._end_tts_turn(drain=True)
+                    # else: pipeline stays open, next sentence streams in gaplessly
+                else:
+                    time.sleep(0.2)
+                    if end_of_turn:
+                        self._end_tts_turn(drain=False)
+            except Exception as e:
+                print(f"[TTS] speak() error: {e}")
+                self.mouth_open = 0
+                self._end_tts_turn(drain=False)
+
+        # Return face to IDLE after the final sentence of the turn
+        if end_of_turn and self.current_state == BotStates.SPEAKING:
+            if msg is not None:
+                self.set_state(BotStates.IDLE, "Tap to speak")
+            else:
+                self.current_state = BotStates.IDLE
+                self.current_frame = 0
+                self.last_state_change = time.time()
 
 
 
@@ -1095,13 +1198,13 @@ class BotGUI:
                     traceback.print_exc()
 
                 self.set_state(BotStates.IDLE, "Tap to speak")
-                
-                self.is_busy = False
-                # Guarantee a 1 second cool-down before we loop all the way back up
 
-                # and call wait_for_wakeword(). This ensures ALSA capture locks are fully
-                # released by the kernel, preventing PaErrorCode -9999 crashes.
-                time.sleep(1.0)
+                self.is_busy = False
+                # 1-second ALSA cooldown before re-opening the mic stream.
+                # Use manual_wake_event.wait() instead of sleep() so a tap during
+                # this window is not lost — it will be caught by wait_for_wakeword()
+                # on the very next loop iteration.
+                self.manual_wake_event.wait(timeout=1.0)
 
     def trigger_random_thought(self, event=None):
         """Manually trigger a random pondering thought (BMO's red button)."""
