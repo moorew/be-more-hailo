@@ -23,12 +23,16 @@ VISION_MODEL = "qwen2-vl-instruct:2b" # Legacy Ollama name (unused — VLM runs 
 VLM_HEF_PATH = os.environ.get("VLM_HEF_PATH", os.path.join(_PROJECT_ROOT, "models", "Qwen2-VL-2B-Instruct.hef"))
 
 
+def get_current_context() -> str:
+    """Per-turn time/date string. Injected into the user message so the
+    system prompt itself stays byte-stable and the LLM's KV cache prefix
+    can be reused across turns."""
+    now = datetime.datetime.now()
+    return f"Now: {now.strftime('%I:%M %p')}, {now.strftime('%A, %B %d, %Y')}"
+
+
 def get_system_prompt():
-    current_time = datetime.datetime.now().strftime("%I:%M %p")
-    current_date = datetime.datetime.now().strftime("%A, %B %d, %Y")
-    
     return (
-        f"The current time is {current_time} and the date is {current_date}. "
         "Role and Identity: "
         "Your name is BMO. You are a sweet, helpful, and cheerful little robot friend. You live with the user and love helping them with their daily tasks. "
         "You are a genderless robot. You do not have a gender. Use they/them pronouns if necessary, or simply refer to yourself as BMO. Never call yourself a boy or a girl. "
@@ -127,7 +131,26 @@ def find_audio_devices():
                 
     return mic_idx, speaker_name
 
-MIC_DEVICE_INDEX, ALSA_DEVICE = find_audio_devices()
+# Audio devices are discovered lazily — modules that import config (e.g.
+# core/llm.py, core/tts.py) shouldn't pay sounddevice/PortAudio init cost.
+_audio_devices_cache = None
+
+
+def _audio_devices():
+    global _audio_devices_cache
+    if _audio_devices_cache is None:
+        _audio_devices_cache = find_audio_devices()
+    return _audio_devices_cache
+
+
+def __getattr__(name):
+    """Module-level lazy attributes (PEP 562)."""
+    if name == "MIC_DEVICE_INDEX":
+        return _audio_devices()[0]
+    if name == "ALSA_DEVICE":
+        return _audio_devices()[1]
+    raise AttributeError(f"module 'core.config' has no attribute {name!r}")
+
 
 # Software volume scalar (0.0–1.0).  aplay on plughw bypasses PulseAudio so
 # the Gnome volume slider has no effect — adjust this value to change BMO's

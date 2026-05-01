@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import json
-from .config import PIPER_CMD, PIPER_MODEL, ALSA_DEVICE
+from .config import PIPER_CMD, PIPER_MODEL  # ALSA_DEVICE imported lazily inside play_audio_on_hardware
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +117,7 @@ def clean_text_for_speech(text: str) -> str:
 
 def play_audio_on_hardware(text: str):
     """Plays audio directly out of the Pi's speakers using Piper and aplay."""
+    from .config import ALSA_DEVICE  # Lazy resolution — defers PortAudio init
     try:
         clean_text = clean_text_for_speech(text)
         if not clean_text or not any(c.isalnum() for c in clean_text):

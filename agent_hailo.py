@@ -114,10 +114,19 @@ class BotGUI:
         # Concurrency & Resource Management
         self.speak_lock = threading.Lock()
         self.llm_lock = threading.Lock()
-        self.is_busy = False # True when interacting with human
+        self._busy_lock = threading.Lock()  # Authoritative claim — use _try_claim_busy/_release_busy
+        self.is_busy = False  # Read-only mirror of _busy_lock state for legacy read sites
         self._tts_aplay = None   # Shared aplay process kept alive across sentences in a turn
         self._piper_proc = None  # Persistent Piper process for the turn
         self._piper_reader_thread = None  # Thread piping Piper stdout → aplay stdin
+
+        # Thinking sound (initialized here to avoid hasattr/getattr workarounds)
+        self.is_thinking_sound_playing = False
+        self.thinking_audio_process = None
+
+        # Per-turn LLM-action handoffs from _handle_response_chunk → main_loop
+        self.taking_photo = False
+        self.current_image_url = None
         
         # Memory
         self.brain = Brain()
@@ -218,6 +227,21 @@ class BotGUI:
         if msg:
             self.master.after(0, lambda: self.status_label.config(text=msg))
 
+    # ── Busy-lock helpers ────────────────────────────────────────────────────
+    def _try_claim_busy(self) -> bool:
+        """Atomic check-and-set. Returns True iff this thread now owns the busy state."""
+        if self._busy_lock.acquire(blocking=False):
+            self.is_busy = True
+            return True
+        return False
+
+    def _release_busy(self):
+        """Release the busy lock. Safe to call from any thread; idempotent."""
+        self.is_busy = False
+        try:
+            self._busy_lock.release()
+        except RuntimeError:
+            pass  # already unlocked
 
     def handle_click(self, event):
         """Map screen clicks to hot corners, mouth-tap mute, or tap-to-speak."""
@@ -313,33 +337,37 @@ class BotGUI:
             pass
 
     def mute_bmo(self, event=None):
-        """Toggle audio mute and sets the whimsical 'shhh' face."""
+        """Toggle audio mute. Heavy cleanup is dispatched to a worker so the
+        Tk thread (and the rest of the UI) never blocks on proc.wait/join."""
         self.is_muted = not self.is_muted
         if self.is_muted:
             self.mute_label.place(relx=0.95, rely=0.05, anchor=tk.NE)
-            
-            # Stop all active audio processes cleanly
-            for proc in self.active_sounds[:]: # Copy to avoid mutation during iteration
-                try:
-                    proc.terminate()
-                    print(f"[MUTE] Terminated active sound process: {proc.pid}")
-                except Exception:
-                    pass
-            self.active_sounds = []
 
             old_state = self.current_state
             self.set_state(BotStates.SHHH, "Muted")
-            
-            # Stop background thinking audio loops too if they're active
-            if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
-                try:
-                    self.thinking_audio_process.terminate()
-                except Exception:
-                    pass
-                self.thinking_audio_process = None
 
-            # Kill any active TTS pipeline immediately on mute
-            self._kill_tts_pipeline()
+            # Snapshot processes to terminate, then clear lists immediately so
+            # the worker can do its slow work without further race exposure.
+            sounds_to_kill = self.active_sounds[:]
+            self.active_sounds = []
+            self.is_thinking_sound_playing = False
+            thinking_proc = self.thinking_audio_process
+            self.thinking_audio_process = None
+
+            def _mute_cleanup_worker():
+                for proc in sounds_to_kill:
+                    try:
+                        proc.terminate()
+                        print(f"[MUTE] Terminated active sound process: {proc.pid}")
+                    except Exception:
+                        pass
+                if thinking_proc is not None:
+                    try:
+                        thinking_proc.terminate()
+                    except Exception:
+                        pass
+                self._kill_tts_pipeline()
+            threading.Thread(target=_mute_cleanup_worker, daemon=True).start()
 
             # After 3 seconds, resume natural state
             def revert_state():
@@ -586,15 +614,18 @@ class BotGUI:
         frames = []
         silent_chunks = 0
         has_spoken = False
+        total_samples = 0
+        MAX_SAMPLES = MIC_SAMPLE_RATE * 15  # 15-second hard cap
 
         def callback(indata, frames_count, time, status):
-            nonlocal silent_chunks, has_spoken
+            nonlocal silent_chunks, has_spoken, total_samples
             vol = np.linalg.norm(indata)
             # Update mouth_open for real-time lip sync during recording (listening mode)
             if self.current_state == BotStates.LISTENING:
                 self.mouth_open = min(60, vol / 500)
 
             frames.append(indata.copy())
+            total_samples += indata.shape[0]
             if vol < 500: # Silence threshold
                 silent_chunks += 1
             else:
@@ -609,7 +640,7 @@ class BotGUI:
                         sd.sleep(50)
                         if not has_spoken and silent_chunks > 100: break
                         if has_spoken and silent_chunks > 40: break
-                        if len(frames) > (MIC_SAMPLE_RATE * 10 / 512): break
+                        if total_samples >= MAX_SAMPLES: break  # 15-second hard cap (sample-accurate)
                     break # Success!
             except Exception as e:
                 retry_count += 1
@@ -622,8 +653,17 @@ class BotGUI:
         self.mouth_open = 0 # Reset
         if not frames: return None
         data = np.concatenate(frames, axis=0)
+
+        # Down-sample 48 kHz → 16 kHz with a polyphase filter (better than the
+        # old ffmpeg subprocess + extra disk write). 48000 / 3 = 16000 exactly.
         import scipy.io.wavfile
-        scipy.io.wavfile.write(filename, MIC_SAMPLE_RATE, data)
+        ratio = MIC_SAMPLE_RATE // 16000
+        if MIC_SAMPLE_RATE == 16000 or ratio < 2:
+            data_16k = data.flatten()
+        else:
+            data_16k = scipy.signal.resample_poly(data.flatten().astype(np.float32), 1, ratio)
+            data_16k = np.clip(data_16k, -32768, 32767).astype(np.int16)
+        scipy.io.wavfile.write(filename, 16000, data_16k)
         return filename
     # --- TIMERS & REMINDERS ---
     def start_timer_thread(self, minutes, message):
@@ -678,20 +718,21 @@ class BotGUI:
         # --buffer-time=500000 is 500ms, which provides a very stable buffer for the Pi 5.
         aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", str(sample_rate), "-f", "S16_LE", "-t", "raw", "-q", "--buffer-time=500000"]
         
-        # Hardware Retry Loop: If the thinking sound hasn't fully released the hardware yet,
-        # we retry a few times before giving up.
+        # Stop the thinking sound ONCE before retrying — not on every attempt.
+        self.is_thinking_sound_playing = False
+        if self.thinking_audio_process is not None:
+            try:
+                self.thinking_audio_process.terminate()
+                self.thinking_audio_process.wait(timeout=0.5)
+            except Exception:
+                pass
+            self.thinking_audio_process = None
+
+        # Hardware Retry Loop: If the thinking sound hasn't fully released the
+        # hardware yet, we retry a few times before giving up.
         proc = None
         for attempt in range(10):
             try:
-                # Force-kill any lingering aplay thinking sounds before we try to take the hardware
-                self.is_thinking_sound_playing = False
-                if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
-                    try:
-                        self.thinking_audio_process.terminate()
-                        self.thinking_audio_process.wait(timeout=0.5)  # 0.5s gives ALSA time to release
-                    except: pass
-                    self.thinking_audio_process = None  # Clear immediately to stop retry loop
-                
                 proc = subprocess.Popen(aplay_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
                 # Quick check if it failed immediately (e.g. Device Busy)
                 time.sleep(0.1)
@@ -774,21 +815,45 @@ class BotGUI:
             self.mouth_open = 0
             self.mouth_ema = 0 # Final reset to closed
 
+    def _warmup_piper(self):
+        """Pre-spawn Piper (without aplay) to hide model-load latency behind STT.
+        Safe to call repeatedly — no-op if Piper is already running."""
+        if self._piper_proc is not None and self._piper_proc.poll() is None:
+            return
+        from core.config import PIPER_CMD, PIPER_MODEL
+        try:
+            self._piper_proc = subprocess.Popen(
+                [PIPER_CMD, "--model", PIPER_MODEL, "--output_raw"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            print("[TTS] Piper warmed up.")
+        except Exception as e:
+            print(f"[TTS] Piper warmup failed: {e}")
+            self._piper_proc = None
+
     def _start_tts_turn(self):
         """Start a persistent Piper + aplay pipeline for a single speaking turn.
 
         Piper is kept alive for the entire turn so the TTS model is loaded only
         once.  Every sentence is written to Piper's stdin; a reader thread pumps
         the raw PCM output into aplay continuously — no per-sentence startup gap.
+        Reuses a pre-warmed Piper from _warmup_piper() if available.
         """
         from core.config import PIPER_CMD, PIPER_MODEL, ALSA_DEVICE
 
-        # Hard-kill any leftover pipeline from a previous turn
-        self._kill_tts_pipeline()
+        # Detect a pre-warmed Piper (loaded but not yet wired to aplay/reader)
+        piper_warm = (
+            self._piper_proc is not None and self._piper_proc.poll() is None
+            and self._piper_reader_thread is None and self._tts_aplay is None
+        )
+        if not piper_warm:
+            self._kill_tts_pipeline()
 
-        # Release ALSA by stopping the thinking sound before we try to open aplay
+        # Release ALSA by stopping the thinking sound ONCE before the retry loop
         self.is_thinking_sound_playing = False
-        if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+        if self.thinking_audio_process is not None:
             try:
                 self.thinking_audio_process.terminate()
                 self.thinking_audio_process.wait(timeout=0.5)
@@ -819,13 +884,14 @@ class BotGUI:
             self._tts_aplay = None
             return
 
-        # Start Piper — reads text lines from stdin, writes raw PCM to stdout
-        self._piper_proc = subprocess.Popen(
-            [PIPER_CMD, "--model", PIPER_MODEL, "--output_raw"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
+        # Spawn Piper if not already warmed up
+        if not piper_warm:
+            self._piper_proc = subprocess.Popen(
+                [PIPER_CMD, "--model", PIPER_MODEL, "--output_raw"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
 
         # Reader thread: Piper stdout → aplay stdin (with lip-sync)
         self._piper_reader_thread = threading.Thread(
@@ -1116,11 +1182,17 @@ class BotGUI:
 
         while not self.stop_event.is_set():
             # 1. Wait for Wake Word
-            self.is_busy = False
+            self._release_busy()
             if self.wait_for_wakeword(oww):
+                # Block briefly if a trigger flow is mid-run; gives up after 2 s
+                if not self._busy_lock.acquire(timeout=2.0):
+                    print("[MAIN] Couldn't claim busy lock; another flow is running.")
+                    continue
                 self.is_busy = True
                 # 2. Record
                 self.set_state(BotStates.LISTENING, "Listening...")
+                # Pre-warm Piper in parallel with STT so the first TTS chunk has zero start-up gap
+                threading.Thread(target=self._warmup_piper, daemon=True).start()
                 wav_file = self.record_audio()
                 
                 # 3. Transcribe
@@ -1132,13 +1204,13 @@ class BotGUI:
                     if ack_proc:
                         ack_proc.wait()
                     
-                    while self.current_state == BotStates.THINKING and getattr(self, 'is_thinking_sound_playing', False):
+                    while self.current_state == BotStates.THINKING and self.is_thinking_sound_playing:
                         self.thinking_audio_process = self.play_sound("thinking_sounds")
                         if self.thinking_audio_process:
                             self.thinking_audio_process.wait()
                         # Wait 8 seconds before playing again, but check state frequently
                         for _ in range(80):
-                            if self.current_state != BotStates.THINKING or not getattr(self, 'is_thinking_sound_playing', False):
+                            if self.current_state != BotStates.THINKING or not self.is_thinking_sound_playing:
                                 break
                             time.sleep(0.1)
                 
@@ -1149,9 +1221,9 @@ class BotGUI:
                 
                 if len(user_text) < 2:
                     self.set_state(BotStates.IDLE, "Tap to speak")
-                    self.is_busy = False
+                    self._release_busy()
                     self.is_thinking_sound_playing = False
-                    if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+                    if self.thinking_audio_process is not None:
                         try:
                             self.thinking_audio_process.terminate()
                         except Exception:
@@ -1207,7 +1279,12 @@ class BotGUI:
                                     break
                             if cam_cmd is None:
                                 raise FileNotFoundError("No camera command found (libcamera-still / rpicam-still)")
-                            subprocess.run([cam_cmd, '-o', 'temp.jpg', '--width', '640', '--height', '480', '--nopreview', '-t', '2000', '--autofocus-mode', 'continuous'], check=True)
+                            # Cap at 15 s — camera firmware can hang on USB glitches
+                            subprocess.run(
+                                [cam_cmd, '-o', 'temp.jpg', '--width', '640', '--height', '480',
+                                 '--nopreview', '-t', '2000', '--autofocus-mode', 'continuous'],
+                                check=True, timeout=15,
+                            )
                             import base64
                             with open('temp.jpg', 'rb') as img_file:
                                 b64_string = base64.b64encode(img_file.read()).decode('utf-8')
@@ -1216,7 +1293,7 @@ class BotGUI:
                             threading.Thread(target=play_thinking_sequence, daemon=True).start()
                             response = self.brain.analyze_image(b64_string, user_text)
                             self.is_thinking_sound_playing = False
-                            if hasattr(self, 'thinking_audio_process') and self.thinking_audio_process:
+                            if self.thinking_audio_process is not None:
                                 try:
                                     self.thinking_audio_process.terminate()
                                 except Exception:
@@ -1226,6 +1303,10 @@ class BotGUI:
                         except FileNotFoundError as e:
                             print(f"Camera Error: {e}")
                             self.speak("Hmm, BMO doesn't seem to have a camera connected right now. I can't take a photo!")
+
+                        except subprocess.TimeoutExpired:
+                            print("Camera Error: capture timed out after 15 s")
+                            self.speak("My camera took too long to respond. Let's try that again later!")
 
                         except Exception as e:
                             print(f"Camera Error: {e}")
@@ -1298,7 +1379,7 @@ class BotGUI:
 
                 self.set_state(BotStates.IDLE, "Tap to speak")
 
-                self.is_busy = False
+                self._release_busy()
                 # 1-second ALSA cooldown before re-opening the mic stream.
                 # Use manual_wake_event.wait() instead of sleep() so a tap during
                 # this window is not lost — it will be caught by wait_for_wakeword()
@@ -1307,8 +1388,10 @@ class BotGUI:
 
     def trigger_random_thought(self, event=None):
         """Manually trigger a random pondering thought (BMO's red button)."""
-        if self.is_busy or self.current_state in [BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING]:
+        if self.current_state in [BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING]:
             return
+        if not self._try_claim_busy():
+            return  # another flow holds the busy lock
 
         def run_thought():
             from core.search import search_web, search_images
@@ -1316,7 +1399,6 @@ class BotGUI:
             import requests as http_requests
 
             try:
-                self.is_busy = True
                 topics = [
                     "interesting fun fact of the day", "weather forecast today in Brantford, Ontario",
                     "this day in history", "cool science discovery this week", "funny animal fact",
@@ -1372,18 +1454,19 @@ class BotGUI:
                 print(f"[BUTTON] Thought error: {e}")
                 self.set_state(BotStates.IDLE, "Tap to speak")
             finally:
-                self.is_busy = False
+                self._release_busy()
 
         threading.Thread(target=run_thought, daemon=True).start()
 
     def trigger_music(self, event=None):
         """Manually trigger BMO to play music and jam."""
-        if self.is_busy or self.current_state in [BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.JAMMING]:
+        if self.current_state in [BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING, BotStates.JAMMING]:
             return
-            
+        if not self._try_claim_busy():
+            return
+
         def run_music():
             try:
-                self.is_busy = True
                 # Wait for current speaking to finish if any
                 while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
                     time.sleep(0.5)
@@ -1407,22 +1490,23 @@ class BotGUI:
                 else:
                     self.speak("BMO wants to play music, but there are no songs loaded!")
             finally:
-                self.is_busy = False
-                
+                self._release_busy()
+
         threading.Thread(target=run_music, daemon=True).start()
 
     def trigger_generate_image(self, event=None):
         """Manually trigger an image generation."""
-        if self.is_busy or self.current_state in [BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING]:
+        if self.current_state in [BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING]:
             return
-            
+        if not self._try_claim_busy():
+            return
+
         def run_image_thought():
             from core.config import LLM_URL, FAST_LLM_MODEL
             from core.search import search_images
             import requests as http_requests
-            
+
             try:
-                self.is_busy = True
                 self.set_state(BotStates.THINKING, "Imagining...")
                 
                 # Say something generic first
@@ -1470,7 +1554,7 @@ class BotGUI:
                 print(f"[IMAGE] Generator failed: {e}")
                 self.set_state(BotStates.IDLE, "Tap to speak")
             finally:
-                self.is_busy = False
+                self._release_busy()
 
         threading.Thread(target=run_image_thought, daemon=True).start()
 
@@ -1556,8 +1640,8 @@ class BotGUI:
                 print(f"[IMAGE] Failed to display: {e}")
                 self.set_state(BotStates.IDLE, "Tap to speak")
             finally:
-                self.is_busy = False
-        
+                self._release_busy()
+
         threading.Thread(target=run_display, daemon=True).start()
 
     def generate_thought_internal(self, search_result):
@@ -1681,7 +1765,7 @@ class BotGUI:
             # This prevents BMO from being 'stuck' forever if a thread dies.
             if self.is_busy and (time.time() - self.last_state_change > 120):
                 print("[WATCHDOG] BMO was busy for > 120s. Force-clearing is_busy.")
-                self.is_busy = False
+                self._release_busy()
                 self.set_state(BotStates.IDLE, "Tap to speak")
 
             if self.current_state != BotStates.SCREENSAVER or self.is_busy:
@@ -1784,22 +1868,22 @@ class BotGUI:
                                             phrase = phrase.replace(json_match.group(0), '').strip()
                                     except Exception: pass
                                 
-                                # Speak the thought
-                                if phrase and self.current_state == BotStates.SCREENSAVER and not self.is_busy:
-                                    self.is_busy = True
+                                # Speak the thought (atomic claim — no TOCTOU)
+                                if phrase and self.current_state == BotStates.SCREENSAVER and self._try_claim_busy():
                                     self.speak(phrase, msg="Pondering...")
                                     self.last_screensaver_audio_time = time.time()
-                                    
+
                                     # Handle image display
                                     if image_url:
                                         # Wait for BMO to start speaking
                                         time.sleep(1.5)
                                         self.display_remote_image(image_url, commentary_prompt=topic)
+                                        # display_remote_image releases busy in its finally
                                     else:
-                                        self.is_busy = False
+                                        self._release_busy()
                     except Exception as e:
                         print(f"[SCREENSAVER] Thought failed: {e}")
-                        self.is_busy = False
+                        self._release_busy()
                         self.set_state(BotStates.SCREENSAVER, "Sleeping...")
                 
                 # Revert to screensaver state if needed

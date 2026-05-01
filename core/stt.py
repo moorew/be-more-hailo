@@ -8,29 +8,20 @@ logger = logging.getLogger(__name__)
 
 def transcribe_audio(audio_filepath: str) -> str:
     """
-    Converts any audio file to 16kHz WAV and runs whisper.cpp to transcribe it.
+    Run whisper.cpp on a 16 kHz mono WAV file produced by record_audio().
+    The recording side now down-samples in NumPy, so the ffmpeg pre-conversion
+    step has been removed (saves ~50–150 ms per turn on Pi 5 SD storage).
     """
     if not os.path.exists(audio_filepath):
         logger.error(f"Audio file not found: {audio_filepath}")
         return ""
 
-    temp_wav = f"{audio_filepath}_16k.wav"
-
     try:
-        # 1. Convert audio to 16kHz mono WAV (required by whisper.cpp)
-        logger.info(f"Converting {audio_filepath} to 16kHz WAV for whisper.cpp CPU inference...")
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", audio_filepath, "-ar", "16000", "-ac", "1", temp_wav],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-
-        # 2. Run whisper.cpp
+        # Run whisper.cpp directly on the 16 kHz WAV.
         # -nt  no timestamps (we strip them anyway, skip the compute)
         # -t 4 use all four Pi 5 CPU cores for faster inference
         # -l en force English, skipping the language-detection pass
-        cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", temp_wav, "-nt", "-t", "4", "-l", "en"]
+        cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", audio_filepath, "-nt", "-t", "4", "-l", "en"]
         logger.info(f"Running whisper.cpp transcription on the CPU... CMD: {' '.join(cmd)}")
         try:
             # stderr=DEVNULL: whisper prints verbose debug/timing info to stderr.
@@ -68,15 +59,8 @@ def transcribe_audio(audio_filepath: str) -> str:
 
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"FFmpeg or Whisper CPU process failed: {e}")
+        logger.error(f"Whisper CPU process failed: {e}")
         return ""
     except Exception as e:
         logger.error(f"Transcription Error: {e}")
         return ""
-    finally:
-        # Clean up the temporary 16k wav file
-        if os.path.exists(temp_wav):
-            try:
-                os.remove(temp_wav)
-            except Exception as e:
-                logger.warning(f"Could not remove temp file {temp_wav}: {e}")

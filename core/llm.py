@@ -6,7 +6,7 @@ import re
 import json
 import urllib.parse
 import numpy as np
-from .config import LLM_URL, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt
+from .config import LLM_URL, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt, get_current_context
 from .tts import add_pronunciation
 from .search import search_web, search_images
 
@@ -172,14 +172,32 @@ def strip_prompt_leakage(content: str) -> str:
 
 MEMORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory.json")
 
+def _with_current_context(messages):
+    """Return a shallow copy of `messages` with the current time/date prepended
+    to the LAST user message. Keeps the system prompt byte-stable so the LLM's
+    prefix KV-cache can be reused across turns (saves 80–150 ms / turn)."""
+    if not messages:
+        return messages
+    out = list(messages)
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].get("role") == "user":
+            msg = dict(out[i])
+            msg["content"] = f"[{get_current_context()}] {msg.get('content', '')}"
+            out[i] = msg
+            break
+    return out
+
+
 class Brain:
     def __init__(self):
         self.history = []
         self.load_history()
-        # Ensure system prompt is always present and up to date
+        # System prompt is now static (no embedded time/date).  Ensure it's
+        # present and matches the current source — but never mutate it on
+        # subsequent turns, so the model's KV-cache prefix remains valid.
         if not self.history or self.history[0].get("role") != "system":
             self.history.insert(0, {"role": "system", "content": get_system_prompt()})
-        else:
+        elif self.history[0]["content"] != get_system_prompt():
             self.history[0]["content"] = get_system_prompt()
 
     def load_history(self):
@@ -213,10 +231,8 @@ class Brain:
         """
         Send text to local LLM (Hailo/Ollama) and get response.
         """
-        # Update system prompt with latest time/date before thinking
-        if self.history and self.history[0].get("role") == "system":
-            self.history[0]["content"] = get_system_prompt()
-            
+        # System prompt is static; current time/date is injected into the
+        # final user message at request-build time (see _with_current_context).
         self.history.append({"role": "user", "content": user_text})
 
 
@@ -293,7 +309,7 @@ class Brain:
 
         payload = {
             "model": chosen_model,
-            "messages": self.history,
+            "messages": _with_current_context(self.history),
             "stream": False,
             "options": {
                 "temperature": 0.7,
@@ -403,10 +419,8 @@ class Brain:
         Send text to local LLM and yield full sentences as they are generated.
         Useful for TTS chunking (speaking while generating).
         """
-        # Update system prompt with latest time/date before thinking
-        if self.history and self.history[0].get("role") == "system":
-            self.history[0]["content"] = get_system_prompt()
-
+        # System prompt is static; current time/date is injected per-turn into
+        # the user message via _with_current_context() before the request.
         self.history.append({"role": "user", "content": user_text})
 
 
@@ -491,7 +505,7 @@ class Brain:
 
         payload = {
             "model": chosen_model,
-            "messages": self.history,
+            "messages": _with_current_context(self.history),
             "stream": True,
             "options": {
                 "temperature": 0.7,
