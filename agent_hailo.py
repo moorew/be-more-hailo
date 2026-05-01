@@ -422,9 +422,14 @@ class BotGUI:
             elif category == "music":
                 self.set_state(BotStates.JAMMING, "Jamming!")
 
-            # Cleanup thread to remove finished processes
+            # Cleanup thread to remove finished processes (guard against zombies)
             def cleanup():
-                proc.wait()
+                try:
+                    proc.wait(timeout=600)  # Music can be long; cap at 10 min
+                except subprocess.TimeoutExpired:
+                    print(f"[SOUND] Cleanup timeout — terminating stuck proc {proc.pid}")
+                    try: proc.terminate()
+                    except Exception: pass
                 if proc in self.active_sounds:
                     self.active_sounds.remove(proc)
                 if category == "music" and self.current_state == BotStates.JAMMING:
@@ -525,8 +530,13 @@ class BotGUI:
             else:
                 self.current_frame = (self.current_frame + 1) % len(frames)
 
-            self.tk_img = frames[self.current_frame]
-            self.background_label.config(image=self.tk_img)
+            # Skip the Tk reconfigure when nothing actually changed — avoids
+            # syscalls when the speaking EMA holds the same frame for a while.
+            new_key = (display_state, self.current_frame)
+            if getattr(self, '_last_render_key', None) != new_key:
+                self.tk_img = frames[self.current_frame]
+                self.background_label.config(image=self.tk_img)
+                self._last_render_key = new_key
 
         # Dynamic frame rate: 40ms (25fps) for speaking lip-sync, 120ms for everything else
         interval = 40 if display_state == BotStates.SPEAKING else 120
@@ -669,7 +679,10 @@ class BotGUI:
     def start_timer_thread(self, minutes, message):
         def timer_worker():
             print(f"[TIMER SET] for {minutes} minutes. Message: {message}")
-            time.sleep(minutes * 60)
+            # Wait on stop_event so app shutdown drains the timer immediately.
+            if self.stop_event.wait(timeout=minutes * 60):
+                print(f"[TIMER CANCELLED] (app shutting down): {message}")
+                return
             print(f"[TIMER DONE] {message}")
             
             # Wait for BMO to finish speaking/listening to avoid ALSA conflicts
@@ -786,12 +799,7 @@ class BotGUI:
                     print(f"[DEBUG] aplay write error: {e}")
                     break
 
-                # Basic sync: sleep to match playback rate
-                chunk_idx += 1
-                elapsed = time.time() - start_time
-                expected = (chunk_idx * chunk_size) / sample_rate
-                if expected > elapsed:
-                    time.sleep(expected - elapsed)
+                # No manual pacing — aplay's hardware buffer back-pressures stdin.write naturally.
 
             # stop_event firing mid-stream is also an interruption
             if self.stop_event.is_set():
@@ -939,12 +947,9 @@ class BotGUI:
                 print(f"[TTS] aplay write error: {e}")
                 break
 
-            # Pace writes to match real-time playback (natural back-pressure)
-            chunk_idx += 1
-            elapsed = time.time() - start_time
-            expected = (chunk_idx * chunk_size) / 22050
-            if expected > elapsed:
-                time.sleep(expected - elapsed)
+            # No manual pacing: aplay's 500 ms hardware buffer applies natural
+            # back-pressure on stdin.write once it's full. The old time.sleep()
+            # could stack on top of that and starve the buffer briefly.
 
         self.mouth_open = 0
         self.mouth_ema = 0
@@ -1016,7 +1021,20 @@ class BotGUI:
         self.mouth_ema = 0
 
     def _kill_tts_pipeline(self):
-        """Hard-kill the Piper + aplay pipeline without draining (used by mute / turn start)."""
+        """Hard-kill the Piper + aplay pipeline without draining (used by mute / turn start).
+
+        Tries a non-blocking acquire of `speak_lock` first so we don't race a
+        concurrent _start_tts_turn(); if we can't get it, we still proceed
+        (mute must always win) but the brief lock-attempt window narrows the
+        overlap with another thread that's mid-startup."""
+        got_lock = self.speak_lock.acquire(blocking=False)
+        try:
+            self._kill_tts_pipeline_unlocked()
+        finally:
+            if got_lock:
+                self.speak_lock.release()
+
+    def _kill_tts_pipeline_unlocked(self):
         if self._piper_proc is not None:
             try:
                 self._piper_proc.stdin.close()
@@ -1123,37 +1141,40 @@ class BotGUI:
         # or we can just use self.current_image_url etc.
         # But to match existing logic, we'll use regex here
         
-        # 1. Handle JSON actions
-        if '{"action": "take_photo"}' in chunk:
-            self.taking_photo = True
-            return
-
-        json_match = re.search(r'\{.*?\}', chunk, re.DOTALL)
-        if json_match:
-            try:
-                action_data = json.loads(json_match.group(0))
-                if action_data.get("action") == "display_image":
-                    self.current_image_url = action_data.get("image_url")
-                    chunk = chunk.replace(json_match.group(0), '').strip()
-                elif action_data.get("action") == "set_expression":
-                    expr = action_data.get("value").lower()
-                    if expr in [BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED, BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.CONFUSED]:
-                        self.set_state(expr, f"Feeling {expr}...")
-                    chunk = chunk.replace(json_match.group(0), '').strip()
-                elif action_data.get("action") == "play_music":
-                    def music_worker():
-                        while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
-                            time.sleep(0.5)
-                        music_proc = self.play_sound("music")
-                        if music_proc:
-                            self.set_state(BotStates.JAMMING, "Jamming!")
-                            music_proc.wait()
-                            if self.current_state == BotStates.JAMMING:
-                                self.set_state(BotStates.IDLE, "Tap to speak")
-                    threading.Thread(target=music_worker, daemon=True).start()
-                    chunk = chunk.replace(json_match.group(0), '').strip()
-            except Exception:
-                pass
+        # 1. Handle JSON actions (brace-balanced — handles nested objects + lax spacing)
+        from core.llm import extract_json_object
+        action_data, span = extract_json_object(chunk)
+        if action_data is not None:
+            if action_data.get("action") == "take_photo":
+                self.taking_photo = True
+                return
+            if action_data.get("action") == "display_image":
+                self.current_image_url = action_data.get("image_url")
+                chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
+            elif action_data.get("action") == "set_expression":
+                expr = (action_data.get("value") or "").lower()
+                allowed = {
+                    BotStates.HAPPY, BotStates.SAD, BotStates.ANGRY, BotStates.SURPRISED,
+                    BotStates.SLEEPY, BotStates.DIZZY, BotStates.CHEEKY, BotStates.HEART,
+                    BotStates.STARRY_EYED, BotStates.CONFUSED, BotStates.BORED,
+                    BotStates.CURIOUS, BotStates.DAYDREAM, BotStates.JAMMING,
+                    BotStates.SHHH, BotStates.LOW_BATTERY,
+                }
+                if expr in allowed:
+                    self.set_state(expr, f"Feeling {expr}...")
+                chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
+            elif action_data.get("action") == "play_music":
+                def music_worker():
+                    while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
+                        time.sleep(0.5)
+                    music_proc = self.play_sound("music")
+                    if music_proc:
+                        self.set_state(BotStates.JAMMING, "Jamming!")
+                        music_proc.wait()
+                        if self.current_state == BotStates.JAMMING:
+                            self.set_state(BotStates.IDLE, "Tap to speak")
+                threading.Thread(target=music_worker, daemon=True).start()
+                chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
 
         # 2. Speak the remaining text
         if chunk.strip():
@@ -1208,11 +1229,16 @@ class BotGUI:
                         self.thinking_audio_process = self.play_sound("thinking_sounds")
                         if self.thinking_audio_process:
                             self.thinking_audio_process.wait()
-                        # Wait 8 seconds before playing again, but check state frequently
-                        for _ in range(80):
+                        # Tiny randomized gap (0.4–1.2 s) between repeats — keeps the
+                        # ambience continuous instead of the prior 8-second silence.
+                        gap_total = random.uniform(0.4, 1.2)
+                        elapsed = 0.0
+                        step = 0.1
+                        while elapsed < gap_total:
                             if self.current_state != BotStates.THINKING or not self.is_thinking_sound_playing:
                                 break
-                            time.sleep(0.1)
+                            time.sleep(step)
+                            elapsed += step
                 
                 threading.Thread(target=play_thinking_sequence, daemon=True).start()
 
@@ -1322,7 +1348,7 @@ class BotGUI:
                             # Note: migrated to loremflickr
                             print(f"[IMAGE] Downloading: {image_url}")
                             req = urllib.request.Request(image_url, headers={'User-Agent': 'Mozilla/5.0'})
-                            with urllib.request.urlopen(req, timeout=30) as u:
+                            with urllib.request.urlopen(req, timeout=8) as u:
                                 raw_data = u.read()
                             print(f"[IMAGE] Downloaded: {len(raw_data)} bytes")
                             from io import BytesIO
@@ -1423,21 +1449,18 @@ class BotGUI:
 
                     if phrase:
                         self.recent_thoughts.append(topic)
-                        # Check for image URL or subject
+                        # Check for image URL or subject (brace-balanced JSON)
                         image_url = None
-                        json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
-                        if json_match:
-                            try:
-                                action_data = json.loads(json_match.group(0))
-                                if action_data.get("action") == "display_image":
-                                    subject = action_data.get("subject") or action_data.get("image_url")
-                                    if subject:
-                                        if "://" in subject:
-                                            image_url = subject
-                                        else:
-                                            image_url = search_images(subject)
-                                    phrase = phrase.replace(json_match.group(0), '').strip()
-                            except Exception: pass
+                        from core.llm import extract_json_object
+                        action_data, span = extract_json_object(phrase)
+                        if action_data is not None and action_data.get("action") == "display_image":
+                            subject = action_data.get("subject") or action_data.get("image_url")
+                            if subject:
+                                if "://" in subject:
+                                    image_url = subject
+                                else:
+                                    image_url = search_images(subject)
+                            phrase = (phrase[:span[0]] + phrase[span[1]:]).strip()
 
                         self.speak(phrase, msg="Pondering...")
                         if image_url:
@@ -1852,21 +1875,18 @@ class BotGUI:
                             
                             if phrase:
                                 self.recent_thoughts.append(topic)
-                                # Check for image URL or subject
+                                # Check for image URL or subject (brace-balanced JSON)
                                 image_url = None
-                                json_match = re.search(r'\{.*?\}', phrase, re.DOTALL)
-                                if json_match:
-                                    try:
-                                        action_data = json.loads(json_match.group(0))
-                                        if action_data.get("action") == "display_image":
-                                            subject = action_data.get("subject") or action_data.get("image_url")
-                                            if subject:
-                                                if "://" in subject:
-                                                    image_url = subject
-                                                else:
-                                                    image_url = search_images(subject)
-                                            phrase = phrase.replace(json_match.group(0), '').strip()
-                                    except Exception: pass
+                                from core.llm import extract_json_object
+                                action_data, span = extract_json_object(phrase)
+                                if action_data is not None and action_data.get("action") == "display_image":
+                                    subject = action_data.get("subject") or action_data.get("image_url")
+                                    if subject:
+                                        if "://" in subject:
+                                            image_url = subject
+                                        else:
+                                            image_url = search_images(subject)
+                                    phrase = (phrase[:span[0]] + phrase[span[1]:]).strip()
                                 
                                 # Speak the thought (atomic claim — no TOCTOU)
                                 if phrase and self.current_state == BotStates.SCREENSAVER and self._try_claim_busy():

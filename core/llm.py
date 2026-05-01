@@ -172,6 +172,44 @@ def strip_prompt_leakage(content: str) -> str:
 
 MEMORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory.json")
 
+def extract_json_object(text: str):
+    r"""Find the first balanced JSON object in `text` and return (parsed, span)
+    or (None, None). Handles nested objects, escaped quotes, and unbalanced
+    brace counts that broke the old `re.search(r'\{.*?\}')` approach."""
+    if not text or '{' not in text:
+        return None, None
+    n = len(text)
+    for start in range(n):
+        if text[start] != '{':
+            continue
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, n):
+            c = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == '\\':
+                    esc = True
+                elif c == '"':
+                    in_str = False
+            else:
+                if c == '"':
+                    in_str = True
+                elif c == '{':
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0:
+                        candidate = text[start:i + 1]
+                        try:
+                            return json.loads(candidate), (start, i + 1)
+                        except json.JSONDecodeError:
+                            break  # try next '{' opener
+    return None, None
+
+
 def _with_current_context(messages):
     """Return a shallow copy of `messages` with the current time/date prepended
     to the LAST user message. Keeps the system prompt byte-stable so the LLM's
@@ -328,13 +366,11 @@ class Brain:
                 
                 # Check if the LLM outputted a JSON action (like search_web)
                 try:
-                    # Try to find JSON in the response (non-greedy)
-                    # Also replace smart quotes with standard quotes before parsing
+                    # Replace smart quotes before parsing
                     clean_content = content.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
-                    json_match = re.search(r'\{.*?\}', clean_content, re.DOTALL)
-                    if json_match:
-                        action_data = json.loads(json_match.group(0))
-                        
+                    action_data, _span = extract_json_object(clean_content)
+                    if action_data is not None:
+
                         if action_data.get("action") == "take_photo":
                             logger.info("LLM requested to take a photo.")
                             # Return the JSON string directly so the caller can handle the camera
@@ -536,8 +572,14 @@ class Brain:
                                 full_content += chunk
                                 
                                 # If buffer ends with strong punctuation or newline, yield it
-                                # Removed commas and semicolons to improve flow and prevent choppy speech
-                                if any(buffer.endswith(punc) for punc in ['.', '!', '?', '\n']) or "\n\n" in buffer:
+                                # Removed commas and semicolons to improve flow and prevent choppy speech.
+                                # Skip flush for digit-period-digit (e.g. "$4.99") so prices and decimals stay together.
+                                ends_punct = any(buffer.endswith(p) for p in ['.', '!', '?', '\n'])
+                                mid_decimal = (
+                                    len(buffer) >= 2 and buffer.endswith('.')
+                                    and buffer[-2].isdigit()
+                                )
+                                if (ends_punct and not mid_decimal) or "\n\n" in buffer:
                                     # Strip system prompt leakage
                                     cleaned = strip_prompt_leakage(buffer)
                                     # Ensure BMO spelling before yielding
@@ -557,10 +599,10 @@ class Brain:
                             yield out_chunk
                         
                     # Handle json actions at the very end if applicable
-                    json_match = re.search(r'\{.*?\}', full_content, re.DOTALL)
-                    if json_match and "action" in json_match.group(0):
+                    final_action, _ = extract_json_object(full_content)
+                    if final_action is not None and "action" in final_action:
                         # For advanced tool use we won't yield the json action to TTS
-                        pass 
+                        pass
                     
                     self.history.append({"role": "assistant", "content": full_content})
                     self.save_history()
@@ -626,12 +668,32 @@ class Brain:
 
             logger.info("Running VLM inference on Hailo NPU ...")
             vlm.clear_context()
-            content = vlm.generate_all(
-                prompt=prompt,
-                frames=[frame],
-                max_generated_tokens=150,
-                temperature=0.4,
-            )
+
+            # Run generate_all with a hard timeout so a hung/throttled NPU
+            # doesn't freeze the agent indefinitely.
+            import threading
+            result = {"content": None, "exc": None}
+
+            def _run():
+                try:
+                    result["content"] = vlm.generate_all(
+                        prompt=prompt,
+                        frames=[frame],
+                        max_generated_tokens=150,
+                        temperature=0.4,
+                    )
+                except Exception as e:
+                    result["exc"] = e
+
+            t = threading.Thread(target=_run, daemon=True)
+            t.start()
+            t.join(timeout=30)
+            if t.is_alive():
+                logger.error("VLM inference timed out after 30s.")
+                return "My eyes are taking too long to focus right now."
+            if result["exc"] is not None:
+                raise result["exc"]
+            content = result["content"] or ""
 
             # Clean up any smart quotes, stop tokens, or stray formatting
             content = content.replace('\u201c', '"').replace('\u201d', '"')
