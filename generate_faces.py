@@ -1,850 +1,696 @@
-"""
-generate_faces.py — BMO face animation generator (2026 edition)
-
-All frames are rendered at 8× super-sampling and downscaled via LANCZOS
-for crisp, perfectly anti-aliased curves at 800 × 480 final resolution.
-"""
-
 import os
-import math
-import glob
 from PIL import Image, ImageDraw
 
-# ── Colour palette ────────────────────────────────────────────────────────────
-BG         = (189, 255, 203)   # BMO screen green
-BLACK      = (0,   0,   0  )
-WHITE      = (255, 255, 255)
-DARK_GREEN = (41,  131,  57)   # mouth cavity dark
-TONGUE_COL = (140, 210, 130)   # light-green tongue
-RED        = (210,  42,  42)   # heart / ladybug body
-PINK       = (255, 145, 195)   # blush / bow
-YELLOW     = (255, 215,  48)   # bee abdomen
-PALE_BLUE  = (190, 215, 255)   # bee / dragonfly wing
-HAT        = ( 55,  55,  65)   # fedora dark grey
-HATBAND    = ( 22,  22,  33)   # hat band near-black
-GOLD       = (205, 165,  42)   # hat-band accent stripe
-WOOD       = (128,  62,  26)   # pipe bowl / stem
-SMOKE_COL  = (195, 195, 195)   # pipe smoke rings
-ORANGE_RED = (215,  60,  20)   # ladybug body
+BG_COLOR = (189, 255, 203)
+LINE_COLOR = (0, 0, 0)
+MOUTH_DARK = (41, 131, 57)
+TONGUE_COLOR = (112, 195, 112) # Slightly lighter green for tongue
+TEETH_COLOR = (255, 255, 255)
+WIDTH, HEIGHT = 800, 480
+SCALE = 4
+LINE_WIDTH = 8
+LEFT_EYE_X = 217
+RIGHT_EYE_X = 581
+EYE_Y = 195 # Arc center point for U-shaped eyes
+EYE_VISUAL_Y = 200 # Visual center of the arc eye (arc 335-205 shifts mass down ~5px)
+EYE_R = 18
+MOUTH_Y = 302
+MOUTH_W = 97
 
-# ── Canvas / supersampling ────────────────────────────────────────────────────
-W, H   = 800, 480
-SCALE  = 8          # render at 8×, LANCZOS down-sample to final size
-LW     = 12         # base line-width  (screen-space pixels)
+def ensure_dir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
 
-# ── Face layout ───────────────────────────────────────────────────────────────
-LEX  = 220          # left  eye centre X
-REX  = 580          # right eye centre X
-EY   = 198          # eye arc-centre Y  (arc opens upward)
-ER   = 38           # eye arc radius    (was 18 — much bigger now)
-EVY  = 203          # visual centre of U-arc (arc mass sits ~5 px below centre)
-MY   = 310          # mouth centre Y
-MW   = 114          # mouth span width
-
-# ── Scaling helpers ───────────────────────────────────────────────────────────
-def S(v):                  return int(round(v * SCALE))
-def SB(x1, y1, x2, y2):   return [S(x1), S(y1), S(x2), S(y2)]
-def mkd(p):                os.makedirs(p, exist_ok=True)
-
-def make_face(path, fn):
-    img  = Image.new("RGB", (W * SCALE, H * SCALE), BG)
+def create_face(filename, draw_func):
+    # Render at 4x resolution and scale down for perfect anti-aliasing
+    img = Image.new("RGB", (WIDTH * SCALE, HEIGHT * SCALE), BG_COLOR)
     draw = ImageDraw.Draw(img)
-    fn(draw)
-    img.resize((W, H), Image.Resampling.LANCZOS).save(path)
-    print(f"  {path}")
+    draw_func(draw)
+    final_img = img.resize((WIDTH, HEIGHT), resample=Image.Resampling.LANCZOS)
+    final_img.save(filename)
+    print(f"Generated {filename}")
 
-# ── Low-level primitives ──────────────────────────────────────────────────────
+# Helper draw functions
+def draw_arc_eye(draw, cx, cy, radius, start, end):
+    cx, cy, radius = cx * SCALE, cy * SCALE, radius * SCALE
+    width = LINE_WIDTH * SCALE
+    bbox = [cx - radius, cy - radius, cx + radius, cy + radius]
+    draw.arc(bbox, start, end, fill=LINE_COLOR, width=width)
+    
+    # PIL draws arc stroke widths *inward* from the bounding box.
+    # Therefore, the centerline of the stroke is at `radius - (width / 2.0)`
+    import math
+    r = width / 2.0 # Radius of the end cap
+    effective_radius = radius - r # Centerline of the arc
+    
+    s_rad = math.radians(start)
+    e_rad = math.radians(end)
+    sx = cx + effective_radius * math.cos(s_rad)
+    sy = cy + effective_radius * math.sin(s_rad)
+    ex = cx + effective_radius * math.cos(e_rad)
+    ey = cy + effective_radius * math.sin(e_rad)
+    
+    draw.ellipse([sx - r, sy - r, sx + r, sy + r], fill=LINE_COLOR)
+    draw.ellipse([ex - r, ey - r, ex + r, ey + r], fill=LINE_COLOR)
 
-def _arc(draw, cx, cy, r, a0, a1, color=BLACK, w=LW):
-    """Arc in screen-space coords, scaled up, with rounded end-caps."""
-    cxs, cys, rs, ws = S(cx), S(cy), S(r), S(w)
-    draw.arc([cxs-rs, cys-rs, cxs+rs, cys+rs], a0, a1, fill=color, width=ws)
-    r_eff = rs - ws / 2
-    for a in (a0, a1):
-        rad = math.radians(a)
-        ex = cxs + r_eff * math.cos(rad)
-        ey = cys + r_eff * math.sin(rad)
-        c  = ws / 2
-        draw.ellipse([ex-c, ey-c, ex+c, ey+c], fill=color)
+def draw_circle_eye(draw, cx, cy, radius):
+    cx, cy, radius = cx * SCALE, cy * SCALE, radius * SCALE
+    bbox = [cx - radius, cy - radius, cx + radius, cy + radius]
+    draw.ellipse(bbox, fill=LINE_COLOR)
 
-def _line(draw, x1, y1, x2, y2, color=BLACK, w=LW):
-    """Line with rounded caps (screen-space coords, auto-scaled)."""
-    ws = S(w)
-    p1, p2 = (S(x1), S(y1)), (S(x2), S(y2))
-    draw.line([p1, p2], fill=color, width=ws)
-    r = ws / 2
-    for px, py in (p1, p2):
-        draw.ellipse([px-r, py-r, px+r, py+r], fill=color)
+def draw_line(draw, x1, y1, x2, y2, width=LINE_WIDTH):
+    x1, y1, x2, y2 = x1 * SCALE, y1 * SCALE, x2 * SCALE, y2 * SCALE
+    width = width * SCALE
+    draw.line([(x1, y1), (x2, y2)], fill=LINE_COLOR, width=width)
+    # Rounded caps
+    r = width / 2.0
+    draw.ellipse([x1 - r, y1 - r, x1 + r, y1 + r], fill=LINE_COLOR)
+    draw.ellipse([x2 - r, y2 - r, x2 + r, y2 + r], fill=LINE_COLOR)
 
-def _dot(draw, cx, cy, r, color=BLACK):
-    rs = S(r); cxs, cys = S(cx), S(cy)
-    draw.ellipse([cxs-rs, cys-rs, cxs+rs, cys+rs], fill=color)
+def draw_ellipse(draw, bbox, fill=None, outline=None, width=0):
+    box = [bbox[0]*SCALE, bbox[1]*SCALE, bbox[2]*SCALE, bbox[3]*SCALE]
+    draw.ellipse(box, fill=fill, outline=outline, width=width*SCALE)
 
-def _oval(draw, x1, y1, x2, y2, fill=None, outline=None, ow=LW):
-    draw.ellipse(SB(x1, y1, x2, y2), fill=fill, outline=outline,
-                 width=S(ow) if outline else 0)
-
-def _rrect(draw, x1, y1, x2, y2, rad=0, fill=None, outline=None, ow=LW):
-    if rad:
-        draw.rounded_rectangle(SB(x1, y1, x2, y2), radius=S(rad),
-                               fill=fill, outline=outline,
-                               width=S(ow) if outline else 0)
-    else:
-        draw.rectangle(SB(x1, y1, x2, y2), fill=fill, outline=outline,
-                       width=S(ow) if outline else 0)
-
-# ── Eye building blocks ───────────────────────────────────────────────────────
-
-def _eye_u(draw, cx, cy=EY, r=ER, blink=0.0, shift=0, shine=True):
-    """Standard BMO U-arc eye.  blink: 0=open → 1=closed.  shift=pupil horiz shift."""
-    vy = EVY + (cy - EY)
+def draw_regular_eyes(draw, blink=0.0):
     if blink >= 0.9:
-        _line(draw, cx - r, vy, cx + r, vy)
-        return
-    cxs = cx + shift
-    if blink > 0.0:
-        cya = cy - int((r / 2) * blink)
-        _arc(draw, cxs, cya, r, 325, 215)
+        # Closed eyes (straight lines) - use visual center so they align
+        draw_line(draw, LEFT_EYE_X - EYE_R, EYE_VISUAL_Y, LEFT_EYE_X + EYE_R, EYE_VISUAL_Y)
+        draw_line(draw, RIGHT_EYE_X - EYE_R, EYE_VISUAL_Y, RIGHT_EYE_X + EYE_R, EYE_VISUAL_Y)
+    elif blink > 0.0:
+        # Half blink
+        draw_arc_eye(draw, LEFT_EYE_X, EYE_Y - int((EYE_R/2) * blink), EYE_R, 345, 195)
+        draw_arc_eye(draw, RIGHT_EYE_X, EYE_Y - int((EYE_R/2) * blink), EYE_R, 345, 195)
     else:
-        _arc(draw, cxs, cy, r, 325, 215)
-    if shine:
-        _dot(draw, cx + int(r * 0.42), cy - int(r * 0.55), max(4, r // 8), WHITE)
+        # Open eyes (steeper U shape extends past 180)
+        draw_arc_eye(draw, LEFT_EYE_X, EYE_Y, EYE_R, 335, 205)
+        draw_arc_eye(draw, RIGHT_EYE_X, EYE_Y, EYE_R, 335, 205)
 
-def _eye_round(draw, cx, cy=EVY, r=ER, shine=True):
-    """Wide-open round eye: white iris + black outline + dark pupil + shine."""
-    _oval(draw, cx-r, cy-r, cx+r, cy+r, fill=WHITE, outline=BLACK, ow=LW//2+1)
-    pr = max(5, r // 3)
-    _dot(draw, cx, cy + pr // 3, pr)
-    if shine:
-        _dot(draw, cx + pr // 2, cy - pr // 4, max(3, pr // 3), WHITE)
+def draw_angry_eyes(draw):
+    draw_line(draw, LEFT_EYE_X - EYE_R, EYE_VISUAL_Y - 10, LEFT_EYE_X + EYE_R, EYE_VISUAL_Y + 10)
+    draw_line(draw, RIGHT_EYE_X - EYE_R, EYE_VISUAL_Y + 10, RIGHT_EYE_X + EYE_R, EYE_VISUAL_Y - 10)
+    
+def draw_happy_eyes(draw):
+    # Inverted arc (180-360) shifts visual center UP, so push down further
+    draw_arc_eye(draw, LEFT_EYE_X, EYE_Y + 13, EYE_R, 180, 360)
+    draw_arc_eye(draw, RIGHT_EYE_X, EYE_Y + 13, EYE_R, 180, 360)
+    
+def draw_surprised_eyes(draw):
+    draw_circle_eye(draw, LEFT_EYE_X, EYE_VISUAL_Y, EYE_R - 2)
+    draw_circle_eye(draw, RIGHT_EYE_X, EYE_VISUAL_Y, EYE_R - 2)
 
-def _eye_happy(draw, cx, cy=EY, shine=True):
-    """Inverted-U hat-arch eye for happy expressions."""
-    _arc(draw, cx, cy + 14, ER, 180, 360)
-    if shine:
-        _dot(draw, cx + int(ER * 0.38), cy + 14 - int(ER * 0.3),
-             max(4, ER // 8), WHITE)
+def draw_sad_eyes(draw):
+    draw_line(draw, LEFT_EYE_X - EYE_R, EYE_VISUAL_Y + 10, LEFT_EYE_X + EYE_R, EYE_VISUAL_Y - 10)
+    draw_line(draw, RIGHT_EYE_X - EYE_R, EYE_VISUAL_Y - 10, RIGHT_EYE_X + EYE_R, EYE_VISUAL_Y + 10)
 
-def _eye_slash_angry(draw, cx):
-    """Downward-slanting slash eye (angry). Left: \\  Right: /"""
-    tilt = 11
-    vy = EVY
-    if cx < 400:
-        _line(draw, cx - ER, vy + tilt, cx + ER, vy - tilt)
-    else:
-        _line(draw, cx - ER, vy - tilt, cx + ER, vy + tilt)
+def draw_dizzy_eyes(draw):
+    draw_line(draw, LEFT_EYE_X - 15, EYE_VISUAL_Y - 15, LEFT_EYE_X + 15, EYE_VISUAL_Y + 15)
+    draw_line(draw, LEFT_EYE_X - 15, EYE_VISUAL_Y + 15, LEFT_EYE_X + 15, EYE_VISUAL_Y - 15)
+    draw_line(draw, RIGHT_EYE_X - 15, EYE_VISUAL_Y - 15, RIGHT_EYE_X + 15, EYE_VISUAL_Y + 15)
+    draw_line(draw, RIGHT_EYE_X - 15, EYE_VISUAL_Y + 15, RIGHT_EYE_X + 15, EYE_VISUAL_Y - 15)
 
-def _eye_slash_sad(draw, cx, droop=0):
-    """Upward-slanting sad eye (outer corner drags down)."""
-    tilt = 10
-    vy = EVY + droop
-    if cx < 400:
-        _line(draw, cx - ER, vy + tilt, cx + ER, vy - tilt)
-    else:
-        _line(draw, cx - ER, vy - tilt, cx + ER, vy + tilt)
+def draw_heart_eye(draw, cx, cy, scale=1.0):
+    # Draw a cute heart shape centered at cx, cy using polygons
+    # Scaled to beat
+    size = 20 * scale
+    import math
+    points = []
+    # Parametric heart equation
+    for t in range(0, 360, 5):
+        rad = math.radians(t)
+        # Heart math
+        x = 16 * (math.sin(rad)**3)
+        y = 13 * math.cos(rad) - 5 * math.cos(2*rad) - 2 * math.cos(3*rad) - math.cos(4*rad)
+        # Flip Y since PIL origin is top-left
+        points.append((cx + x * (size/16.0), cy - y * (size/16.0)))
+    
+    scaled_points = [(p[0]*SCALE, p[1]*SCALE) for p in points]
+    draw.polygon(scaled_points, fill=LINE_COLOR)
 
-def _eyebrow(draw, cx, cy=EY, angry=True):
-    """Thick angled brow above the eye. angry=furrow (\\  /), else sad (/ \\)."""
-    by   = cy - ER - 9
-    tilt = 9
-    bw   = LW + 2
-    if angry:
-        if cx < 400:
-            _line(draw, cx - ER + 5, by + tilt, cx + ER - 5, by - tilt, w=bw)
-        else:
-            _line(draw, cx - ER + 5, by - tilt, cx + ER - 5, by + tilt, w=bw)
-    else:
-        if cx < 400:
-            _line(draw, cx - ER + 5, by - tilt, cx + ER - 5, by + tilt, w=bw)
-        else:
-            _line(draw, cx - ER + 5, by + tilt, cx + ER - 5, by - tilt, w=bw)
-
-def _eye_heart(draw, cx, cy=EVY, scale=1.0, color=RED):
-    size = 22 * scale
-    pts  = []
-    for t in range(0, 360, 4):
-        r = math.radians(t)
-        x = 16 * (math.sin(r) ** 3)
-        y = 13 * math.cos(r) - 5 * math.cos(2*r) - 2 * math.cos(3*r) - math.cos(4*r)
-        pts.append((S(cx + x * (size / 16)), S(cy - y * (size / 16))))
-    draw.polygon(pts, fill=color, outline=BLACK, width=S(3))
-
-def _eye_star(draw, cx, cy=EVY, rot=0):
-    outer, inner = 28, 8
-    pts = []
+def draw_star_eye(draw, cx, cy, rotation=0):
+    # Draw a 4-point sparkle star
+    import math
+    points = []
+    outer_r = 22
+    inner_r = 6
     for i in range(8):
-        a = math.radians(rot + i * 45)
-        r = outer if i % 2 == 0 else inner
-        pts.append((S(cx + math.sin(a) * r), S(cy - math.cos(a) * r)))
-    draw.polygon(pts, fill=BLACK)
+        angle = math.radians(rotation + i * 45)
+        r = outer_r if i % 2 == 0 else inner_r
+        points.append((cx + math.sin(angle) * r, cy - math.cos(angle) * r))
+        
+    scaled_points = [(p[0]*SCALE, p[1]*SCALE) for p in points]
+    draw.polygon(scaled_points, fill=LINE_COLOR)
 
-def _eye_x(draw, cx, cy=EVY, sz=17):
-    _line(draw, cx - sz, cy - sz, cx + sz, cy + sz)
-    _line(draw, cx - sz, cy + sz, cx + sz, cy - sz)
+def draw_confused_eyes(draw):
+    # One big, one flat
+    draw_circle_eye(draw, LEFT_EYE_X, EYE_VISUAL_Y, EYE_R + 5)
+    draw_line(draw, RIGHT_EYE_X - EYE_R, EYE_VISUAL_Y, RIGHT_EYE_X + EYE_R, EYE_VISUAL_Y)
 
-def _eye_closed(draw, cx):
-    _line(draw, cx - ER, EVY, cx + ER, EVY)
+def draw_cheeky_eyes(draw):
+    draw_circle_eye(draw, LEFT_EYE_X, EYE_VISUAL_Y, EYE_R - 2)
+    draw_line(draw, RIGHT_EYE_X - EYE_R, EYE_VISUAL_Y, RIGHT_EYE_X + EYE_R, EYE_VISUAL_Y)
 
-# ── Mouth building blocks ─────────────────────────────────────────────────────
-
-def _mouth_straight(draw, y=MY, w=MW):
-    _line(draw, 399 - w // 2, y, 399 + w // 2, y)
-
-def _mouth_smile(draw, y=MY, w=MW, depth=26):
-    _arc(draw, 399, y - depth, w // 2, 45, 135)
-
-def _mouth_frown(draw, y=MY, w=MW, depth=26):
-    _arc(draw, 399, y + depth, w // 2, 225, 315)
-
-def _mouth_o(draw, r=24):
-    _oval(draw, 399-r, MY-r, 399+r, MY+r, fill=DARK_GREEN, outline=BLACK, ow=LW)
-
-def _mouth_speak(draw, h, w=MW):
-    h    = max(14, min(68, h))
-    ml   = 399 - w // 2
-    mr   = 399 + w // 2
-    box  = SB(ml, MY - h // 2, mr, MY + h // 2)
-    rad  = S(h // 2)
-    draw.rounded_rectangle(box, radius=rad, fill=DARK_GREEN,
-                            outline=BLACK, width=S(LW))
-    if h > 20:
-        th = min(14, h // 3)
-        tb = [box[0]+S(LW), box[1]+S(LW), box[2]-S(LW), box[1]+S(th+LW)]
-        draw.rounded_rectangle(tb, radius=rad, fill=WHITE)
-    if h > 34:
-        ty_h = min(24, h // 2)
-        tw   = w - 34
-        tl   = S(399 - tw // 2)
-        tr2  = S(399 + tw // 2)
-        tb2  = box[3] - S(LW)
-        draw.ellipse([tl, tb2 - S(ty_h), tr2, tb2 + S(ty_h // 2)], fill=TONGUE_COL)
-        draw.rounded_rectangle(box, radius=rad, fill=None,
-                               outline=BLACK, width=S(LW))
-
-def _mouth_wavy(draw):
-    sh = LW // 2
-    _arc(draw, 399 - 16 + sh, MY, 16, 180, 360)
-    _arc(draw, 399 + 16 - sh, MY, 16,   0, 180)
-
-def _mouth_x(draw, sz=13):
-    _line(draw, 399 - sz, MY - sz, 399 + sz, MY + sz)
-    _line(draw, 399 - sz, MY + sz, 399 + sz, MY - sz)
-
-def _mouth_tongue(draw):
-    _mouth_straight(draw)
-    tc, tr = 399 + 20, 16
-    _oval(draw, tc-tr, MY, tc+tr, MY+tr*2, fill=TONGUE_COL, outline=BLACK, ow=LW)
-    _mouth_straight(draw)
-
-# ── Accessory helpers ─────────────────────────────────────────────────────────
-
-def _blush(draw):
-    """Soft pink blush circles on cheeks (happy, football)."""
-    _oval(draw, 110, 245, 178, 278, fill=PINK)
-    _oval(draw, 622, 245, 690, 278, fill=PINK)
-
-def _z_bubble(draw, cx, cy, sz=15):
-    """Speech-bubble style floating Z with white background."""
-    pad  = 5
-    b1x, b1y = cx - sz - pad, cy - sz - pad
-    b2x, b2y = cx + sz + pad, cy + sz + pad
-    _rrect(draw, b1x, b1y, b2x, b2y, rad=6, fill=WHITE, outline=BLACK, ow=3)
-    m = 4
-    _line(draw, cx - sz + m, cy - sz + m, cx + sz - m, cy - sz + m, w=3)
-    _line(draw, cx + sz - m, cy - sz + m, cx - sz + m, cy + sz - m, w=3)
-    _line(draw, cx - sz + m, cy + sz - m, cx + sz - m, cy + sz - m, w=3)
-
-def _musical_note(draw, nx, ny, bounce=0):
-    """Single musical note: filled oval head + stem + flag."""
-    _oval(draw, nx, ny + bounce, nx + 11, ny + 9 + bounce, fill=BLACK)
-    _line(draw, nx + 11, ny + bounce, nx + 11, ny - 22 + bounce, w=3)
-    _line(draw, nx + 11, ny - 22 + bounce, nx + 18, ny - 19 + bounce, w=3)
-
-def _draw_hat(draw):
-    """Solid fedora hat with dome crown, band, brim, and outlines."""
-    # ── Crown body (tapered trapezoid) ─────────────────────────────────────
-    crown_pts = [
-        (S(298), S(118)),
-        (S(316), S(32)),
-        (S(484), S(32)),
-        (S(502), S(118)),
-    ]
-    draw.polygon(crown_pts, fill=HAT)
-
-    # ── Dome top (filled semi-ellipse) ────────────────────────────────────
-    draw.pieslice(SB(312, -24, 488, 68), 180, 360, fill=HAT)
-
-    # ── Hat band ──────────────────────────────────────────────────────────
-    band_pts = [
-        (S(300), S(118)),
-        (S(312), S(86)),
-        (S(488), S(86)),
-        (S(500), S(118)),
-    ]
-    draw.polygon(band_pts, fill=HATBAND)
-    draw.line([S(312), S(86), S(488), S(86)], fill=GOLD, width=S(4))
-
-    # ── Brim: full ellipse, then re-paint the top to merge with crown ─────
-    draw.ellipse(SB(195, 108, 605, 155), fill=HAT)
-    # Repaint upper half of brim area to merge with crown seamlessly
-    draw.rectangle(SB(200, 108, 600, 131), fill=HAT)
-
-    # ── Outlines ──────────────────────────────────────────────────────────
-    # Brim visible lower arc — use PIL arc directly on the ellipse bbox so it
-    # stays flat (a circular _arc with r=205 would sweep through the face)
-    draw.arc(SB(195, 108, 605, 155), start=5, end=175, fill=BLACK, width=S(4))
-    # Crown sides
-    draw.line([S(298), S(118), S(316), S(32)], fill=BLACK, width=S(4))
-    draw.line([S(484), S(32), S(502), S(118)], fill=BLACK, width=S(4))
-    # Crown dome
-    _arc(draw, 400, 22, 85, 195, 345, color=BLACK, w=4)
-
-def _draw_pipe(draw, smoke=0):
-    """Wooden pipe with animated smoke rings."""
-    px, py = 452, 318
-    # Stem (two-segment slightly curved line)
-    _line(draw, px,    py,    px+28, py+18, color=WOOD, w=7)
-    _line(draw, px+28, py+18, px+55, py+32, color=WOOD, w=7)
-    # Rim outline of stem
-    _line(draw, px,    py,    px+28, py+18, color=BLACK, w=2)
-    _line(draw, px+28, py+18, px+55, py+32, color=BLACK, w=2)
-    # Bowl
-    _oval(draw, px+50, py+18, px+84, py+60, fill=WOOD, outline=BLACK, ow=4)
-    # Bowl opening (dark circle at top of bowl)
-    _dot(draw, px + 67, py + 22, 6, BLACK)
-    # Smoke rings that expand and drift upward
-    for k in range(min(smoke, 4)):
-        r_s = 10 + k * 7
-        sy  = py + 12 - k * 16 - smoke * 5
-        if sy > 10:
-            alpha_col = (210 - k*20, 210 - k*20, 210 - k*20)
-            _arc(draw, px + 67, sy, r_s, 190, 530, color=alpha_col, w=4)
-
-def _draw_moustache(draw, twitch=0):
-    """Grand handlebar moustache with proper teardrop body and curled tips."""
-    mx, my = 399, MY - 26
-
-    # ── Left half ─────────────────────────────────────────────────────────
-    # Teardrop body: filled chord (bottom half of a wide ellipse)
-    draw.chord(SB(305, my - 22, 400, my + 18), 0, 180, fill=BLACK)
-    # Curled tip — thick arc that loops outward (use bigger ellipse, thinner stroke)
-    _arc(draw, 282 + twitch, my - 6, 22, 95, 275, color=BLACK, w=5)
-    # Outer loop
-    _arc(draw, 278 + twitch, my - 10, 30, 80, 260, color=BLACK, w=4)
-
-    # ── Right half (mirror) ───────────────────────────────────────────────
-    draw.chord(SB(398, my - 22, 493, my + 18), 0, 180, fill=BLACK)
-    _arc(draw, 516 - twitch, my - 6, 22, 265, 445, color=BLACK, w=5)
-    _arc(draw, 520 - twitch, my - 10, 30, 280, 460, color=BLACK, w=4)
-
-    # Centre parting divot
-    _dot(draw, mx, my - 2, 6, BG)
-
-def _draw_bow(draw):
-    """Fabric-looking pink bow for football identity."""
-    bx, by = 550, 35
-    # Left loop (chord = filled arc segment)
-    draw.chord(SB(bx-44, by, bx+2,  by+52), 120, 300, fill=PINK, outline=BLACK, width=S(2))
-    # Right loop
-    draw.chord(SB(bx-2,  by, bx+44, by+52), 240,  60, fill=PINK, outline=BLACK, width=S(2))
-    # Centre knot
-    _rrect(draw, bx-9, by+14, bx+9, by+36, rad=4, fill=PINK, outline=BLACK, ow=2)
-
-def _draw_bee(draw, bx, by, wing_phase=0):
-    """Cartoon bee: striped abdomen, clear wings, head, antennae."""
-    # Abdomen (yellow rounded oval)
-    _oval(draw, bx-2, by, bx+46, by+26, fill=YELLOW, outline=BLACK, ow=3)
-    # Black stripes
-    for sx in (bx+10, bx+22, bx+34):
-        draw.rectangle(SB(sx, by+1, sx+7, by+25), fill=BLACK)
-    # Cover stripe overflows with outer oval outline
-    _oval(draw, bx-2, by, bx+46, by+26, fill=None, outline=BLACK, ow=3)
-    # Head (small yellow circle at front)
-    _dot(draw, bx - 9, by + 13, 10, YELLOW)
-    _dot(draw, bx - 9, by + 13, 10, None)  # placeholder
-    _oval(draw, bx-19, by+4, bx+1, by+23, fill=YELLOW, outline=BLACK, ow=2)
-    # Eye on head
-    _dot(draw, bx - 13, by + 10, 3, BLACK)
-    # Stinger
-    _line(draw, bx+46, by+13, bx+54, by+13, color=BLACK, w=3)
-    # Wings (translucent pale-blue ellipses, offset by phase for flap)
-    flap = int(5 * math.sin(wing_phase))
-    _oval(draw, bx+8,  by-20+flap, bx+40, by+4+flap,  fill=PALE_BLUE, outline=BLACK, ow=2)
-    _oval(draw, bx+12, by-12+flap, bx+36, by+2+flap,  fill=PALE_BLUE, outline=BLACK, ow=1)
-    # Antennae
-    _line(draw, bx-10, by+8, bx-18, by-8,  color=BLACK, w=2)
-    _line(draw, bx-8,  by+7, bx-2,  by-8,  color=BLACK, w=2)
-    _dot(draw, bx-18, by-10, 3, BLACK)
-    _dot(draw, bx-2,  by-10, 3, BLACK)
-
-def _draw_ladybug(draw, lx, ly, leg_phase=0):
-    """Cute cartoon ladybug: red oval, black spots, head, antennae."""
-    # Body
-    _oval(draw, lx, ly, lx+44, ly+30, fill=RED, outline=BLACK, ow=3)
-    # Centre line dividing wing cases
-    _line(draw, lx+22, ly+2, lx+22, ly+28, color=BLACK, w=2)
-    # Spots (3 per side)
-    for sx, sy in [(lx+6, ly+6), (lx+6, ly+17), (lx+13, ly+11),
-                   (lx+30, ly+6), (lx+30, ly+17), (lx+36, ly+11)]:
-        _dot(draw, sx, sy, 4, BLACK)
-    # Head
-    _dot(draw, lx - 8, ly + 15, 10, BLACK)
-    # Eyes on head
-    _dot(draw, lx - 13, ly + 11, 3, WHITE)
-    _dot(draw, lx - 13, ly + 18, 3, WHITE)
-    # Antennae
-    leg_wag = int(3 * math.sin(leg_phase))
-    _line(draw, lx-6, ly+8, lx-18, ly-4+leg_wag,  color=BLACK, w=2)
-    _line(draw, lx-6, ly+12, lx-14, ly-6-leg_wag, color=BLACK, w=2)
-    _dot(draw, lx-18, ly-6+leg_wag,  3, BLACK)
-    _dot(draw, lx-14, ly-8-leg_wag,  3, BLACK)
-    # Legs (3 on each side, wiggle with phase)
-    for k, (lleg_x, lleg_y) in enumerate([(lx+8, ly+30), (lx+20, ly+30), (lx+32, ly+30)]):
-        wag = int(4 * math.sin(leg_phase + k * 1.2))
-        _line(draw, lleg_x, lleg_y, lleg_x-5, lleg_y+10+wag, color=BLACK, w=2)
-        _line(draw, lleg_x, lleg_y, lleg_x+5, lleg_y+10-wag, color=BLACK, w=2)
-
-def _draw_worm(draw, wx, wy, wiggle=0.0):
-    """Segmented cartoon worm with cute face."""
-    seg_r    = 14
-    n_segs   = 6
-    seg_gap  = int(seg_r * 1.6)
-    # Draw body segments back-to-front (so head is on top)
-    for k in range(n_segs, 0, -1):
-        sy = wy + int(10 * math.sin(wiggle + k * 0.8))
-        sx = wx + k * seg_gap
-        # Slight gradient from tail (darker) to head (brighter)
-        shade = max(0, 160 - k * 14)
-        col   = (shade, 200, shade)
-        _dot(draw, sx, sy, seg_r, col)
-        _dot(draw, sx, sy, seg_r, None)   # placeholder so outline draws
-        _oval(draw, sx-seg_r, sy-seg_r, sx+seg_r, sy+seg_r, fill=col, outline=BLACK, ow=2)
-    # Head
-    hx = wx + seg_gap // 2
-    hy = wy + int(10 * math.sin(wiggle))
-    _oval(draw, hx-seg_r-3, hy-seg_r-3, hx+seg_r+3, hy+seg_r+3,
-          fill=(60, 210, 60), outline=BLACK, ow=3)
-    # Eyes
-    _dot(draw, hx - 5, hy - 4, 5, WHITE)
-    _dot(draw, hx + 5, hy - 4, 5, WHITE)
-    _dot(draw, hx - 4, hy - 5, 3, BLACK)
-    _dot(draw, hx + 6, hy - 5, 3, BLACK)
-    # Smile
-    _arc(draw, hx, hy + 4, 6, 25, 155, color=BLACK, w=2)
+def draw_mouth(draw, type="straight", open_amount=0, width_param=MOUTH_W):
+    # width_param allows overriding the default MOUTH_W for dynamic shape progression (visemes)
+    m_left = 399 - (width_param // 2)
+    m_right = 399 + (width_param // 2)
+    
+    if type == "straight":
+        draw_line(draw, m_left, MOUTH_Y, m_right, MOUTH_Y)
+    elif type == "smile":
+        # wide U shape
+        draw_arc_eye(draw, 399, MOUTH_Y - 20, width_param // 2, 45, 135)
+    elif type == "frown":
+        # wide inverted U shape
+        draw_arc_eye(draw, 399, MOUTH_Y + 20, width_param // 2, 225, 315)
+    elif type == "surprised":
+        # small circle
+        draw_ellipse(draw, [399 - 20, MOUTH_Y - 20, 399 + 20, MOUTH_Y + 20], fill=MOUTH_DARK, outline=LINE_COLOR, width=LINE_WIDTH)
+    elif type == "speaking":
+        # Complex pill-shaped mouth with teeth and tongue
+        # Outer pill bounding box
+        h = max(15, min(65, open_amount))
+        
+        box = [m_left * SCALE, (MOUTH_Y - h//2) * SCALE, m_right * SCALE, (MOUTH_Y + h//2) * SCALE]
+        rad = (h//2) * SCALE
+        
+        # Draw background dark cavity pill shape
+        draw.rounded_rectangle(box, radius=rad, fill=MOUTH_DARK, outline=LINE_COLOR, width=LINE_WIDTH * SCALE)
+        
+        # Draw teeth (white bar across the top inside of the mouth)
+        if h > 20: # Only show teeth if mouth is open wide enough
+            teeth_h = min(12, h // 3) * SCALE
+            teeth_box = [box[0] + (LINE_WIDTH*SCALE), box[1] + (LINE_WIDTH*SCALE), box[2] - (LINE_WIDTH*SCALE), box[1] + teeth_h + (LINE_WIDTH*SCALE)]
+            # Draw teeth as a rounded slice at the top
+            draw.rounded_rectangle(teeth_box, radius=rad, fill=TEETH_COLOR)
+            
+        # Draw tongue hump (light green pill slice at the bottom)
+        if h > 30:
+            tongue_h = min(20, h // 2) * SCALE
+            tongue_w = (width_param - 30) * SCALE
+            t_left = (399 * SCALE) - (tongue_w // 2)
+            t_right = (399 * SCALE) + (tongue_w // 2)
+            t_bottom = box[3] - (LINE_WIDTH*SCALE)
+            t_top = t_bottom - tongue_h
+            
+            draw.ellipse([t_left, t_top, t_right, t_bottom + (tongue_h//2)], fill=TONGUE_COLOR)
+            # Re-stroke the outer mouth line just in case tongue overflowed the bottom curve cleanly 
+            draw.rounded_rectangle(box, radius=rad, fill=None, outline=LINE_COLOR, width=LINE_WIDTH * SCALE)
+    elif type == "tongue":
+        # Straight line mouth with a colored tongue poking out below
+        draw_line(draw, m_left, MOUTH_Y, m_right, MOUTH_Y)
+        # Tongue as a filled half-circle in TONGUE_COLOR, outlined in black
+        tongue_cx = 399 + 15
+        tongue_cy = MOUTH_Y
+        tongue_r = 15
+        # Draw filled tongue
+        bbox = [(tongue_cx - tongue_r) * SCALE, tongue_cy * SCALE,
+                (tongue_cx + tongue_r) * SCALE, (tongue_cy + tongue_r * 2) * SCALE]
+        draw.ellipse(bbox, fill=TONGUE_COLOR, outline=LINE_COLOR, width=LINE_WIDTH * SCALE)
+        # Re-draw the mouth line on top so it covers the top edge of the tongue cleanly
+        x1, y1 = m_left * SCALE, MOUTH_Y * SCALE
+        x2, y2 = m_right * SCALE, MOUTH_Y * SCALE
+        w = LINE_WIDTH * SCALE
+        draw.line([(x1, y1), (x2, y2)], fill=LINE_COLOR, width=w)
+        r = w / 2.0
+        draw.ellipse([x1-r, y1-r, x1+r, y1+r], fill=LINE_COLOR)
+        draw.ellipse([x2-r, y2-r, x2+r, y2+r], fill=LINE_COLOR)
+    elif type == "wavy":
+        # squiggly mouth for dizzy (shift centers to account for PIL inward stroke)
+        shift = LINE_WIDTH // 2
+        draw_arc_eye(draw, 399 - 15 + shift, MOUTH_Y, 15, 180, 360)
+        draw_arc_eye(draw, 399 + 15 - shift, MOUTH_Y, 15, 0, 180)
+    elif type == "mute":
+        # whimsical 'x' mouth for shhh
+        sz = max(8, open_amount)
+        draw_line(draw, 399 - sz, MOUTH_Y - sz, 399 + sz, MOUTH_Y + sz)
+        draw_line(draw, 399 - sz, MOUTH_Y + sz, 399 + sz, MOUTH_Y - sz)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# ANIMATION GENERATORS
-# ══════════════════════════════════════════════════════════════════════════════
+# GENERATORS
+def gen_idle(base_dir="faces/idle"):
+    ensure_dir(base_dir)
+    # A more dynamic idle: blink, look left, look right, look up
+    frames = []
+    
+    # 0-9: Just standing still
+    for _ in range(10): frames.append((0, 0, 0.0))
+    # 10-13: Blink
+    frames.append((0, 0, 0.5))
+    frames.append((0, 0, 1.0))
+    frames.append((0, 0, 1.0))
+    frames.append((0, 0, 0.5))
+    # 14-19: Still
+    for _ in range(6): frames.append((0, 0, 0.0))
+    # 20-25: Look left
+    for i in range(1, 4): frames.append((-i*2, 0, 0.0))
+    for i in range(3, 0, -1): frames.append((-i*2, 0, 0.0))
+    # 26-30: Still
+    for _ in range(5): frames.append((0, 0, 0.0))
+    # 31-36: Look right
+    for i in range(1, 4): frames.append((i*2, 0, 0.0))
+    for i in range(3, 0, -1): frames.append((i*2, 0, 0.0))
+    # 37-40: Still
+    for _ in range(4): frames.append((0, 0, 0.0))
+    # 41-44: Quick double blink
+    frames.append((0, 0, 0.8))
+    frames.append((0, 0, 0.0))
+    frames.append((0, 0, 0.8))
+    frames.append((0, 0, 0.0))
+    # 45-50: Look up slightly
+    for i in range(1, 3): frames.append((0, -i*2, 0.0))
+    for i in range(2, 0, -1): frames.append((0, -i*2, 0.0))
 
-def gen_idle(d="faces/idle"):
-    mkd(d)
-    # Sequence: rest · blink · look-left · rest · look-right · rest · double-blink · look-up
-    seq = []
-    seq += [(0, 0, 0.0)] * 10          # resting
-    seq += [(0, 0, 0.5), (0, 0, 1.0),
-            (0, 0, 1.0), (0, 0, 0.5)]  # blink
-    seq += [(0, 0, 0.0)] * 4
-    seq += [(-k*2, 0, 0.0) for k in range(1, 4)]   # look left
-    seq += [(-k*2, 0, 0.0) for k in range(3, 0, -1)]
-    seq += [(0, 0, 0.0)] * 4
-    seq += [(k*2, 0, 0.0) for k in range(1, 4)]    # look right
-    seq += [(k*2, 0, 0.0) for k in range(3, 0, -1)]
-    seq += [(0, 0, 0.0)] * 3
-    seq += [(0, 0, 0.8), (0, 0, 0.0),
-            (0, 0, 0.8), (0, 0, 0.0)]  # double blink
-    seq += [(0, -k*2, 0.0) for k in range(1, 3)]   # glance up
-    seq += [(0, -k*2, 0.0) for k in range(2, 0, -1)]
+    for i, (ox, oy, blink) in enumerate(frames):
+        def draw_idle(d, xoff=ox, yoff=oy, b=blink):
+            # Regular eyes with offset and blink
+            if b >= 0.9:
+                draw_line(d, LEFT_EYE_X - EYE_R + xoff, EYE_VISUAL_Y + yoff, LEFT_EYE_X + EYE_R + xoff, EYE_VISUAL_Y + yoff)
+                draw_line(d, RIGHT_EYE_X - EYE_R + xoff, EYE_VISUAL_Y + yoff, RIGHT_EYE_X + EYE_R + xoff, EYE_VISUAL_Y + yoff)
+            elif b > 0.0:
+                draw_arc_eye(d, LEFT_EYE_X + xoff, EYE_Y + yoff - int((EYE_R/2) * b), EYE_R, 345, 195)
+                draw_arc_eye(d, RIGHT_EYE_X + xoff, EYE_Y + yoff - int((EYE_R/2) * b), EYE_R, 345, 195)
+            else:
+                draw_arc_eye(d, LEFT_EYE_X + xoff, EYE_Y + yoff, EYE_R, 335, 205)
+                draw_arc_eye(d, RIGHT_EYE_X + xoff, EYE_Y + yoff, EYE_R, 335, 205)
+            draw_mouth(d, "straight")
+        create_face(f"{base_dir}/idle_{i+1:02d}.png", draw_idle)
 
-    for i, (ox, oy, bl) in enumerate(seq):
-        def fn(draw, ox=ox, oy=oy, bl=bl):
-            _eye_u(draw, LEX + ox, EY + oy, blink=bl, shift=ox // 2)
-            _eye_u(draw, REX + ox, EY + oy, blink=bl, shift=ox // 2)
-            _mouth_straight(draw)
-        make_face(f"{d}/idle_{i+1:02d}.png", fn)
-
-def gen_speaking(d="faces/speaking"):
-    mkd(d)
-    # (mouth-open-height, mouth-width) — varied for natural lip-sync feel
+def gen_speaking(base_dir="faces/speaking"):
+    ensure_dir(base_dir)
+    # More varied shapes for better perceived lip-sync
+    # (height, width)
     shapes = [
-        ( 0, MW), (16, 90), (32, 82), (52, 62), (42, 72),
-        (22, 96), (46, 66), (10, 88), (36, 76), (62, 52),
-        (26, 92), (42, 62), ( 0, MW), (18, 82), (48, 66),
-        (28, 88), (10, 92), (56, 56), (34, 72), ( 0, MW),
+        (0, MOUTH_W),       # 01: closed
+        (15, 90),           # 02: slight open
+        (30, 80),           # 03: mid
+        (50, 60),           # 04: tall O
+        (40, 70),           # 05: mid
+        (20, 95),           # 06: wide (ee/eh)
+        (45, 65),           # 07: mid tall
+        (10, 85),           # 08: near closed
+        (35, 75),           # 09: mid
+        (60, 50),           # 10: very tall (aa)
+        (25, 90),           # 11: wide
+        (40, 60),           # 12: mid
+        (0, MOUTH_W),       # 13: closed
+        (20, 80), (45, 65), (30, 85), (10, 90), # 14-17: quick chatter
+        (55, 55), (0, MOUTH_W) # 18-19: end
     ]
     for i, (h, w) in enumerate(shapes):
-        def fn(draw, h=h, w=w):
-            # Wide open eyes during speech — round with shine
-            _eye_round(draw, LEX, EVY, r=ER - 2)
-            _eye_round(draw, REX, EVY, r=ER - 2)
-            if h == 0:
-                _mouth_straight(draw, w=w)
+        def draw_spk(d, hm=h, wm=w):
+            draw_circle_eye(d, LEFT_EYE_X, EYE_VISUAL_Y, EYE_R - 1)
+            draw_circle_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, EYE_R - 1)
+            if hm == 0:
+                draw_mouth(d, "straight", width_param=wm)
             else:
-                _mouth_speak(draw, h, w=w)
-        make_face(f"{d}/speaking_{i+1:02d}.png", fn)
+                draw_mouth(d, "speaking", hm, width_param=wm)
+        create_face(f"{base_dir}/speaking_{i+1:02d}.png", draw_spk)
 
-def gen_happy(d="faces/happy"):
-    mkd(d)
-    offsets = [0, -2, -4, -6, -4, -2, 0, 2]
+def gen_happy(base_dir="faces/happy"):
+    ensure_dir(base_dir)
+    # Happy eyes with a bouncing smile effect
+    offsets = [0, -2, -4, -2, 0, 2, 4, 2]
     for i, off in enumerate(offsets):
-        def fn(draw, o=off):
-            _eye_happy(draw, LEX)
-            _eye_happy(draw, REX)
-            _blush(draw)
-            _mouth_smile(draw, depth=26 + o)
-        make_face(f"{d}/happy_{i+1:02d}.png", fn)
+        def draw_h(d, o=off):
+            draw_arc_eye(d, LEFT_EYE_X, EYE_Y + 13, EYE_R, 180, 360)
+            draw_arc_eye(d, RIGHT_EYE_X, EYE_Y + 13, EYE_R, 180, 360)
+            draw_arc_eye(d, 399, MOUTH_Y - 20 + o, MOUTH_W // 2, 45, 135)
+        create_face(f"{base_dir}/happy_{i+1:02d}.png", draw_h)
 
-def gen_sad(d="faces/sad"):
-    mkd(d)
-    droops = [0, 2, 4, 6, 8, 6, 4, 2]
-    for i, dr in enumerate(droops):
-        def fn(draw, dr=dr):
-            _eyebrow(draw, LEX, angry=False)
-            _eyebrow(draw, REX, angry=False)
-            _eye_slash_sad(draw, LEX, droop=dr // 2)
-            _eye_slash_sad(draw, REX, droop=dr // 2)
-            _mouth_frown(draw)
-            # Teardrop under left eye at peak droop
-            if dr >= 6:
-                _oval(draw, LEX - 5, EVY + ER + 4,
-                      LEX + 5, EVY + ER + 18, fill=(130, 220, 255))
-        make_face(f"{d}/sad_{i+1:02d}.png", fn)
+def gen_sad(base_dir="faces/sad"):
+    ensure_dir(base_dir)
+    # Sad eyes droop progressively
+    droops = [0, 2, 4, 6, 4, 2]
+    for i, droop in enumerate(droops):
+        def draw_s(d, dr=droop):
+            draw_line(d, LEFT_EYE_X - EYE_R, EYE_VISUAL_Y + 10 + dr, LEFT_EYE_X + EYE_R, EYE_VISUAL_Y - 10 + dr)
+            draw_line(d, RIGHT_EYE_X - EYE_R, EYE_VISUAL_Y - 10 + dr, RIGHT_EYE_X + EYE_R, EYE_VISUAL_Y + 10 + dr)
+            draw_mouth(d, "frown")
+        create_face(f"{base_dir}/sad_{i+1:02d}.png", draw_s)
 
-def gen_angry(d="faces/angry"):
-    mkd(d)
+def gen_angry(base_dir="faces/angry"):
+    ensure_dir(base_dir)
+    # Trembling angry effect — slight X jitter on the eyes
     jitters = [0, -2, 0, 2, 0, -1, 0, 1]
-    for i, j in enumerate(jitters):
-        def fn(draw, j=j):
-            _eyebrow(draw, LEX + j, angry=True)
-            _eyebrow(draw, REX - j, angry=True)
-            _eye_slash_angry(draw, LEX + j)
-            _eye_slash_angry(draw, REX - j)
-            _mouth_straight(draw)
-        make_face(f"{d}/angry_{i+1:02d}.png", fn)
+    for i, jit in enumerate(jitters):
+        def draw_a(d, j=jit):
+            draw_line(d, LEFT_EYE_X - EYE_R + j, EYE_VISUAL_Y - 10, LEFT_EYE_X + EYE_R + j, EYE_VISUAL_Y + 10)
+            draw_line(d, RIGHT_EYE_X - EYE_R - j, EYE_VISUAL_Y + 10, RIGHT_EYE_X + EYE_R - j, EYE_VISUAL_Y - 10)
+            draw_mouth(d, "straight")
+        create_face(f"{base_dir}/angry_{i+1:02d}.png", draw_a)
 
-def gen_surprised(d="faces/surprised"):
-    mkd(d)
-    # Eyes grow then settle, mouth pulses
-    sizes = [ER, ER+4, ER+7, ER+9, ER+7, ER+4, ER+7, ER+9]
-    mouths = [30, 33, 36, 40, 36, 33, 36, 40]
-    for i, (rs, mr) in enumerate(zip(sizes, mouths)):
-        def fn(draw, rs=rs, mr=mr):
-            _eye_round(draw, LEX, EVY, r=rs)
-            _eye_round(draw, REX, EVY, r=rs)
-            _mouth_o(draw, r=mr)
-        make_face(f"{d}/surprised_{i+1:02d}.png", fn)
+def gen_surprised(base_dir="faces/surprised"):
+    ensure_dir(base_dir)
+    # Surprise mouth pulsing slightly
+    sizes = [18, 20, 22, 20, 18, 16, 18, 20]
+    for i, s in enumerate(sizes):
+        def draw_su(d, sz=s):
+            draw_circle_eye(d, LEFT_EYE_X, EYE_VISUAL_Y, EYE_R - 2)
+            draw_circle_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, EYE_R - 2)
+            draw_ellipse(d, [399 - sz, MOUTH_Y - sz, 399 + sz, MOUTH_Y + sz], fill=MOUTH_DARK, outline=LINE_COLOR, width=LINE_WIDTH)
+        create_face(f"{base_dir}/surprised_{i+1:02d}.png", draw_su)
 
-def gen_sleepy(d="faces/sleepy"):
-    mkd(d)
-    for i in range(10):
-        t = i / 9.0
-        def fn(draw, i=i, t=t):
-            _eye_u(draw, LEX, blink=0.9)
-            _eye_u(draw, REX, blink=0.9)
-            _mouth_straight(draw)
-            # Z bubbles float upward, fading in one by one
-            if i >= 2:
-                _z_bubble(draw, 605, 175 - i * 10, sz=13)
-            if i >= 5:
-                _z_bubble(draw, 645, 130 - (i-3) * 10, sz=17)
-            if i >= 8:
-                _z_bubble(draw, 625, 85 - (i-6) * 10, sz=21)
-        make_face(f"{d}/sleepy_{i+1:02d}.png", fn)
+def gen_sleepy(base_dir="faces/sleepy"):
+    ensure_dir(base_dir)
+    # Longer z-floating sequence
+    for i in range(1, 9):
+        z_offset = i * 4
+        def draw_sleepy(d, off=z_offset):
+            draw_regular_eyes(d, 1.0)
+            draw_mouth(d, "straight")
+            if off > 8:
+                bx, by = 600, 130 - off
+                s = 25
+                draw_line(d, bx, by, bx+s, by, width=4)
+                draw_line(d, bx+s, by, bx, by+s, width=4)
+                draw_line(d, bx, by+s, bx+s, by+s, width=4)
+            if off > 16: 
+                bx, by = 650, 90 - off
+                s = 15
+                draw_line(d, bx, by, bx+s, by, width=3)
+                draw_line(d, bx+s, by, bx, by+s, width=3)
+                draw_line(d, bx, by+s, bx+s, by+s, width=3)
+        create_face(f"{base_dir}/sleepy_{i:02d}.png", draw_sleepy)
 
-def gen_thinking(d="faces/thinking"):
-    mkd(d)
-    for i in range(12):
-        phase = i / 11.0
-        off   = int(60 * math.sin(phase * math.pi))   # dot scans left→right
-        def fn(draw, i=i, off=off):
-            # Half-closed eyes looking slightly upward
-            _eye_u(draw, LEX, EY - 5, blink=0.35)
-            _eye_u(draw, REX, EY - 5, blink=0.35)
-            _mouth_straight(draw)
-            # Scanning dot row
-            for k in range(3):
-                base_x = 355 + k * 30
-                cx     = base_x + off // 3
-                alpha  = 1.0 - abs(cx - (base_x + 30)) / 60
-                r_dot  = max(5, int(9 * alpha))
-                _dot(draw, cx, 260, r_dot)
-        make_face(f"{d}/thinking_{i+1:02d}.png", fn)
+def gen_thinking(base_dir="faces/thinking"):
+    ensure_dir(base_dir)
+    # Scanning eyes or moving dot
+    for i in range(1, 10):
+        offset = (i % 5) * 10
+        def draw_think(d, off=offset):
+            draw_regular_eyes(d, 0.0)
+            draw_mouth(d, "straight")
+            # Draw a little thinking dot
+            draw_ellipse(d, [380 + off, 240, 400 + off, 260], fill=LINE_COLOR)
+        create_face(f"{base_dir}/thinking_{i:02d}.png", draw_think)
 
-def gen_dizzy(d="faces/dizzy"):
-    mkd(d)
-    for i in range(6):
-        flip = (i % 2 == 0)
-        def fn(draw, flip=flip):
-            _eye_x(draw, LEX)
-            _eye_x(draw, REX)
-            _mouth_wavy(draw)
-        make_face(f"{d}/dizzy_{i+1:02d}.png", fn)
+def gen_dizzy(base_dir="faces/dizzy"):
+    ensure_dir(base_dir)
+    for i in range(1, 5):
+        # alternate wavy mouth direction to make it look like it's shaking
+        shift = LINE_WIDTH // 2
+        def draw_dizzy1(d):
+            draw_dizzy_eyes(d)
+            draw_arc_eye(d, 380 + shift, 300, 20, 180, 360)
+            draw_arc_eye(d, 420 - shift, 300, 20, 0, 180)
+        def draw_dizzy2(d):
+            draw_dizzy_eyes(d)
+            draw_arc_eye(d, 380 + shift, 300, 20, 0, 180)
+            draw_arc_eye(d, 420 - shift, 300, 20, 180, 360)
+        create_face(f"{base_dir}/dizzy_{i:02d}.png", draw_dizzy1 if i % 2 == 0 else draw_dizzy2)
 
-def gen_cheeky(d="faces/cheeky"):
-    mkd(d)
-    tongue_off = [10, 16, 22, 18, 12, 6, 2, 6]
-    for i, to in enumerate(tongue_off):
-        def fn(draw, to=to):
-            # Wink: left = round open, right = closed line
-            _eye_round(draw, LEX, EVY, r=ER - 2)
-            _eye_closed(draw, REX)
-            # Mouth with tongue wagging to offset
-            _mouth_straight(draw)
-            tc, tr = 399 + to, 16
-            _oval(draw, tc-tr, MY, tc+tr, MY+tr*2,
-                  fill=TONGUE_COL, outline=BLACK, ow=LW)
-            _mouth_straight(draw)
-        make_face(f"{d}/cheeky_{i+1:02d}.png", fn)
+def gen_cheeky(base_dir="faces/cheeky"):
+    ensure_dir(base_dir)
+    # Tongue wagging side to side
+    tongue_offsets = [10, 15, 20, 15, 10, 5, 0, 5]
+    for i, toff in enumerate(tongue_offsets):
+        def draw_chk(d, to=toff):
+            draw_cheeky_eyes(d)
+            m_left = 399 - (MOUTH_W // 2)
+            m_right = 399 + (MOUTH_W // 2)
+            draw_line(d, m_left, MOUTH_Y, m_right, MOUTH_Y)
+            tc = 399 + to
+            tr = 15
+            bbox = [(tc - tr) * SCALE, MOUTH_Y * SCALE,
+                    (tc + tr) * SCALE, (MOUTH_Y + tr * 2) * SCALE]
+            d.ellipse(bbox, fill=TONGUE_COLOR, outline=LINE_COLOR, width=LINE_WIDTH * SCALE)
+            # Re-draw mouth line on top
+            x1, y1 = m_left * SCALE, MOUTH_Y * SCALE
+            x2, y2 = m_right * SCALE, MOUTH_Y * SCALE
+            w = LINE_WIDTH * SCALE
+            d.line([(x1, y1), (x2, y2)], fill=LINE_COLOR, width=w)
+            r = w / 2.0
+            d.ellipse([x1-r, y1-r, x1+r, y1+r], fill=LINE_COLOR)
+            d.ellipse([x2-r, y2-r, x2+r, y2+r], fill=LINE_COLOR)
+        create_face(f"{base_dir}/cheeky_{i+1:02d}.png", draw_chk)
 
-def gen_heart(d="faces/heart"):
-    mkd(d)
-    scales = [1.0, 1.15, 1.35, 1.5, 1.35, 1.15, 1.0, 0.9]
-    for i, sc in enumerate(scales):
-        def fn(draw, sc=sc):
-            _eye_heart(draw, LEX, EVY, scale=sc)
-            _eye_heart(draw, REX, EVY, scale=sc)
-            _mouth_smile(draw)
-        make_face(f"{d}/heart_{i+1:02d}.png", fn)
+def gen_heart(base_dir="faces/heart"):
+    ensure_dir(base_dir)
+    scales = [1.0, 1.2, 1.5, 1.2, 1.0, 1.0]
+    for i, s in enumerate(scales):
+        create_face(f"{base_dir}/heart_{i:02d}.png", lambda d, s=s: (draw_heart_eye(d, LEFT_EYE_X, EYE_VISUAL_Y, s), draw_heart_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, s), draw_mouth(d, "smile")))
 
-def gen_starry(d="faces/starry_eyed"):
-    mkd(d)
+def gen_starry(base_dir="faces/starry_eyed"):
+    ensure_dir(base_dir)
     for i in range(8):
-        rot = i * 11.25
-        def fn(draw, rot=rot):
-            _eye_star(draw, LEX, EVY, rot=rot)
-            _eye_star(draw, REX, EVY, rot=rot)
-            _mouth_o(draw, r=20)
-        make_face(f"{d}/starry_{i+1:02d}.png", fn)
+        create_face(f"{base_dir}/starry_{i:02d}.png", lambda d, r=i*11.25: (draw_star_eye(d, LEFT_EYE_X, EYE_VISUAL_Y, r), draw_star_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, r), draw_mouth(d, "surprised")))
 
-def gen_confused(d="faces/confused"):
-    mkd(d)
-    for i in range(6):
-        flip = (i % 2 == 0)
-        wag  = [0, 1, 0, -1, 0, 1][i]
-        def fn(draw, flip=flip, wag=wag):
-            # One oversized round eye, one flat line
-            _eye_round(draw, LEX, EVY, r=ER + 5)
-            _eye_closed(draw, REX)
-            # Wavy mouth wobbles
-            sh = LW // 2
-            if flip:
-                _arc(draw, 399 - 16 + sh, MY + wag, 16, 180, 360)
-                _arc(draw, 399 + 16 - sh, MY + wag, 16,   0, 180)
-            else:
-                _arc(draw, 399 - 16 + sh, MY + wag, 16,   0, 180)
-                _arc(draw, 399 + 16 - sh, MY + wag, 16, 180, 360)
-        make_face(f"{d}/confused_{i+1:02d}.png", fn)
+def gen_confused(base_dir="faces/confused"):
+    ensure_dir(base_dir)
+    for i in range(1, 5):
+        # reuse wavy mouth logic alternating directions
+        shift = LINE_WIDTH // 2
+        def draw_conf1(d):
+            draw_confused_eyes(d)
+            draw_arc_eye(d, 380 + shift, 300, 20, 180, 360)
+            draw_arc_eye(d, 420 - shift, 300, 20, 0, 180)
+        def draw_conf2(d):
+            draw_confused_eyes(d)
+            draw_arc_eye(d, 380 + shift, 300, 20, 0, 180)
+            draw_arc_eye(d, 420 - shift, 300, 20, 180, 360)
+        create_face(f"{base_dir}/confused_{i:02d}.png", draw_conf1 if i % 2 == 0 else draw_conf2)
+def gen_listening(base_dir="faces/listening"):
+    ensure_dir(base_dir)
+    # Attentive eyes - slightly wider, straight mouth
+    for i in range(1, 3):
+        create_face(f"{base_dir}/listening_{i:02d}.png", lambda d: (draw_circle_eye(d, LEFT_EYE_X, EYE_VISUAL_Y, EYE_R - 2), draw_circle_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, EYE_R - 2), draw_mouth(d, "straight")))
 
-def gen_listening(d="faces/listening"):
-    mkd(d)
-    for i in range(3):
-        def fn(draw):
-            _eye_round(draw, LEX, EVY, r=ER)
-            _eye_round(draw, REX, EVY, r=ER)
-            _mouth_straight(draw)
-        make_face(f"{d}/listening_{i+1:02d}.png", fn)
+def gen_error(base_dir="faces/error"):
+    ensure_dir(base_dir)
+    create_face(f"{base_dir}/error_01.png", lambda d: (draw_dizzy_eyes(d), draw_mouth(d, "frown")))
 
-def gen_error(d="faces/error"):
-    mkd(d)
-    def fn(draw):
-        _eye_x(draw, LEX)
-        _eye_x(draw, REX)
-        _mouth_frown(draw)
-    make_face(f"{d}/error_01.png", fn)
+def gen_capturing(base_dir="faces/capturing"):
+    ensure_dir(base_dir)
+    create_face(f"{base_dir}/capturing_01.png", lambda d: (draw_surprised_eyes(d), draw_mouth(d, "surprised")))
 
-def gen_capturing(d="faces/capturing"):
-    mkd(d)
-    def fn(draw):
-        _eye_round(draw, LEX, EVY, r=ER + 6)
-        _eye_round(draw, REX, EVY, r=ER + 6)
-        _mouth_o(draw, r=26)
-    make_face(f"{d}/capturing_01.png", fn)
-
-def gen_warmup(d="faces/warmup"):
-    mkd(d)
-    def fn(draw):
-        _eye_u(draw, LEX, blink=0.5)
-        _eye_u(draw, REX, blink=0.5)
-        _mouth_straight(draw)
-    make_face(f"{d}/warmup_01.png", fn)
-
-# ── Screensaver animations ────────────────────────────────────────────────────
-
-def gen_daydream(d="faces/daydream"):
-    mkd(d)
-    for i in range(12):
-        drift = int(4 * math.sin(i * math.pi / 6))
-        by    = 185 - i * 7
-        def fn(draw, i=i, drift=drift, by=by):
-            _eye_u(draw, LEX, EY - 6 + drift, blink=0.25)
-            _eye_u(draw, REX, EY - 6 + drift, blink=0.25)
-            _mouth_straight(draw)
-            if i >= 2:
-                _dot(draw, 618, by + 20, 5)
-            if i >= 5:
-                _z_bubble(draw, 638, by, sz=10)
-            if i >= 8:
-                _z_bubble(draw, 650, by - 28, sz=14)
-        make_face(f"{d}/daydream_{i+1:02d}.png", fn)
-
-def gen_bored(d="faces/bored"):
-    mkd(d)
-    offsets = [-8, -6, -3, 0, 3, 6, 8, 6, 3, 0]
-    for i, ox in enumerate(offsets):
-        def fn(draw, ox=ox):
-            _eye_u(draw, LEX, shift=ox)
-            _eye_u(draw, REX, shift=ox)
-            _mouth_frown(draw, depth=14)
-        make_face(f"{d}/bored_{i+1:02d}.png", fn)
-
-def gen_jamming(d="faces/jamming"):
-    mkd(d)
+def gen_warmup(base_dir="faces/warmup"):
+    ensure_dir(base_dir)
+    create_face(f"{base_dir}/warmup_01.png", lambda d: (draw_regular_eyes(d, 0.5), draw_mouth(d, "straight")))
+def gen_daydream(base_dir="faces/daydream"):
+    """Eyes drift upward with floating thought bubbles — BMO lost in thought"""
+    ensure_dir(base_dir)
+    import math
     for i in range(10):
-        nb = int(6 * math.sin(i * math.pi / 5))
-        def fn(draw, i=i, nb=nb):
-            _eye_closed(draw, LEX)
-            _eye_closed(draw, REX)
-            _mouth_smile(draw, depth=30)
-            _musical_note(draw, 608 + (i % 3) * 6, 148, bounce=nb)
-            if i > 2:
-                _musical_note(draw, 648 - (i % 3) * 4, 128, bounce=-nb)
-        make_face(f"{d}/jamming_{i+1:02d}.png", fn)
+        drift = int(3 * math.sin(i * math.pi / 5))  # gentle up-down
+        bubble_y = 180 - i * 8  # bubbles float upward
+        def draw_dd(d, dr=drift, by=bubble_y, frame=i):
+            # Dreamy half-closed eyes looking up
+            draw_arc_eye(d, LEFT_EYE_X, EYE_Y - 3 + dr, EYE_R, 340, 200)
+            draw_arc_eye(d, RIGHT_EYE_X, EYE_Y - 3 + dr, EYE_R, 340, 200)
+            # Gentle straight mouth
+            draw_mouth(d, "straight")
+            # Floating thought bubbles (small circles rising)
+            if frame > 2:
+                draw_ellipse(d, [620, by + 20, 630, by + 30], fill=LINE_COLOR)
+            if frame > 4:
+                draw_ellipse(d, [635, by, 650, by + 15], fill=LINE_COLOR)
+            if frame > 6:
+                draw_ellipse(d, [642, by - 25, 665, by - 5], fill=LINE_COLOR)
+        create_face(f"{base_dir}/daydream_{i+1:02d}.png", draw_dd)
 
-def gen_curious(d="faces/curious"):
-    mkd(d)
-    for i in range(10):
-        big_r = ER + 2 + int(4 * math.sin(i * math.pi / 5))
-        sml_r = ER - 6
-        def fn(draw, big_r=big_r, sml_r=sml_r):
-            _eye_round(draw, LEX, EVY, r=big_r)
-            _eye_u(draw, REX, blink=0.3)
-            _mouth_straight(draw)
-        make_face(f"{d}/curious_{i+1:02d}.png", fn)
+def gen_bored(base_dir="faces/bored"):
+    """Eyes scanning left and right — BMO looking around"""
+    ensure_dir(base_dir)
+    # Eye offsets for scanning: left, center, right, center, repeat
+    offsets = [-8, -5, 0, 5, 8, 5, 0, -5]
+    for i, off in enumerate(offsets):
+        def draw_bored(d, o=off):
+            # Arc eyes shifted horizontally
+            draw_arc_eye(d, LEFT_EYE_X + o, EYE_Y, EYE_R, 335, 205)
+            draw_arc_eye(d, RIGHT_EYE_X + o, EYE_Y, EYE_R, 335, 205)
+            # Slight frown
+            draw_arc_eye(d, 399, MOUTH_Y + 15, MOUTH_W // 2, 235, 305)
+        create_face(f"{base_dir}/bored_{i+1:02d}.png", draw_bored)
 
-def gen_shhh(d="faces/shhh"):
-    mkd(d)
+def gen_jamming(base_dir="faces/jamming"):
+    """Eyes closed, smiling, musical notes bouncing — BMO enjoying music"""
+    ensure_dir(base_dir)
+    import math
     for i in range(8):
-        bl  = (4 - abs(i - 4)) * 0.08
-        xsz = 11 + int((4 - abs(i - 4)) * 1.5)
-        def fn(draw, bl=bl, xsz=xsz):
-            _eye_u(draw, LEX, blink=bl)
-            _eye_u(draw, REX, blink=bl)
-            _mouth_x(draw, sz=xsz)
-        make_face(f"{d}/shhh_{i+1:02d}.png", fn)
+        note_bounce = int(5 * math.sin(i * math.pi / 4))
+        def draw_jam(d, nb=note_bounce, frame=i):
+            # Closed happy eyes (straight lines slightly curved up)
+            draw_line(d, LEFT_EYE_X - EYE_R, EYE_VISUAL_Y, LEFT_EYE_X + EYE_R, EYE_VISUAL_Y)
+            draw_line(d, RIGHT_EYE_X - EYE_R, EYE_VISUAL_Y, RIGHT_EYE_X + EYE_R, EYE_VISUAL_Y)
+            # Big smile
+            draw_arc_eye(d, 399, MOUTH_Y - 20, MOUTH_W // 2, 45, 135)
+            # Musical notes: ♪ drawn as small circles with stems
+            # Note 1
+            nx, ny = 620 + (frame % 4) * 5, 150 + nb
+            draw_ellipse(d, [nx, ny, nx+10, ny+8], fill=LINE_COLOR)
+            draw_line(d, nx+10, ny, nx+10, ny-20, width=3)
+            draw_line(d, nx+10, ny-20, nx+16, ny-18, width=3)
+            # Note 2 (offset)
+            if frame > 2:
+                nx2, ny2 = 650 - (frame % 3) * 4, 130 - nb
+                draw_ellipse(d, [nx2, ny2, nx2+10, ny2+8], fill=LINE_COLOR)
+                draw_line(d, nx2+10, ny2, nx2+10, ny2-20, width=3)
+                draw_line(d, nx2+10, ny2-20, nx2+16, ny2-18, width=3)
+        create_face(f"{base_dir}/jamming_{i+1:02d}.png", draw_jam)
 
-def gen_football(d="faces/football"):
-    mkd(d)
+def gen_curious(base_dir="faces/curious"):
+    """One eye bigger than the other, tilted — BMO noticing something"""
+    ensure_dir(base_dir)
+    import math
     for i in range(8):
-        def fn(draw):
-            _eye_happy(draw, LEX)
-            _eye_happy(draw, REX)
-            _blush(draw)
-            _mouth_smile(draw)
-            _draw_bow(draw)
-        make_face(f"{d}/football_{i+1:02d}.png", fn)
+        # Subtle eye size pulsing
+        big_r = EYE_R + 2 + int(3 * math.sin(i * math.pi / 4))
+        small_r = EYE_R - 4
+        def draw_cur(d, br=big_r, sr=small_r):
+            # Big curious left eye
+            draw_circle_eye(d, LEFT_EYE_X, EYE_VISUAL_Y, br)
+            # Small squinting right eye
+            draw_circle_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, sr)
+            # Slightly asymmetric mouth
+            draw_mouth(d, "straight")
+        create_face(f"{base_dir}/curious_{i+1:02d}.png", draw_cur)
 
-def gen_detective(d="faces/detective"):
-    mkd(d)
-    for i in range(10):
-        ox    = int(10 * math.sin(i * math.pi / 5))   # scanning eyes
-        smoke = (i % 5)                                # smoke rings cycle
-        def fn(draw, ox=ox, smoke=smoke):
-            _draw_hat(draw)
-            _eye_u(draw, LEX + ox, EY + 6, blink=0.2)
-            _eye_u(draw, REX + ox, EY + 6, blink=0.2)
-            _mouth_straight(draw)
-            _draw_pipe(draw, smoke=smoke)
-        make_face(f"{d}/detective_{i+1:02d}.png", fn)
-
-def gen_sir_mano(d="faces/sir_mano"):
-    mkd(d)
+def gen_shhh(base_dir="faces/shhh"):
+    """Shhh mouth with a cute whimsical X, animated eyes slightly squinting"""
+    ensure_dir(base_dir)
+    # 8 frames of animation to match others
     for i in range(8):
-        twitch = int(2 * math.sin(i * math.pi / 4))
-        def fn(draw, tw=twitch):
-            _eye_round(draw, LEX, EVY, r=ER - 2)
-            _eye_round(draw, REX, EVY, r=ER - 2)
-            _mouth_smile(draw, depth=16)
-            _draw_moustache(draw, twitch=tw)
-        make_face(f"{d}/sir_mano_{i+1:02d}.png", fn)
+        # Eyes slowly half-close
+        blink_amt = (4 - abs(i - 4)) * 0.1  # max ~0.4 blink
+        # X mouth pulsates gently
+        x_size = 10 + (4 - abs(i - 4)) * 1.5
+        def draw_sh(d, blink=blink_amt, sz=int(x_size)):
+            draw_regular_eyes(d, blink)
+            draw_mouth(d, "mute", open_amount=sz)
+        create_face(f"{base_dir}/shhh_{i+1:02d}.png", draw_sh)
 
-def gen_low_battery(d="faces/low_battery"):
-    mkd(d)
+def gen_football(base_dir="faces/football"):
+    """BMO's mirror identity. Pink lipstick 'blush' and a bow."""
+    ensure_dir(base_dir)
+    for i in range(8):
+        def draw_fb(d, frame=i):
+            draw_happy_eyes(d)
+            draw_mouth(d, "smile")
+            # Softer, more organic pink blush (slightly transparent feel via color choice)
+            pink = (255, 140, 190)
+            # Oval blush spots positioned lower and wider
+            d.ellipse([120*SCALE, 240*SCALE, 180*SCALE, 275*SCALE], fill=pink)
+            d.ellipse([620*SCALE, 240*SCALE, 680*SCALE, 275*SCALE], fill=pink)
+            
+            # A more "fabric" looking bow on the top corner
+            bx, by = 550, 40
+            # Bow Loops (rounded polygons for a soft look)
+            d.chord([(bx-40)*SCALE, by*SCALE, bx*SCALE, (by+50)*SCALE], 120, 300, fill=pink, outline=LINE_COLOR, width=2*SCALE)
+            d.chord([bx*SCALE, by*SCALE, (bx+40)*SCALE, (by+50)*SCALE], 240, 60, fill=pink, outline=LINE_COLOR, width=2*SCALE)
+            # Bow Knot (small rounded center)
+            d.rounded_rectangle([(bx-8)*SCALE, (by+15)*SCALE, (bx+8)*SCALE, (by+35)*SCALE], radius=5*SCALE, fill=pink, outline=LINE_COLOR, width=2*SCALE)
+        create_face(f"{base_dir}/football_{i+1:02d}.png", draw_fb)
+
+def gen_detective(base_dir="faces/detective"):
+    """Detective BMO with a stylized fedora and pipe."""
+    ensure_dir(base_dir)
+    import math
+    for i in range(8):
+        # Scan eyes
+        offset = int(10 * math.sin(i * math.pi / 4))
+        def draw_det(d, off=offset):
+            # Squinting eyes scanning
+            draw_arc_eye(d, LEFT_EYE_X + off, EYE_Y + 5, EYE_R, 345, 195)
+            draw_arc_eye(d, RIGHT_EYE_X + off, EYE_Y + 5, EYE_R, 345, 195)
+            draw_mouth(d, "straight")
+            
+            # Stylized Fedora
+            hat_color = (60, 60, 70)
+            band_color = (30, 30, 40)
+            # Curved Brim
+            d.chord([220*SCALE, 110*SCALE, 580*SCALE, 150*SCALE], 0, 180, fill=hat_color, outline=LINE_COLOR, width=3*SCALE)
+            # Tapered Crown (Trapezoid-ish with rounded top)
+            d.polygon([(300*SCALE, 115*SCALE), (320*SCALE, 30*SCALE), (480*SCALE, 30*SCALE), (500*SCALE, 115*SCALE)], fill=hat_color, outline=LINE_COLOR, width=3*SCALE)
+            # Hat Band
+            d.polygon([(304*SCALE, 115*SCALE), (312*SCALE, 85*SCALE), (488*SCALE, 85*SCALE), (496*SCALE, 115*SCALE)], fill=band_color)
+            
+            # Classic wooden pipe
+            pipe_brown = (120, 60, 30)
+            px, py = 450, 310
+            # Stem (slightly curved)
+            d.line([(px*SCALE, py*SCALE), ((px+60)*SCALE, (py+40)*SCALE)], fill=pipe_brown, width=6*SCALE)
+            # Bowl
+            d.ellipse([(px+55)*SCALE, (py+25)*SCALE, (px+85)*SCALE, (py+65)*SCALE], fill=pipe_brown, outline=LINE_COLOR, width=3*SCALE)
+            # Smoke puff
+            if i % 2 == 0:
+                d.ellipse([(px+80)*SCALE, (py+5)*SCALE, (px+100)*SCALE, (py+25)*SCALE], fill=(255, 255, 255, 128))
+        create_face(f"{base_dir}/detective_{i+1:02d}.png", draw_det)
+
+def gen_sir_mano(base_dir="faces/sir_mano"):
+    """Sir Mano with a bold, fancy mustache."""
+    ensure_dir(base_dir)
+    for i in range(8):
+        def draw_sm(d):
+            draw_circle_eye(d, LEFT_EYE_X, EYE_VISUAL_Y, EYE_R - 2)
+            draw_circle_eye(d, RIGHT_EYE_X, EYE_VISUAL_Y, EYE_R - 2)
+            # Gentle smile
+            draw_arc_eye(d, 399, MOUTH_Y - 5, MOUTH_W // 2, 45, 135)
+            
+            # Thick Handlebar Mustache
+            # Each side is a teardrop shape that tapers to a curl
+            w = 12 * SCALE
+            # Left side
+            d.chord([310*SCALE, 255*SCALE, 400*SCALE, 305*SCALE], 0, 180, fill=LINE_COLOR)
+            # Left Curl
+            d.arc([290*SCALE, 245*SCALE, 330*SCALE, 285*SCALE], 90, 270, fill=LINE_COLOR, width=w)
+            # Right side
+            d.chord([398*SCALE, 255*SCALE, 488*SCALE, 305*SCALE], 0, 180, fill=LINE_COLOR)
+            # Right Curl
+            d.arc([468*SCALE, 245*SCALE, 508*SCALE, 285*SCALE], -90, 90, fill=LINE_COLOR, width=w)
+        create_face(f"{base_dir}/sir_mano_{i+1:02d}.png", draw_sm)
+
+def gen_low_battery(base_dir="faces/low_battery"):
+    """Low battery warning flashing."""
+    ensure_dir(base_dir)
     for i in range(8):
         flash = (i % 2 == 0)
-        def fn(draw, flash=flash):
-            _eye_slash_sad(draw, LEX, droop=4)
-            _eye_slash_sad(draw, REX, droop=4)
-            _mouth_frown(draw)
-            red_col = (240, 20, 20) if flash else (100, 10, 10)
-            _rrect(draw, 318, 46, 452, 96, fill=WHITE, outline=BLACK, ow=5)
-            _rrect(draw, 452, 62, 468, 80, fill=BLACK)
-            _rrect(draw, 322, 50, 360, 92, fill=red_col)
-        make_face(f"{d}/low_battery_{i+1:02d}.png", fn)
+        def draw_lb(d, f=flash):
+            # Drooping, weary eyes
+            draw_line(d, LEFT_EYE_X - EYE_R, EYE_VISUAL_Y + 12, LEFT_EYE_X + EYE_R, EYE_VISUAL_Y - 8)
+            draw_line(d, RIGHT_EYE_X - EYE_R, EYE_VISUAL_Y - 8, RIGHT_EYE_X + EYE_R, EYE_VISUAL_Y + 12)
+            draw_mouth(d, "frown")
+            
+            # Big Battery Icon in the middle top
+            red = (255, 0, 0) if f else (100, 0, 0)
+            d.rectangle([(320*SCALE, 50*SCALE), (450*SCALE, 100*SCALE)], outline=LINE_COLOR, width=6*SCALE)
+            d.rectangle([(450*SCALE, 65*SCALE), (465*SCALE, 85*SCALE)], fill=LINE_COLOR) # nub
+            # One red bar
+            d.rectangle([(325*SCALE, 55*SCALE), (350*SCALE, 95*SCALE)], fill=red)
+        create_face(f"{base_dir}/low_battery_{i+1:02d}.png", draw_lb)
 
-# ── Creature animations ───────────────────────────────────────────────────────
+def gen_bee(base_dir="faces/bee"):
+    """BMO watching a bee fly across the screen."""
+    ensure_dir(base_dir)
+    import math
+    for i in range(16):
+        # Bee moves left to right, up and down
+        bee_x = 100 + i * 40
+        bee_y = 150 + int(30 * math.sin(i * math.pi / 2))
+        
+        # Eyes track the bee's X coordinate roughly
+        # Center of screen is 400. Left eye is 217, Right is 581.
+        target_x_offset = int((bee_x - 400) / 15)
+        
+        def draw_bee_frame(d, b_x=bee_x, b_y=bee_y, e_off=target_x_offset):
+            # Wide eyes, shifting to follow
+            draw_circle_eye(d, LEFT_EYE_X + e_off, EYE_VISUAL_Y, EYE_R)
+            draw_circle_eye(d, RIGHT_EYE_X + e_off, EYE_VISUAL_Y, EYE_R)
+            draw_mouth(d, "surprised")
+            
+            # Draw the bee: yellow pill with black stripes
+            yellow = (255, 235, 59)
+            bx, by = b_x*SCALE, b_y*SCALE
+            d.ellipse([bx, by, bx+40*SCALE, by+25*SCALE], fill=yellow)
+            # stripes
+            d.rectangle([bx+10*SCALE, by, bx+16*SCALE, by+25*SCALE], fill=LINE_COLOR)
+            d.rectangle([bx+24*SCALE, by, bx+30*SCALE, by+25*SCALE], fill=LINE_COLOR)
+            # wing
+            d.ellipse([bx+15*SCALE, by-15*SCALE, bx+35*SCALE, by+5*SCALE], fill=(200, 200, 255))
+        create_face(f"{base_dir}/bee_{i+1:02d}.png", draw_bee_frame)
 
-def gen_bee(d="faces/bee"):
-    mkd(d)
-    for i in range(20):
-        bx = 50 + i * 37
-        by = 145 + int(32 * math.sin(i * math.pi / 3))
-        # Eye gaze tracks bee — proportional horizontal shift
-        eye_shift = int((bx - 400) / 18)
-        # Surprise grows as bee reaches centre
-        centre_dist = abs(bx - 400) / 400
-        eye_r = int(ER - 2 + (ER + 4 - (ER - 2)) * (1 - centre_dist))
-        wing_phase = i * 1.2
-        def fn(draw, bx=bx, by=by, es=eye_shift, er=eye_r, wp=wing_phase):
-            _eye_round(draw, LEX + es, EVY, r=er)
-            _eye_round(draw, REX + es, EVY, r=er)
-            _mouth_o(draw, r=max(16, int(20 * (1 - abs(es) / 30))))
-            _draw_bee(draw, bx, by, wing_phase=wp)
-        make_face(f"{d}/bee_{i+1:02d}.png", fn)
-
-def gen_ladybug(d="faces/ladybug"):
-    mkd(d)
-    for i in range(20):
-        lx = 30 + i * 38
-        # Slight vertical wobble as it crawls
-        ly = 345 + int(5 * math.sin(i * math.pi / 2))
-        eye_shift = int((lx - 400) / 20)
-        leg_phase = i * 0.8
-        # BMO grows more curious as ladybug passes
-        centre_dist = abs(lx - 400) / 400
-        eye_r = int(ER + (ER + 8 - ER) * (1 - centre_dist))
-        def fn(draw, lx=lx, ly=ly, es=eye_shift, er=eye_r, lp=leg_phase):
-            _eye_round(draw, LEX + es, EVY, r=er)
-            _eye_u(draw, REX + es, shift=es)
-            _mouth_straight(draw)
-            _draw_ladybug(draw, lx, ly, leg_phase=lp)
-        make_face(f"{d}/ladybug_{i+1:02d}.png", fn)
-
-def gen_worm(d="faces/worm"):
-    mkd(d)
-    for i in range(20):
-        # Worm enters from right, moves left across lower screen
-        wx = 680 - i * 34
-        wy = 355 + int(6 * math.sin(i * 0.7))
-        wiggle = i * 0.5
-        eye_shift = int((wx - 400) / 22)
-        # BMO brow rises as worm approaches
-        centre_dist = abs(wx - 400) / 400
-        blink = 0.15 + 0.3 * (1 - centre_dist)
-        def fn(draw, wx=wx, wy=wy, wig=wiggle, es=eye_shift, bl=blink):
-            _eye_u(draw, LEX, blink=bl, shift=es)
-            _eye_u(draw, REX, blink=bl, shift=es)
-            _mouth_straight(draw)
-            _draw_worm(draw, wx, wy, wiggle=wig)
-        make_face(f"{d}/worm_{i+1:02d}.png", fn)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ENTRY POINT
-# ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    print("Generating BMO faces at 8× super-sampling…")
-
+    print("Generating BMO Faces...")
     gen_idle()
     gen_speaking()
     gen_happy()
@@ -872,12 +718,11 @@ if __name__ == "__main__":
     gen_sir_mano()
     gen_low_battery()
     gen_bee()
-    gen_ladybug()
-    gen_worm()
-
-    # Clean up any old space-named files that would cause frame jumps
+    
+    # Remove any leftover original (space-named) files that would cause frame jumping
+    import glob
     for f in glob.glob("faces/**/* *.png", recursive=True):
         os.remove(f)
-        print(f"  Removed stale: {f}")
-
-    print("Done!")
+        print(f"Cleaned up original: {f}")
+    
+    print("Finished generating faces!")

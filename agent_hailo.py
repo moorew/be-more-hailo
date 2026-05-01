@@ -83,8 +83,6 @@ class BotStates:
     DAYDREAM = "daydream"
     BORED = "bored"
     CURIOUS = "curious"
-    LADYBUG = "ladybug"
-    WORM = "worm"
 
 class BotGUI:
 
@@ -134,7 +132,7 @@ class BotGUI:
         
         self.expressions_map = {
             'happy': [BotStates.HAPPY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.FOOTBALL],
-            'neutral': [BotStates.IDLE, BotStates.DETECTIVE, BotStates.SIR_MANO, BotStates.BEE, BotStates.BORED, BotStates.CURIOUS, BotStates.LADYBUG, BotStates.WORM],
+            'neutral': [BotStates.IDLE, BotStates.DETECTIVE, BotStates.SIR_MANO, BotStates.BEE, BotStates.BORED, BotStates.CURIOUS],
             'sad': [BotStates.SAD, BotStates.CONFUSED],
             'sleepy': [BotStates.SLEEPY, BotStates.DAYDREAM],
             'jamming': [BotStates.JAMMING]
