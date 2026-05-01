@@ -176,7 +176,17 @@ class BotGUI:
             relief='flat',
             highlightthickness=0
         )
-        
+
+        # Load persisted volume (falls back to config default)
+        try:
+            import json as _j
+            with open("settings.json") as _f:
+                self.volume = float(_j.load(_f).get("volume", VOLUME))
+        except Exception:
+            self.volume = VOLUME
+        self._volume_overlay = None
+        self._volume_hide_job = None
+
         # Use a master click handler for hot corners and muting
         master.bind('<Button-1>', self.handle_click)
 
@@ -228,7 +238,15 @@ class BotGUI:
         mouth_y1 = int(win_h * 0.80)
         in_mouth = mouth_x0 <= x <= mouth_x1 and mouth_y0 <= y <= mouth_y1
 
-        if x < corner_w and y < corner_h:
+        # Top-centre volume zone: middle 40% of width, top 15% of height
+        vol_x0 = int(win_w * 0.30)
+        vol_x1 = int(win_w * 0.70)
+        in_vol = vol_x0 <= x <= vol_x1 and y < int(win_h * 0.15)
+
+        if in_vol:
+            print(f"[CLICK] Top-Centre: Volume overlay ({x},{y})")
+            self.master.after(0, self._show_volume_overlay)
+        elif x < corner_w and y < corner_h:
             print(f"[CLICK] Top-Left: Generate Image ({x},{y})")
             self.trigger_generate_image()
         elif x > win_w - corner_w and y < corner_h:
@@ -249,6 +267,50 @@ class BotGUI:
             self.manual_wake_event.set()
         else:
             print(f"[CLICK] Ignored in state {self.current_state} ({x},{y})")
+
+    # ── Volume overlay ────────────────────────────────────────────────────────
+
+    def _create_volume_overlay(self):
+        frame = tk.Frame(self.master, bg='#C9E4C3', padx=10, pady=6)
+        tk.Label(frame, text="🔊", font=('Courier New', 16),
+                 fg='#1a5c2a', bg='#C9E4C3').pack(side=tk.LEFT, padx=(0, 6))
+        self._volume_var = tk.IntVar(value=int(self.volume * 100))
+        tk.Scale(
+            frame, from_=0, to=100, orient=tk.HORIZONTAL, length=280,
+            variable=self._volume_var, command=self._on_volume_change,
+            bg='#C9E4C3', fg='#1a5c2a', troughcolor='#a0c4a0',
+            activebackground='#7db87d', highlightthickness=0, bd=0,
+            font=('Courier New', 11), showvalue=True, tickinterval=0,
+        ).pack(side=tk.LEFT)
+        frame.place(relx=0.5, rely=0.0, anchor=tk.N)
+        self._volume_overlay = frame
+
+    def _show_volume_overlay(self):
+        if self._volume_overlay is None:
+            self._create_volume_overlay()
+        else:
+            self._volume_var.set(int(self.volume * 100))
+            self._volume_overlay.place(relx=0.5, rely=0.0, anchor=tk.N)
+        if self._volume_hide_job:
+            self.master.after_cancel(self._volume_hide_job)
+        self._volume_hide_job = self.master.after(4000, self._hide_volume_overlay)
+
+    def _hide_volume_overlay(self):
+        if self._volume_overlay:
+            self._volume_overlay.place_forget()
+        self._volume_hide_job = None
+
+    def _on_volume_change(self, val):
+        self.volume = int(val) / 100.0
+        if self._volume_hide_job:
+            self.master.after_cancel(self._volume_hide_job)
+        self._volume_hide_job = self.master.after(4000, self._hide_volume_overlay)
+        try:
+            import json as _j
+            with open("settings.json", "w") as _f:
+                _j.dump({"volume": self.volume}, _f)
+        except Exception:
+            pass
 
     def mute_bmo(self, event=None):
         """Toggle audio mute and sets the whimsical 'shhh' face."""
@@ -669,8 +731,9 @@ class BotGUI:
                 if self.current_state == BotStates.SPEAKING:
                     self.mouth_open = min(60, vol / 25)
 
-                if VOLUME != 1.0:
-                    scaled = np.clip(audio_chunk.astype(np.float32) * VOLUME, -32768, 32767).astype(np.int16)
+                vol_scale = getattr(self, 'volume', VOLUME)
+                if vol_scale != 1.0:
+                    scaled = np.clip(audio_chunk.astype(np.float32) * vol_scale, -32768, 32767).astype(np.int16)
                     write_chunk = scaled.tobytes()
                 else:
                     write_chunk = raw_chunk
@@ -796,8 +859,9 @@ class BotGUI:
             if self.current_state == BotStates.SPEAKING:
                 self.mouth_open = min(60, vol / 25)
 
-            if VOLUME != 1.0:
-                scaled = np.clip(audio_chunk.astype(np.float32) * VOLUME, -32768, 32767).astype(np.int16)
+            vol_scale = getattr(self, 'volume', VOLUME)
+            if vol_scale != 1.0:
+                scaled = np.clip(audio_chunk.astype(np.float32) * vol_scale, -32768, 32767).astype(np.int16)
                 write_chunk = scaled.tobytes()
             else:
                 write_chunk = raw_chunk
