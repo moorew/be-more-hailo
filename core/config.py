@@ -129,4 +129,9 @@ def find_audio_devices():
 
 MIC_DEVICE_INDEX, ALSA_DEVICE = find_audio_devices()
 
+# Software volume scalar (0.0–1.0).  aplay on plughw bypasses PulseAudio so
+# the Gnome volume slider has no effect — adjust this value to change BMO's
+# output level instead.  Default 0.75 leaves headroom to avoid clipping.
+VOLUME = 0.75
+
 

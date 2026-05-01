@@ -189,16 +189,26 @@ def gen_idle(d="faces/idle"):
         _save(img, d, i)
 
 def gen_speaking(d="faces/speaking"):
-    # 12 frames ordered closed→open; PIL-blend gives smooth intermediate
-    # mouth positions that map naturally to mouth_ema (0=silent, 11=max vol).
+    # 12 frames ordered closed→open.  Only the mouth zone is blended so the
+    # eyes (from smile.svg) stay perfectly stable — no ghosting from the two
+    # different SVGs having eyes at slightly different positions.
     img_c = _svg_render("smile.svg")
     img_o = _svg_render("open mouth.svg")
     arr_c = np.array(img_c).astype(float)
     arr_o = np.array(img_o).astype(float)
+
+    # Vertical gradient mask: 0 = use closed face, 1 = use open mouth.
+    # Transition from 54 % to 68 % of image height (below eyes, into mouth).
+    blend_start = int(OUT_H * 0.54)
+    blend_end   = int(OUT_H * 0.68)
+    ys   = np.arange(OUT_H)
+    ramp = np.clip((ys - blend_start) / (blend_end - blend_start), 0.0, 1.0)
+    mask = ramp[:, None, None]  # (H, 1, 1) → broadcasts over (H, W, 3)
+
     factors = [0.0, 0.0, 0.10, 0.22, 0.38, 0.55, 0.70, 0.82, 0.92, 1.0, 1.0, 1.0]
     os.makedirs(d, exist_ok=True)
     for i, f in enumerate(factors, 1):
-        blended = (arr_c * (1 - f) + arr_o * f).astype(np.uint8)
+        blended = (arr_c * (1 - mask * f) + arr_o * (mask * f)).astype(np.uint8)
         _save(Image.fromarray(blended), d, i)
 
 def gen_thinking(d="faces/thinking"):

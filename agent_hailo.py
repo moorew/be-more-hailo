@@ -38,7 +38,7 @@ from openwakeword.model import Model
 from core.llm import Brain
 from core.tts import play_audio_on_hardware
 from core.stt import transcribe_audio
-from core.config import MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE
+from core.config import MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE, VOLUME
 
 # =========================================================================
 # 1. HARDWARE CONFIGURATION
@@ -426,9 +426,9 @@ class BotGUI:
                     # We cycle a 'jitter' offset every few frames to simulate shifting phonemes
                     # even when the volume is relatively steady.
                     if int(time.time() * 20) % 2 == 0:
-                        self.mouth_viseme_jitter = random.randint(-2, 2)
-                        
-                    idx = (base_idx + self.mouth_viseme_jitter) % num_frames
+                        self.mouth_viseme_jitter = random.randint(-1, 1)
+
+                    idx = base_idx + self.mouth_viseme_jitter
                     self.current_frame = min(num_frames - 1, max(0, idx))
                 else:
                     self.current_frame = 0 # Closed
@@ -663,21 +663,24 @@ class BotGUI:
                 if not raw_chunk:
                     break
 
+                # Lip-sync from unscaled signal, then apply software volume
+                audio_chunk = np.frombuffer(raw_chunk, dtype=np.int16)
+                vol = np.sqrt(np.mean(audio_chunk.astype(np.float32)**2))
+                if self.current_state == BotStates.SPEAKING:
+                    self.mouth_open = min(60, vol / 25)
+
+                if VOLUME != 1.0:
+                    scaled = np.clip(audio_chunk.astype(np.float32) * VOLUME, -32768, 32767).astype(np.int16)
+                    write_chunk = scaled.tobytes()
+                else:
+                    write_chunk = raw_chunk
+
                 try:
-                    proc.stdin.write(raw_chunk)
+                    proc.stdin.write(write_chunk)
                     proc.stdin.flush()
                 except (BrokenPipeError, OSError) as e:
                     print(f"[DEBUG] aplay write error: {e}")
                     break
-
-                # volume analysis on the chunk we just fed to the speaker
-                audio_chunk = np.frombuffer(raw_chunk, dtype=np.int16)
-                vol = np.sqrt(np.mean(audio_chunk.astype(np.float32)**2))
-
-                # Scale volume for better mouth movement sensitivity
-                if self.current_state == BotStates.SPEAKING:
-                    # Increased sensitivity (vol/25 instead of 100)
-                    self.mouth_open = min(60, vol / 25)
 
                 # Basic sync: sleep to match playback rate
                 chunk_idx += 1
@@ -787,18 +790,24 @@ class BotGUI:
             if start_time is None:
                 start_time = time.time()
 
-            try:
-                self._tts_aplay.stdin.write(raw_chunk)
-                self._tts_aplay.stdin.flush()
-            except (BrokenPipeError, OSError) as e:
-                print(f"[TTS] aplay write error: {e}")
-                break
-
-            # Lip-sync: map RMS volume → mouth_open
+            # Lip-sync from unscaled signal, then apply software volume before playback
             audio_chunk = np.frombuffer(raw_chunk, dtype=np.int16)
             vol = np.sqrt(np.mean(audio_chunk.astype(np.float32) ** 2))
             if self.current_state == BotStates.SPEAKING:
                 self.mouth_open = min(60, vol / 25)
+
+            if VOLUME != 1.0:
+                scaled = np.clip(audio_chunk.astype(np.float32) * VOLUME, -32768, 32767).astype(np.int16)
+                write_chunk = scaled.tobytes()
+            else:
+                write_chunk = raw_chunk
+
+            try:
+                self._tts_aplay.stdin.write(write_chunk)
+                self._tts_aplay.stdin.flush()
+            except (BrokenPipeError, OSError) as e:
+                print(f"[TTS] aplay write error: {e}")
+                break
 
             # Pace writes to match real-time playback (natural back-pressure)
             chunk_idx += 1
