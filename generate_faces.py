@@ -173,23 +173,33 @@ def _composite_critter(critter_name: str, critter_w: float, critter_h: float,
 # ── Face generators ───────────────────────────────────────────────────────────
 
 def gen_idle(d="faces/idle"):
-    # 12 frames; blink on 7–9
-    blinks = [0, 0, 0, 0, 0, 0, 0.55, 0.97, 0.55, 0, 0, 0]
-    for i, b in enumerate(blinks, 1):
-        _save(_blink_render("smile.svg", b), d, i)
+    # 75 frames @ 120 ms = 9-second cycle.
+    # ~8 s open eyes, then two quick blinks, then open again.
+    open_f = _blink_render("smile.svg", 0)
+    half_f = _blink_render("smile.svg", 0.55)
+    shut_f = _blink_render("smile.svg", 0.97)
+    frames = (
+        [open_f] * 64 +
+        [half_f, shut_f, half_f,   # first blink
+         open_f,                   # tiny gap between blinks
+         half_f, shut_f, half_f,   # second blink
+         open_f, open_f, open_f, open_f]
+    )
+    for i, img in enumerate(frames, 1):
+        _save(img, d, i)
 
 def gen_speaking(d="faces/speaking"):
-    # Frames ordered closed → open so mouth_ema maps to mouth width
-    smile   = _apply_vb(_read("smile.svg"),       _get_vb("smile.svg"))
-    openmth = _apply_vb(_read("open mouth.svg"),  _get_vb("open mouth.svg"))
-    # 4 closed + 4 open (with slight bounce on open frames)
-    for i, (svg, dy) in enumerate(
-        [(smile,0),(smile,0),(smile,0),(smile,0),
-         (openmth,-2),(openmth,0),(openmth,2),(openmth,0)], 1
-    ):
-        parts = list(map(float, (_get_vb("open mouth.svg") if "open" in svg else _get_vb("smile.svg")).split()))
-        # bounce already embedded via _apply_vb for smile frames
-        _save(_render(svg), d, i)
+    # 12 frames ordered closed→open; PIL-blend gives smooth intermediate
+    # mouth positions that map naturally to mouth_ema (0=silent, 11=max vol).
+    img_c = _svg_render("smile.svg")
+    img_o = _svg_render("open mouth.svg")
+    arr_c = np.array(img_c).astype(float)
+    arr_o = np.array(img_o).astype(float)
+    factors = [0.0, 0.0, 0.10, 0.22, 0.38, 0.55, 0.70, 0.82, 0.92, 1.0, 1.0, 1.0]
+    os.makedirs(d, exist_ok=True)
+    for i, f in enumerate(factors, 1):
+        blended = (arr_c * (1 - f) + arr_o * f).astype(np.uint8)
+        _save(Image.fromarray(blended), d, i)
 
 def gen_thinking(d="faces/thinking"):
     for i in range(1, 9):
@@ -197,9 +207,13 @@ def gen_thinking(d="faces/thinking"):
         _save(_svg_render("hmmm.svg", dy_px=dy), d, i)
 
 def gen_listening(d="faces/listening"):
-    blinks = [0, 0, 0, 0.6, 0.97, 0.6, 0, 0]
-    for i, b in enumerate(blinks, 1):
-        _save(_blink_render("smile.svg", b), d, i)
+    # 36 frames @ 120 ms = 4.3-second cycle, one slow blink at the end
+    open_f = _blink_render("smile.svg", 0)
+    half_f = _blink_render("smile.svg", 0.55)
+    shut_f = _blink_render("smile.svg", 0.97)
+    frames = [open_f] * 32 + [half_f, shut_f, half_f, open_f]
+    for i, img in enumerate(frames, 1):
+        _save(img, d, i)
 
 def gen_happy(d="faces/happy"):
     for i in range(1, 9):
@@ -332,6 +346,22 @@ def gen_warmup(d="faces/warmup"):
     for i, b in enumerate([0.97, 0.6, 0.2, 0], 1):
         _save(_blink_render("smile.svg", b), d, i)
 
+def gen_ladybug(d="faces/ladybug"):
+    # 16 frames: ladybug walks across the bottom of the screen left→right
+    for i in range(1, 17):
+        t = (i - 1) / 15  # 0 → 1
+        x = -80 + t * 960   # starts off-screen left, exits right
+        y = 300 + 20 * math.sin(t * 4 * math.pi)  # slight vertical wobble
+        _save(_composite_critter("ladybug.svg", 130, 141, x, y), d, i)
+
+def gen_worm(d="faces/worm"):
+    # 16 frames: worm wiggles in from the right across the centre
+    for i in range(1, 17):
+        t = (i - 1) / 15
+        x = 960 - t * 960   # right to left
+        y = 200 + 30 * math.sin(t * 6 * math.pi)  # wavy vertical path
+        _save(_composite_critter("worm.svg", 180, 150, x, y), d, i)
+
 # ── Speaking frames (fixed separately – needs two SVGs) ───────────────────────
 
 def _fix_gen_speaking():
@@ -359,11 +389,12 @@ def _fix_gen_speaking():
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 GENERATORS = [
-    gen_idle, gen_thinking, gen_listening,
+    gen_idle, gen_speaking, gen_thinking, gen_listening,
     gen_happy, gen_sad, gen_angry, gen_surprised, gen_sleepy,
     gen_dizzy, gen_cheeky, gen_heart, gen_starry, gen_confused,
     gen_shhh, gen_jamming, gen_football, gen_detective, gen_sir_mano,
-    gen_low_battery, gen_bee, gen_daydream, gen_bored, gen_curious,
+    gen_low_battery, gen_bee, gen_ladybug, gen_worm,
+    gen_daydream, gen_bored, gen_curious,
     gen_error, gen_capturing, gen_warmup,
 ]
 
@@ -391,13 +422,6 @@ if __name__ == "__main__":
         gen()
         n = len(glob.glob(f"{d}/*.png"))
         print(f"{n} frames")
-
-    # Speaking needs two SVGs so handle separately
-    print("  faces/speaking…", end=" ", flush=True)
-    if os.path.exists("faces/speaking"):
-        shutil.rmtree("faces/speaking")
-    _fix_gen_speaking()
-    print(f"{len(glob.glob('faces/speaking/*.png'))} frames")
 
     for f in glob.glob("faces/**/* *.png", recursive=True):
         os.remove(f)

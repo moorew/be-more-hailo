@@ -86,6 +86,7 @@ Your BMO is then reachable from your phone, laptop, or any device on your Tailne
 
 - **Original Project:** This is a fork of [@brenpoly's be-more-agent](https://github.com/brenpoly/be-more-agent).
 - **Custom BMO Voice:** Huge thanks to **Brenpoly** for his work fine-tuning the custom BMO neural voice model (`v1.0-voice`). This model provides the more accurate, charming BMO voice you hear today!
+- **Face Artwork:** BMO's face animations are rendered from SVG artwork by **Cherry Honey**, published as a free community resource on Figma. Thank you for the pixel-perfect expressions that bring BMO to life! [Cherry Honey BMO Faces on Figma Community](https://www.figma.com/community/file/1379945530999597632)
 - **Community Features:** This fork imports several interactivity and utility features from the upstream `be-more-agent` project, including DuckDuckGo News search, fast nearest-neighbor audio resampling, and robust silence detection (VAD).
 - **Hardware Support:** Built for the Raspberry Pi 5 + Raspberry Pi AI HAT 2+ (Hailo-10H).
 
@@ -406,6 +407,8 @@ If it fails, ensure system site-packages are enabled: `grep include-system venv/
 ## Credits
 
 The original project is entirely the work of [@brenpoly](https://github.com/brenpoly/be-more-agent) — the concept, the character, and the original implementation. This fork adds Hailo NPU support, the web interface, dual-interface `core/` modules, and various fixes and improvements.
+
+BMO's face artwork is by **Cherry Honey**, shared freely with the community via the [Figma Community](https://www.figma.com/community/file/1379945530999597632). The SVGs are rendered and animated programmatically by `generate_faces.py`.
 
 **"BMO"** and **"Adventure Time"** are trademarks of Cartoon Network (Warner Bros. Discovery). This is a fan project for personal and educational use only, not affiliated with or endorsed by Cartoon Network.
 

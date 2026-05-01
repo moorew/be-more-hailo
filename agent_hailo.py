@@ -83,6 +83,8 @@ class BotStates:
     DAYDREAM = "daydream"
     BORED = "bored"
     CURIOUS = "curious"
+    LADYBUG = "ladybug"
+    WORM = "worm"
 
 class BotGUI:
 
@@ -131,12 +133,19 @@ class BotGUI:
         self.blink_state = 0 # 0=open, 1=closed, 0.5=half
         
         self.expressions_map = {
-            'happy': [BotStates.HAPPY, BotStates.HEART, BotStates.STARRY_EYED, BotStates.FOOTBALL],
-            'neutral': [BotStates.IDLE, BotStates.DETECTIVE, BotStates.SIR_MANO, BotStates.BEE, BotStates.BORED, BotStates.CURIOUS],
-            'sad': [BotStates.SAD, BotStates.CONFUSED],
-            'sleepy': [BotStates.SLEEPY, BotStates.DAYDREAM],
-            'jamming': [BotStates.JAMMING]
+            'happy':   [BotStates.HAPPY, BotStates.HEART, BotStates.STARRY_EYED,
+                        BotStates.FOOTBALL, BotStates.CHEEKY, BotStates.JAMMING],
+            'neutral': [BotStates.IDLE, BotStates.DETECTIVE, BotStates.SIR_MANO,
+                        BotStates.BEE, BotStates.BORED, BotStates.CURIOUS,
+                        BotStates.DAYDREAM, BotStates.LADYBUG, BotStates.WORM],
+            'sad':     [BotStates.SAD, BotStates.CONFUSED, BotStates.BORED, BotStates.SHHH],
+            'sleepy':  [BotStates.SLEEPY, BotStates.DAYDREAM, BotStates.LOW_BATTERY],
+            'jamming': [BotStates.JAMMING, BotStates.HAPPY, BotStates.CHEEKY],
         }
+        # Screensaver expression state (randomised, not time-modulo)
+        self.screensaver_expr        = BotStates.IDLE
+        self.screensaver_expr_until  = 0   # epoch when to pick next expression
+        self.screensaver_expr_dur    = 10  # seconds (refreshed randomly each pick)
 
 
         # Init UI
@@ -149,7 +158,7 @@ class BotGUI:
             text="Initializing...",
             font=('Courier New', 14, 'bold'),
             fg='#1a5c2a',       # Dark forest green text
-            bg='#bdffcb',       # BMO's signature green
+            bg='#C9E4C3',       # BMO's face green
             padx=12, pady=4,
             relief='flat',
             highlightthickness=0
@@ -162,7 +171,7 @@ class BotGUI:
             text="🔇 Muted",
             font=('Courier New', 16, 'bold'),
             fg='#f44336',
-            bg='#bdffcb',       # BMO's signature green
+            bg='#C9E4C3',       # BMO's face green
             padx=10, pady=5,
             relief='flat',
             highlightthickness=0
@@ -201,40 +210,45 @@ class BotGUI:
 
 
     def handle_click(self, event):
-        """Map screen clicks to hot corners or mute toggle."""
-        # Only process clicks if not currently displaying a full-screen image
+        """Map screen clicks to hot corners, mouth-tap mute, or tap-to-speak."""
         if self.current_state == BotStates.DISPLAY_IMAGE:
-            # Clicking an image clears it back to IDLE/SCREENSAVER
             self.set_state(BotStates.IDLE, "Tap to speak")
             return
 
         x, y = event.x, event.y
-        # Get actual current window size for relative corner math
         win_w = self.master.winfo_width()
         win_h = self.master.winfo_height()
-        
-        # Corners are roughly the outer 25% of the screen
         corner_w = win_w // 4
         corner_h = win_h // 4
-        
+
+        # Mouth zone: centre-lower portion of the face (where BMO's mouth lives)
+        mouth_x0 = int(win_w * 0.27)
+        mouth_x1 = int(win_w * 0.73)
+        mouth_y0 = int(win_h * 0.55)
+        mouth_y1 = int(win_h * 0.80)
+        in_mouth = mouth_x0 <= x <= mouth_x1 and mouth_y0 <= y <= mouth_y1
+
         if x < corner_w and y < corner_h:
-            print(f"[CLICK] Top-Left Hot Corner: Generate Image (at {x},{y})")
+            print(f"[CLICK] Top-Left: Generate Image ({x},{y})")
             self.trigger_generate_image()
         elif x > win_w - corner_w and y < corner_h:
-            print(f"[CLICK] Top-Right Hot Corner: Random Pondering (at {x},{y})")
+            print(f"[CLICK] Top-Right: Random Pondering ({x},{y})")
             self.trigger_random_thought()
         elif x > win_w - corner_w and y > win_h - corner_h:
-            print(f"[CLICK] Bottom-Right Hot Corner: Play Music (at {x},{y})")
+            print(f"[CLICK] Bottom-Right: Play Music ({x},{y})")
             self.trigger_music()
         elif x < corner_w and y > win_h - corner_h:
-            print(f"[CLICK] Bottom-Left Hot Corner: Toggle Mute (at {x},{y})")
+            print(f"[CLICK] Bottom-Left: Toggle Mute ({x},{y})")
             self.mute_bmo()
+        elif in_mouth:
+            # Tap BMO's mouth to toggle mute — works in any state
+            print(f"[CLICK] Mouth: Toggle Mute ({x},{y})")
+            self.mute_bmo()
+        elif self.current_state in [BotStates.IDLE, BotStates.SCREENSAVER]:
+            print(f"[CLICK] Body: Manual Wake ({x},{y})")
+            self.manual_wake_event.set()
         else:
-            if self.current_state in [BotStates.IDLE, BotStates.SCREENSAVER]:
-                print(f"[CLICK] Center/Body: Manual Wake (at {x},{y})")
-                self.manual_wake_event.set()
-            else:
-                print(f"[CLICK] Center/Body: Ignored (current state: {self.current_state})")
+            print(f"[CLICK] Ignored in state {self.current_state} ({x},{y})")
 
     def mute_bmo(self, event=None):
         """Toggle audio mute and sets the whimsical 'shhh' face."""
@@ -370,12 +384,22 @@ class BotGUI:
         if self.current_state == BotStates.IDLE and (now - self.last_state_change) > 60:
             self.set_state(BotStates.SCREENSAVER, "Screensaver...")
 
-        # If in screensaver, pick expression from current mood
+        # If in screensaver, pick expression randomly; change every 8-18 s
         display_state = self.current_state
         if self.current_state == BotStates.SCREENSAVER:
-            # Change expression every 10 seconds
-            expr_idx = int((now / 10) % len(self.expressions_map[self.current_mood]))
-            display_state = self.expressions_map[self.current_mood][expr_idx]
+            if now >= self.screensaver_expr_until:
+                mood_pool = self.expressions_map[self.current_mood]
+                # 30 % chance to pull one extra from a random other mood for variety
+                if random.random() < 0.30:
+                    other = random.choice([m for m in self.expressions_map
+                                           if m != self.current_mood])
+                    candidates = mood_pool + self.expressions_map[other]
+                else:
+                    candidates = mood_pool
+                self.screensaver_expr       = random.choice(candidates)
+                self.screensaver_expr_dur   = random.uniform(8, 18)
+                self.screensaver_expr_until = now + self.screensaver_expr_dur
+            display_state = self.screensaver_expr
 
         # Hide text status label during screensaver
         if self.current_state == BotStates.SCREENSAVER:
