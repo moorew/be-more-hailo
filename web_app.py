@@ -14,7 +14,7 @@ import psutil
 import subprocess
 
 # Import our new unified core modules
-from core.llm import Brain, strip_prompt_leakage
+from core.llm import Brain, strip_prompt_leakage, extract_json_object
 from core.tts import play_audio_on_hardware, generate_audio_file, add_pronunciation, load_pronunciations, clean_text_for_speech
 from core.stt import transcribe_audio
 from core.config import LLM_URL, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
@@ -164,25 +164,34 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     if content.startswith("Error:") or content.startswith("Could not connect") or content.startswith("I'm having trouble"):
         return {"error": content, "history": brain.get_history()}
 
-    # Check if the response is a pure action JSON (play_music, display_image, take_photo)
-    # These are handled client-side — skip TTS generation for them
+    # Action detection — content may now be `<lead-in text> <JSON>` (round-3
+    # change in core/llm.py) so json.loads on the whole string fails.  Use
+    # the brace-balanced extractor.  We keep the JSON in `content` so the
+    # client can dispatch the action, but generate TTS only for the lead-in
+    # (skip TTS entirely for pure-JSON responses).
     is_action = False
-    try:
-        action_data = json.loads(content)
-        if isinstance(action_data, dict) and "action" in action_data:
+    spoken_text = content
+    action_data, span = extract_json_object(content)
+    if action_data and "action" in action_data:
+        lead_in_text = (content[:span[0]] + content[span[1]:]).strip()
+        if lead_in_text:
+            # Pre-routed action with verbal lead-in: speak the lead-in, but
+            # let the client see the full payload (JSON included) for dispatch.
+            spoken_text = lead_in_text
+            logger.info(f"Action+lead-in: TTS={spoken_text[:40]!r} action={action_data.get('action')}")
+        else:
+            # Pure JSON response — no TTS
             is_action = True
             logger.info(f"Action response detected: {action_data.get('action')} — skipping TTS")
-    except (json.JSONDecodeError, ValueError):
-        pass
 
     audio_url = None
 
     if not is_action:
         # Clean text for TTS (applies pronunciation replacements like BMO->beemo).
         # Keep the original content for display so the user sees "BMO" not "beemo".
-        tts_content = clean_text_for_speech(content)
+        tts_content = clean_text_for_speech(spoken_text)
         if not tts_content:
-            tts_content = content  # fallback to raw if cleaning strips everything
+            tts_content = spoken_text  # fallback to raw if cleaning strips everything
 
         # Periodically clean up old audio files
         background_tasks.add_task(_cleanup_old_audio)
@@ -393,21 +402,19 @@ async def get_screensaver_thought():
 
         if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
             thought_prompt = (
-                "You are BMO, a cute little robot. You just learned something interesting from the real world. "
-                "Share what you found as a short, charming 'pondering' to yourself. "
-                "RULES:\n"
-                "1. You MUST start your response with the tag '[BMO]'. \n"
-                "2. After the tag, say: 'I found this today, [Summarize the specific fact].' \n"
-                "3. Then, share your own charming reaction or opinion naturally. \n"
-                "4. If the topic is visual, you SHOULD include exactly one JSON action on a new line: \n"
-                "   {\"action\": \"display_image\", \"subject\": \"[CUTE_WHIMSICAL_DESCRIPTION]\"} \n"
-                "5. CRITICAL: Your entire response MUST be under 60 words. You must finish your thought completely. \n"
-                "6. Do NOT include labels like 'Summarize:' or 'Fact:' or repeat these rules.\n"
+                "Read this real-world info, then share a short charming musing "
+                "as BMO (under 50 words, finish the thought).\n"
+                "Wrap your final reply between [BMO] and [/BMO] markers — only "
+                "what's between the markers will be spoken.\n"
+                "If the topic is visual, include ONE JSON action AFTER [/BMO]:\n"
+                '  {"action": "display_image", "subject": "<short visual phrase>"}\n\n'
                 f"Topic: {topic}\n"
                 f"Info: {search_result[:1500]}"
             )
             messages = [
-                {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Be concise, specific, and always finish your thought within 60 words. Do NOT repeat instructions."},
+                {"role": "system", "content":
+                 "You are BMO, a cute robot musing to yourself. Always wrap your "
+                 "spoken reply in [BMO]...[/BMO] tags. Be concise and specific."},
                 {"role": "user", "content": thought_prompt},
             ]
 
@@ -417,7 +424,7 @@ async def get_screensaver_thought():
                     "model": FAST_LLM_MODEL,
                     "messages": messages,
                     "stream": False,
-                    "options": {"temperature": 0.8, "num_predict": 512}
+                    "options": {"temperature": 0.8, "num_predict": 256}
                 }
                 resp = http_requests.post(LLM_URL, json=payload, timeout=60)
                 if resp.status_code == 200:
@@ -430,32 +437,27 @@ async def get_screensaver_thought():
             except Exception as e:
                 logger.warning(f"[SCREENSAVER-WEB] Local LLM failed: {e}")
 
-            # Extract image URL if present
+            # Extract image URL if present (brace-balanced; handles nesting)
             if phrase:
-                # First, find all JSON-like blocks
-                json_blocks = re.findall(r'\{.*?\}', phrase, re.DOTALL)
-                for block in json_blocks:
-                    try:
-                        action_data = json.loads(block)
-                        if action_data.get("action") == "display_image":
-                            # Use DuckDuckGo to find a real image of the subject
-                            subject = action_data.get("subject") or action_data.get("image_url")
-                            if subject:
-                                # Clean up subject if it's a URL
-                                if "://" in subject:
-                                    image_url = subject
-                                else:
-                                    # Make the search more likely to find 'imaginative' art/photos
-                                    image_url = search_images(subject)
-                                    
-                            phrase = phrase.replace(block, '').strip()
-                            break # Only one image
-                        elif "action" in action_data:
-                            # Remove other JSON actions from the phrase
-                            phrase = phrase.replace(block, '').strip()
-                    except Exception:
-                        pass
-                
+                while True:
+                    action_data, span = extract_json_object(phrase)
+                    if action_data is None:
+                        break
+                    if action_data.get("action") == "display_image":
+                        subject = action_data.get("subject") or action_data.get("image_url")
+                        if subject:
+                            if "://" in subject:
+                                image_url = subject
+                            else:
+                                image_url = search_images(subject)
+                        phrase = (phrase[:span[0]] + phrase[span[1]:]).strip()
+                        break  # Only one image
+                    elif "action" in action_data:
+                        # Other action — strip it and keep scanning
+                        phrase = (phrase[:span[0]] + phrase[span[1]:]).strip()
+                    else:
+                        # Bare {} or non-action JSON — stop the loop
+                        break
                 # Final cleanup of the phrase
                 phrase = strip_prompt_leakage(phrase)
     except Exception as e:
