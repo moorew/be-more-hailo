@@ -190,10 +190,26 @@ def _quick_lead_in(user_text: str, intent: str) -> str:
     perceives lag and the static fallback is the better experience.  On Pi 5 +
     Hailo + qwen2.5-1.5B, a 30-token gen typically lands at 200–500 ms when
     the model is hot, so this is the right cut-off."""
+    import random as _random
     fallbacks = {
-        "image":  "Ooh, let BMO draw something for you!",
-        "photo":  "BMO is taking a look!",
-        "music":  "Time to jam!",
+        "image": [
+            "Ooh, let BMO draw something for you!",
+            "Time for some BMO art!",
+            "BMO has a picture in mind!",
+            "Let BMO show you something neat!",
+        ],
+        "photo": [
+            "BMO is taking a look!",
+            "Hold still, BMO is looking!",
+            "Let BMO see what you've got!",
+            "Ooh, BMO loves looking at things!",
+        ],
+        "music": [
+            "Time to jam!",
+            "Music time! BMO is so excited!",
+            "Let BMO play you a tune!",
+            "Oh yeah, BMO loves this song!",
+        ],
     }
     try:
         payload = {
@@ -215,7 +231,8 @@ def _quick_lead_in(user_text: str, intent: str) -> str:
                 return txt
     except Exception:
         pass
-    return fallbacks.get(intent, "")
+    options = fallbacks.get(intent, [])
+    return _random.choice(options) if options else ""
 
 
 def extract_json_object(text: str):
@@ -348,6 +365,10 @@ class Brain:
             "take a photo", "take a picture", "take photo", "take picture",
             "look at", "what do you see", "what can you see", "use your camera",
             "photograph", "snap a photo",
+            # Common natural phrasings the prior list missed:
+            "what is this", "what's this", "what am i holding", "do you see",
+            "show me what you see", "can you see this", "tell me what you see",
+            "what's that", "what is that",
         ]
         if any(kw in lower_text for kw in camera_keywords):
             action = '{"action": "take_photo"}'
@@ -556,6 +577,10 @@ class Brain:
             "take a photo", "take a picture", "take photo", "take picture",
             "look at", "what do you see", "what can you see", "use your camera",
             "photograph", "snap a photo",
+            # Common natural phrasings the prior list missed:
+            "what is this", "what's this", "what am i holding", "do you see",
+            "show me what you see", "can you see this", "tell me what you see",
+            "what's that", "what is that",
         ]
         if any(kw in lower_text for kw in camera_keywords):
             action = '{"action": "take_photo"}'
