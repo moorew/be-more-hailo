@@ -184,9 +184,12 @@ def strip_prompt_leakage(content: str) -> str:
 MEMORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory.json")
 
 def _quick_lead_in(user_text: str, intent: str) -> str:
-    """Ask FAST_LLM_MODEL for a one-line BMO-voiced acknowledgement before a
-    pre-routed action runs.  Falls back to a static phrase on any failure so
-    the action path is never blocked.  Total wall-time budget: ~1.5 s."""
+    """Return a one-line BMO acknowledgement before a pre-routed action runs.
+
+    Tries FAST_LLM_MODEL with a *tight* 600 ms ceiling — beyond that the user
+    perceives lag and the static fallback is the better experience.  On Pi 5 +
+    Hailo + qwen2.5-1.5B, a 30-token gen typically lands at 200–500 ms when
+    the model is hot, so this is the right cut-off."""
     fallbacks = {
         "image":  "Ooh, let BMO draw something for you!",
         "photo":  "BMO is taking a look!",
@@ -204,7 +207,7 @@ def _quick_lead_in(user_text: str, intent: str) -> str:
             "stream": False,
             "options": {"temperature": 0.8, "num_predict": 30},
         }
-        r = requests.post(LLM_URL, json=payload, timeout=1.5)
+        r = requests.post(LLM_URL, json=payload, timeout=0.6)
         if r.status_code == 200:
             txt = r.json().get("message", {}).get("content", "").strip().strip('"').strip("'")
             txt = re.sub(r"\s+", " ", txt)
@@ -725,6 +728,9 @@ class Brain:
         else:
             new_history[0]["content"] = get_system_prompt()
         self.history = new_history
+        # Bypass throttle on a wholesale history replacement so the change
+        # hits disk immediately even if it falls inside the 60 s window.
+        self.save_history(force=True)
 
     def analyze_image(self, image_base64: str, user_text: str) -> str:
         """

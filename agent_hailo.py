@@ -306,6 +306,10 @@ class BotGUI:
 
     def handle_click(self, event):
         """Map screen clicks to hot corners, mouth-tap mute, or tap-to-speak."""
+        # Any click counts as a user interaction — keeps the watchdog honest
+        # regardless of which branch handles the tap.
+        self.last_user_interaction = time.time()
+
         if self.current_state == BotStates.DISPLAY_IMAGE:
             self.set_state(BotStates.IDLE, "Tap to speak")
             return
@@ -390,6 +394,14 @@ class BotGUI:
         if self._volume_hide_job:
             self.master.after_cancel(self._volume_hide_job)
         self._volume_hide_job = self.master.after(4000, self._hide_volume_overlay)
+        # Debounce disk writes — drags fire this 30+ times per second.
+        # Schedule a single write 500 ms after the last change.
+        if getattr(self, '_volume_save_job', None):
+            self.master.after_cancel(self._volume_save_job)
+        self._volume_save_job = self.master.after(500, self._persist_volume)
+
+    def _persist_volume(self):
+        self._volume_save_job = None
         try:
             import json as _j
             with open("settings.json", "w") as _f:
@@ -1241,6 +1253,19 @@ class BotGUI:
                             self.set_state(BotStates.IDLE, "Tap to speak")
                 threading.Thread(target=music_worker, daemon=True).start()
                 chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
+            elif action_data.get("action") == "set_timer":
+                # Real handler — was advertised in the system prompt but
+                # silently ignored.  Coerce minutes safely; clamp to [0.05, 720].
+                try:
+                    raw_min = action_data.get("minutes", 0)
+                    minutes = float(raw_min)
+                    minutes = max(0.05, min(720.0, minutes))  # 3 s … 12 h
+                    msg_text = action_data.get("message") or "Timer is up!"
+                    self.start_timer_thread(minutes, str(msg_text))
+                    print(f"[TIMER] Scheduled: {minutes} min — {msg_text!r}")
+                except (TypeError, ValueError) as e:
+                    print(f"[TIMER] Bad set_timer payload {action_data!r}: {e}")
+                chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
 
         # 2. Speak the remaining text
         if chunk.strip():
@@ -1698,7 +1723,13 @@ class BotGUI:
                     except Exception as e:
                         pass
                 
-                time.sleep(12)
+                # 12 s display window — broken by app shutdown OR user tap
+                # (handle_click on DISPLAY_IMAGE state already returns to IDLE).
+                end_at = time.time() + 12
+                while time.time() < end_at:
+                    if self.stop_event.is_set() or self.current_state != BotStates.DISPLAY_IMAGE:
+                        break
+                    time.sleep(0.2)
                 if self.current_state == BotStates.DISPLAY_IMAGE:
                     self.set_state(BotStates.IDLE, "Tap to speak")
             except Exception as e:
@@ -1718,27 +1749,28 @@ class BotGUI:
         if not self.llm_lock.acquire(blocking=False):
             return None
         try:
+            # Wrap the actual reply in [BMO]...[/BMO]. The stripper isolates
+            # whatever's between the markers, so any rule-echo or numbered
+            # preamble outside the tags is automatically discarded.
             thought_prompt = (
-                "You are BMO, a cute little robot. You just learned something interesting from the real world. "
-                "Share what you found as a short, charming 'pondering' to yourself. "
-                "RULES:\n"
-                "1. You MUST start your response with the tag '[BMO]'. \n"
-                "2. After the tag, say: 'I found this today, [Summarize the specific fact].' \n"
-                "3. Then, share your own charming reaction or opinion naturally. \n"
-                "4. If the topic is visual, you SHOULD include exactly one JSON action on a new line: \n"
-                "   {\"action\": \"display_image\", \"subject\": \"[CUTE_WHIMSICAL_DESCRIPTION]\"} \n"
-                "5. CRITICAL: Your entire response MUST be under 60 words. You must finish your thought completely. \n"
-                "6. Do NOT include labels like 'Summarize:' or 'Fact:' or repeat these rules.\n"
+                "Read this real-world info, then share a short charming musing "
+                "as BMO (under 50 words, finish the thought).\n"
+                "Wrap your final reply between [BMO] and [/BMO] markers — only "
+                "what's between the markers will be spoken.\n"
+                "If the topic is visual, include ONE JSON action AFTER [/BMO]:\n"
+                '  {"action": "display_image", "subject": "<short visual phrase>"}\n\n'
                 f"Info: {search_result[:1500]}"
             )
             payload = {
                 "model": FAST_LLM_MODEL,
                 "messages": [
-                    {"role": "system", "content": "You are BMO, a cute little robot who muses to yourself. Be concise, specific, and always finish your thought within 60 words. Do NOT repeat instructions."},
+                    {"role": "system", "content":
+                     "You are BMO, a cute robot musing to yourself. Always wrap your "
+                     "spoken reply in [BMO]...[/BMO] tags. Be concise and specific."},
                     {"role": "user", "content": thought_prompt},
                 ],
                 "stream": False,
-                "options": {"temperature": 0.8, "num_predict": 512}
+                "options": {"temperature": 0.8, "num_predict": 256}  # was 512 — shorter cap matches new word limit
             }
             resp = http_requests.post(LLM_URL, json=payload, timeout=60)
             if resp.status_code == 200:
@@ -1824,7 +1856,9 @@ class BotGUI:
                 return False
         
         while not self.stop_event.is_set():
-            time.sleep(30) # Check every 30 seconds
+            # Honour stop_event so app shutdown doesn't have to wait up to 30 s.
+            if self.stop_event.wait(timeout=30):
+                break
             
             # Watchdog: if busy for >2 min with no new interaction, clear it.
             # Uses last_user_interaction (not last_state_change) so a long
