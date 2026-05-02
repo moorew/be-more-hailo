@@ -91,23 +91,24 @@ _MUSIC_KEYWORDS = [
     "sing for bmo", "bmo sing", "play me some music",
 ]
 
-# Phrases that indicate the model is regurgitating system prompt instructions
-_PROMPT_LEAK_PATTERNS = [
-    re.compile(r'<think>.*?</think>', re.IGNORECASE | re.DOTALL),
-    re.compile(r'CRIT(?:IC)?AL:.*?JSON', re.IGNORECASE | re.DOTALL),
-    re.compile(r'you MUST output.*?JSON', re.IGNORECASE | re.DOTALL),
-    re.compile(r'output (?:exactly )?this JSON', re.IGNORECASE),
-    re.compile(r'If the user asks.*?(?:output|JSON)', re.IGNORECASE | re.DOTALL),
-    re.compile(r'Replace YOUR_PROMPT_HERE', re.IGNORECASE),
-    re.compile(r'Valid emotions are:', re.IGNORECASE),
-    re.compile(r'1\. Start by saying:.*?', re.IGNORECASE),
-    re.compile(r'2\. Then, share your own.*?', re.IGNORECASE),
-    re.compile(r'3\. If the topic is visual.*?', re.IGNORECASE),
-    re.compile(r'Rule \d:.*?', re.IGNORECASE),
-    re.compile(r'Summarize (?:the )?specific fact.*?', re.IGNORECASE),
-    re.compile(r'\[Summarize.*?\]', re.IGNORECASE),
-    re.compile(r'Start by saying:.*?', re.IGNORECASE),
+# Targeted leakage cleanup — only patterns that are unambiguous markers of the
+# model echoing its own system prompt template, not natural user phrases.
+# (Old approach truncated at "Rule 3:" or "Summarize:" anywhere in the reply,
+# which broke legitimate replies about board-game rules and book summaries.)
+_LEAK_PATTERNS = [
+    # Anchored placeholders / template fragments — vanishingly rare in real speech
+    re.compile(r'\[CUTE_WHIMSICAL_DESCRIPTION\]', re.IGNORECASE),
+    re.compile(r'YOUR_PROMPT_HERE', re.IGNORECASE),
+    re.compile(r'\[Summarize[^\]]*\]', re.IGNORECASE),
 ]
+# Line-start labels we can safely strip (only when they begin a line)
+_LINE_LABEL_RE = re.compile(
+    r'^\s*(?:My thoughts|Reaction|Opinion|BMO\'s thoughts|BMO\'s reaction|'
+    r"Summarize|Fact|RULES?|Info|Rule \d+):\s*",
+    re.IGNORECASE | re.MULTILINE,
+)
+# Numbered list labels at line start — model often echoes "1. Start by saying..."
+_NUMBERED_LINE_RE = re.compile(r'^\s*\d+[\.\)]\s+', re.MULTILINE)
 
 
 def _build_display_image_action(user_text: str) -> str:
@@ -139,35 +140,45 @@ def _build_display_image_action(user_text: str) -> str:
 
 
 def strip_prompt_leakage(content: str) -> str:
-    """Remove text that looks like the model echoing system prompt instructions."""
-    # First, strip <think> blocks entirely as they are internal reasoning
-    # Handle both closed and unclosed <think> tags
+    """Clean a model reply without aggressive truncation.
+
+    Strategy:
+    1. Strip <think>...</think> reasoning blocks (Qwen often emits these).
+    2. Honour [BMO]…[/BMO] markers if present — return only what's between.
+    3. Otherwise, just remove unambiguous template placeholders and line-start
+       labels.  We deliberately do NOT truncate the reply at phrases like
+       "Rule 1:" or "Summarize:" because users legitimately say those things."""
+    if not content:
+        return ""
+
+    # 1. Strip reasoning blocks
     if "<think>" in content.lower():
         if "</think>" in content.lower():
             content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
         else:
-            # If it's unclosed, it was likely cut off - strip everything from <think> onwards
-            parts = re.split(r'<think>', content, flags=re.IGNORECASE)
-            content = parts[0].strip()
-    
-    # If the model uses our new [BMO] tag, strip everything before it (including the tag)
-    if "[BMO]" in content:
+            # Unclosed <think> — model was cut off mid-reasoning.  Drop everything from there.
+            content = re.split(r'<think>', content, flags=re.IGNORECASE)[0].strip()
+
+    # 2. [BMO] markers — extract only the bracketed reply if present
+    if "[/BMO]" in content:
+        m = re.search(r'\[BMO\](.*?)\[/BMO\]', content, flags=re.DOTALL | re.IGNORECASE)
+        if m:
+            content = m.group(1).strip()
+    elif "[BMO]" in content:
+        # Half-tagged — strip everything before [BMO]
         content = content.split("[BMO]", 1)[1].strip()
 
-    # Remove numbered list labels at the start of lines (e.g., "1. ", "2. ")
-    # which the model sometimes includes when following multi-step prompts.
-    content = re.sub(r'^\s*\d+[\.\)]\s*', '', content, flags=re.MULTILINE)
-    
-    # Remove common prompt-following labels
-    content = re.sub(r'^(?:My thoughts|Reaction|Opinion|BMO\'s thoughts|BMO\'s reaction|Summarize|Fact):', '', content, flags=re.IGNORECASE | re.MULTILINE)
+    # 3. Line-start labels and numbered list prefixes
+    content = _LINE_LABEL_RE.sub('', content)
+    content = _NUMBERED_LINE_RE.sub('', content)
 
-    for pat in _PROMPT_LEAK_PATTERNS:
-        # Remove the matched pattern and everything after it (it's usually trailing noise)
-        match = pat.search(content)
-        if match:
-            content = content[:match.start()].strip()
-            
-    return content.strip()
+    # 4. Remove unambiguous placeholders (no truncation past them)
+    for pat in _LEAK_PATTERNS:
+        content = pat.sub('', content)
+
+    # 5. Collapse runs of blank lines / leading-trailing whitespace
+    content = re.sub(r'\n{3,}', '\n\n', content).strip()
+    return content
 
 
 MEMORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory.json")
@@ -639,15 +650,27 @@ class Brain:
                                 buffer += chunk
                                 full_content += chunk
                                 
-                                # If buffer ends with strong punctuation or newline, yield it
-                                # Removed commas and semicolons to improve flow and prevent choppy speech.
-                                # Skip flush for digit-period-digit (e.g. "$4.99") so prices and decimals stay together.
+                                # If buffer ends with strong punctuation or newline, yield it.
+                                # Skip flush for: (a) digit-period-digit ("$4.99"),
+                                # (b) common abbreviations (Dr., Mr., Mrs., e.g., i.e.),
+                                # (c) buffers shorter than 10 chars (avoids "It's." flushing as a sentence)
                                 ends_punct = any(buffer.endswith(p) for p in ['.', '!', '?', '\n'])
                                 mid_decimal = (
                                     len(buffer) >= 2 and buffer.endswith('.')
                                     and buffer[-2].isdigit()
                                 )
-                                if (ends_punct and not mid_decimal) or "\n\n" in buffer:
+                                # Treat short buffers as not ready to flush
+                                trimmed = buffer.strip()
+                                too_short = len(trimmed) < 10
+                                # Common abbrev. tail check (case-insensitive)
+                                abbrev_tail = any(
+                                    trimmed.lower().endswith(a) for a in (
+                                        ' dr.', ' mr.', ' mrs.', ' ms.', ' jr.', ' sr.',
+                                        ' st.', ' vs.', ' etc.', ' e.g.', ' i.e.',
+                                    )
+                                )
+                                ready = ends_punct and not mid_decimal and not too_short and not abbrev_tail
+                                if ready or "\n\n" in buffer:
                                     # Strip system prompt leakage
                                     cleaned = strip_prompt_leakage(buffer)
                                     # Ensure BMO spelling before yielding

@@ -215,10 +215,20 @@ class BotGUI:
 
         # Start Main Thread
         threading.Thread(target=self.main_loop, daemon=True).start()
-        
+
         # Start Screensaver Audio Thread
         self.last_screensaver_audio_time = time.time()
         threading.Thread(target=self.screensaver_audio_loop, daemon=True).start()
+
+        # Pre-warm the VLM (Hailo NPU) so the first "what is this?" doesn't
+        # eat a ~3 s init tax mid-conversation.  Best-effort only.
+        def _warmup_vlm():
+            try:
+                from core.llm import _get_vlm
+                _get_vlm()
+            except Exception as e:
+                print(f"[VLM] Warmup skipped: {e}")
+        threading.Thread(target=_warmup_vlm, daemon=True).start()
 
     def exit_fullscreen(self, event=None):
         self.stop_event.set()
