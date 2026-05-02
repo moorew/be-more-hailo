@@ -35,7 +35,7 @@ import scipy.signal
 from openwakeword.model import Model
 
 # Import unified core modules
-from core.llm import Brain
+from core.llm import Brain, extract_json_object, strip_prompt_leakage
 from core.tts import play_audio_on_hardware
 from core.stt import transcribe_audio
 from core.config import MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE, VOLUME
@@ -231,7 +231,24 @@ class BotGUI:
         threading.Thread(target=_warmup_vlm, daemon=True).start()
 
     def exit_fullscreen(self, event=None):
+        # Signal all background threads to wind down before tearing the UI.
         self.stop_event.set()
+        # Best-effort kill of any running audio so we don't leave aplay holding the device.
+        try:
+            self._kill_tts_pipeline()
+        except Exception:
+            pass
+        try:
+            for proc in list(self.active_sounds):
+                try: proc.terminate()
+                except Exception: pass
+        except Exception:
+            pass
+        # Flush any pending memory.json throttled writes
+        try:
+            self.brain.save_history(force=True)
+        except Exception:
+            pass
         self.master.quit()
 
     def set_state(self, state, msg=""):
@@ -259,6 +276,17 @@ class BotGUI:
             self._busy_lock.release()
         except RuntimeError:
             pass  # already unlocked
+
+    def _wait_until_idle(self, states, poll_s: float = 0.5, timeout_s: float = 60.0) -> bool:
+        """Block until current_state is OUT of `states` or stop_event fires.
+        Returns True if we exited because we're no longer in those states,
+        False on shutdown / timeout.  Bounded so worker threads can't hang."""
+        end = time.time() + timeout_s
+        while self.current_state in states:
+            if self.stop_event.is_set() or time.time() >= end:
+                return False
+            time.sleep(poll_s)
+        return True
 
     # ── Thinking-sound controller ────────────────────────────────────────────
     def _thinking_sound_start(self):
@@ -645,16 +673,18 @@ class BotGUI:
                             
                         data, overflowed = stream.read(CHUNK * downsample_factor)
                         
-                        if data is None or not data.any(): 
+                        # Real failure modes: None / wrong-shape data
+                        if data is None or data.size == 0:
                             if time.time() - last_data_time > 10.0:
-                                print("[EARS] Watchdog: Mic stream is silent/stalled. Restarting...")
+                                print("[EARS] Watchdog: Mic stream returned None/empty. Restarting...")
                                 break
                             time.sleep(0.01)
                             continue
-                        
-                        last_data_time = time.time() # Pet the watchdog
-                        
+
+                        last_data_time = time.time()  # Pet the watchdog (we got real data)
+
                         # 1. Quick Volume Check (Skip OWW if it's too quiet)
+                        # All-zero arrays are valid (quiet room) — don't treat as a mic failure.
                         current_max = np.max(np.abs(data))
                         if current_max < 250: # Adjust threshold as needed
                             continue
@@ -686,10 +716,11 @@ class BotGUI:
                 self.set_state(BotStates.ERROR, "Mic Error")
                 if retry_count > 5:
                     print("[EARS] Too many mic errors, restarting audio system...")
-                    # Possible attempt to reset ALSA? subprocess.run(["alsactl", "init"])
-                    time.sleep(5)
+                    if self.stop_event.wait(timeout=5):
+                        return False
                     retry_count = 0
-                time.sleep(2)
+                if self.stop_event.wait(timeout=2):
+                    return False
                 # Try to go back to IDLE if we were in ERROR
                 if self.current_state == BotStates.ERROR:
                     self.set_state(BotStates.IDLE, "Retrying mic...")
@@ -724,11 +755,21 @@ class BotGUI:
         while retry_count < 3:
             try:
                 with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', callback=callback):
+                    last_callback_samples = 0
+                    last_callback_at = time.time()
                     while not self.stop_event.is_set():
                         sd.sleep(50)
                         if not has_spoken and silent_chunks > 100: break
                         if has_spoken and silent_chunks > 40: break
                         if total_samples >= MAX_SAMPLES: break  # 15-second hard cap (sample-accurate)
+                        # Watchdog: if the callback stops firing mid-recording
+                        # (USB unplug, driver crash) the polling loop would hang.
+                        if total_samples > last_callback_samples:
+                            last_callback_samples = total_samples
+                            last_callback_at = time.time()
+                        elif time.time() - last_callback_at > 3.0:
+                            print("[REC] Watchdog: callback stopped firing — aborting record.")
+                            break
                     break # Success!
             except Exception as e:
                 retry_count += 1
@@ -764,8 +805,7 @@ class BotGUI:
             print(f"[TIMER DONE] {message}")
             
             # Wait for BMO to finish speaking/listening to avoid ALSA conflicts
-            while self.current_state in [BotStates.SPEAKING, BotStates.LISTENING]:
-                time.sleep(1)
+            self._wait_until_idle({BotStates.SPEAKING, BotStates.LISTENING}, poll_s=1.0, timeout_s=120)
                 
             # Interject the alarm
             old_state = self.current_state
@@ -1220,7 +1260,6 @@ class BotGUI:
         # But to match existing logic, we'll use regex here
         
         # 1. Handle JSON actions (brace-balanced — handles nested objects + lax spacing)
-        from core.llm import extract_json_object
         action_data, span = extract_json_object(chunk)
         if action_data is not None:
             if action_data.get("action") == "take_photo":
@@ -1243,12 +1282,16 @@ class BotGUI:
                 chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
             elif action_data.get("action") == "play_music":
                 def music_worker():
-                    while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
-                        time.sleep(0.5)
+                    if not self._wait_until_idle({BotStates.SPEAKING, BotStates.THINKING}):
+                        return  # shutdown
                     music_proc = self.play_sound("music")
                     if music_proc:
                         self.set_state(BotStates.JAMMING, "Jamming!")
-                        music_proc.wait()
+                        try:
+                            music_proc.wait(timeout=600)
+                        except subprocess.TimeoutExpired:
+                            try: music_proc.terminate()
+                            except Exception: pass
                         if self.current_state == BotStates.JAMMING:
                             self.set_state(BotStates.IDLE, "Tap to speak")
                 threading.Thread(target=music_worker, daemon=True).start()
@@ -1518,7 +1561,6 @@ class BotGUI:
                         self.recent_thoughts.append(topic)
                         # Check for image URL or subject (brace-balanced JSON)
                         image_url = None
-                        from core.llm import extract_json_object
                         action_data, span = extract_json_object(phrase)
                         if action_data is not None and action_data.get("action") == "display_image":
                             subject = action_data.get("subject") or action_data.get("image_url")
@@ -1557,10 +1599,8 @@ class BotGUI:
 
         def run_music():
             try:
-                # Wait for current speaking to finish if any
-                while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
-                    time.sleep(0.5)
-                
+                if not self._wait_until_idle({BotStates.SPEAKING, BotStates.THINKING}):
+                    return
                 intros = [
                     "Oh yeah! BMO is going to jam out!",
                     "Time for music! La la la!",
@@ -1573,7 +1613,11 @@ class BotGUI:
                 music_proc = self.play_sound("music")
                 if music_proc:
                     self.set_state(BotStates.JAMMING, "Jamming!")
-                    music_proc.wait()
+                    try:
+                        music_proc.wait(timeout=600)
+                    except subprocess.TimeoutExpired:
+                        try: music_proc.terminate()
+                        except Exception: pass
                     time.sleep(1) # Extra buffer
                     if self.current_state == BotStates.JAMMING:
                         self.set_state(BotStates.IDLE, "Tap to speak")
@@ -1636,9 +1680,8 @@ class BotGUI:
                     url = f"https://loremflickr.com/640/480/{search_term.replace(' ', ',')}?lock={lock_id}"
                 
                 # Wait for BMO to finish speaking the intro
-                while self.current_state in [BotStates.SPEAKING, BotStates.THINKING]:
-                    time.sleep(0.5)
-                    
+                if not self._wait_until_idle({BotStates.SPEAKING, BotStates.THINKING}):
+                    return
                 self.display_remote_image(url, commentary_prompt=search_term)
             except Exception as e:
                 print(f"[IMAGE] Generator failed: {e}")
@@ -1743,7 +1786,6 @@ class BotGUI:
     def generate_thought_internal(self, search_result):
         """Shared logic for generating a BMO thought from search results."""
         from core.config import LLM_URL, FAST_LLM_MODEL
-        from core.llm import strip_prompt_leakage
         import requests as http_requests
 
         if not self.llm_lock.acquire(blocking=False):
@@ -1954,7 +1996,6 @@ class BotGUI:
                                 self.recent_thoughts.append(topic)
                                 # Check for image URL or subject (brace-balanced JSON)
                                 image_url = None
-                                from core.llm import extract_json_object
                                 action_data, span = extract_json_object(phrase)
                                 if action_data is not None and action_data.get("action") == "display_image":
                                     subject = action_data.get("subject") or action_data.get("image_url")
@@ -1990,5 +2031,8 @@ class BotGUI:
 if __name__ == "__main__":
     root = tk.Tk()
     app = BotGUI(root)
+    # Window-manager close (X button, system kill) routes through the same
+    # cleanup path as the Escape key — flushes memory.json, kills aplay, etc.
+    root.protocol("WM_DELETE_WINDOW", app.exit_fullscreen)
     root.mainloop()
 

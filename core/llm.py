@@ -429,14 +429,15 @@ class Brain:
             }
         }
 
+        assistant_appended = False
         try:
             logger.info(f"Sending request to LLM ({chosen_model}): {LLM_URL}")
             response = requests.post(LLM_URL, json=payload, timeout=180)
-            
+
             if response.status_code == 200:
                 data = response.json()
                 content = data.get("message", {}).get("content", "")
-                
+
                 # Check if the LLM outputted a JSON action (like search_web)
                 try:
                     # Replace smart quotes before parsing
@@ -447,7 +448,10 @@ class Brain:
                         if action_data.get("action") == "take_photo":
                             logger.info("LLM requested to take a photo.")
                             # Return the JSON string directly so the caller can handle the camera
-                            return json.dumps({"action": "take_photo"})
+                            photo_action = json.dumps({"action": "take_photo"})
+                            self.history.append({"role": "assistant", "content": photo_action})
+                            assistant_appended = True
+                            return photo_action
                             
                         elif action_data.get("action") == "search_web":
                             query = action_data.get("query", "")
@@ -497,6 +501,7 @@ class Brain:
                     content = "BMO is here! How can I help?"
 
                 self.history.append({"role": "assistant", "content": content})
+                assistant_appended = True
 
                 # Clean injected search context from history so it doesn't
                 # accumulate and confuse the model on future turns.
@@ -512,13 +517,22 @@ class Brain:
             else:
                 logger.error(f"LLM Error: {response.status_code} - {response.text}")
                 return f"Error: {response.status_code}"
-                
+
         except requests.exceptions.RequestException as e:
             logger.error(f"Connection Error to {LLM_URL}: {e}")
             return "Could not connect to my brain. Is the Hailo server running?"
         except Exception as e:
             logger.error(f"Brain Exception: {e}")
             return "I'm having trouble thinking right now."
+        finally:
+            # Preserve user/assistant alternation: if every code path above
+            # bailed without recording an assistant turn (HTTP error, network
+            # failure, take_photo path that bailed without append), drop the
+            # unmatched user message so the next turn doesn't start with two
+            # user messages in a row.
+            if not assistant_appended:
+                if self.history and self.history[-1].get("role") == "user":
+                    self.history.pop()
 
     def get_history(self):
         return self.history
@@ -634,7 +648,8 @@ class Brain:
 
         full_content = ""
         buffer = ""
-        
+        assistant_appended = False
+
         try:
             logger.info(f"Stream request to LLM ({chosen_model}): {LLM_URL}")
             with requests.post(LLM_URL, json=payload, stream=True, timeout=180) as response:
@@ -699,6 +714,7 @@ class Brain:
                         pass
                     
                     self.history.append({"role": "assistant", "content": full_content})
+                    assistant_appended = True
                     self.save_history()
 
                     # Clean injected search context from history so it doesn't
@@ -720,6 +736,20 @@ class Brain:
         except Exception as e:
             logger.error(f"Brain Exception: {e}")
             yield "I'm having trouble right now."
+        finally:
+            # Stream may have failed mid-generation. We MUST keep the
+            # user-then-assistant alternation in history or the next turn will
+            # confuse the model.  If we never appended an assistant turn,
+            # either record what we got OR pop the dangling user message.
+            if not assistant_appended:
+                if full_content.strip():
+                    self.history.append({"role": "assistant", "content": full_content})
+                else:
+                    # Drop the unmatched user message we appended at function start
+                    if self.history and self.history[-1].get("role") == "user":
+                        self.history.pop()
+                self.save_history()
+                self._trim_history()
 
     def set_history(self, new_history):
         # Ensure system prompt is always present and up to date
@@ -745,6 +775,7 @@ class Brain:
         # We don't append the image to the main history to save context window,
         # but we do append the user's question and the assistant's answer.
         self.history.append({"role": "user", "content": user_text})
+        assistant_appended = False
 
         try:
             vlm, frame_shape, frame_dtype = _get_vlm()
@@ -802,6 +833,7 @@ class Brain:
             logger.info(f"VLM response ({len(content)} chars): {content[:120]}...")
 
             self.history.append({"role": "assistant", "content": content})
+            assistant_appended = True
             return content
 
         except FileNotFoundError as e:
@@ -810,3 +842,8 @@ class Brain:
         except Exception as e:
             logger.error(f"VLM Exception: {e}", exc_info=True)
             return "I tried to look, but my eyes aren't working right now."
+        finally:
+            # Preserve user/assistant alternation if any error path bailed.
+            if not assistant_appended:
+                if self.history and self.history[-1].get("role") == "user":
+                    self.history.pop()
