@@ -19,9 +19,10 @@ def transcribe_audio(audio_filepath: str) -> str:
     try:
         # Run whisper.cpp directly on the 16 kHz WAV.
         # -nt  no timestamps (we strip them anyway, skip the compute)
-        # -t 4 use all four Pi 5 CPU cores for faster inference
+        # -t 3 leave one of the Pi 5's four cores free for Piper / Tk so we
+        #      don't thermal-throttle when STT and TTS overlap mid-turn
         # -l en force English, skipping the language-detection pass
-        cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", audio_filepath, "-nt", "-t", "4", "-l", "en"]
+        cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", audio_filepath, "-nt", "-t", "3", "-l", "en"]
         logger.info(f"Running whisper.cpp transcription on the CPU... CMD: {' '.join(cmd)}")
         try:
             # stderr=DEVNULL: whisper prints verbose debug/timing info to stderr.

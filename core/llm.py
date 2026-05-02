@@ -172,6 +172,38 @@ def strip_prompt_leakage(content: str) -> str:
 
 MEMORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory.json")
 
+def _quick_lead_in(user_text: str, intent: str) -> str:
+    """Ask FAST_LLM_MODEL for a one-line BMO-voiced acknowledgement before a
+    pre-routed action runs.  Falls back to a static phrase on any failure so
+    the action path is never blocked.  Total wall-time budget: ~1.5 s."""
+    fallbacks = {
+        "image":  "Ooh, let BMO draw something for you!",
+        "photo":  "BMO is taking a look!",
+        "music":  "Time to jam!",
+    }
+    try:
+        payload = {
+            "model": FAST_LLM_MODEL,
+            "messages": [
+                {"role": "system", "content":
+                 "You are BMO. Reply with ONE short, cheerful sentence (max 12 words) "
+                 "acknowledging what the user asked for. No markdown, no quotes."},
+                {"role": "user", "content": user_text},
+            ],
+            "stream": False,
+            "options": {"temperature": 0.8, "num_predict": 30},
+        }
+        r = requests.post(LLM_URL, json=payload, timeout=1.5)
+        if r.status_code == 200:
+            txt = r.json().get("message", {}).get("content", "").strip().strip('"').strip("'")
+            txt = re.sub(r"\s+", " ", txt)
+            if 3 <= len(txt) <= 100:
+                return txt
+    except Exception:
+        pass
+    return fallbacks.get(intent, "")
+
+
 def extract_json_object(text: str):
     r"""Find the first balanced JSON object in `text` and return (parsed, span)
     or (None, None). Handles nested objects, escaped quotes, and unbalanced
@@ -238,6 +270,14 @@ class Brain:
         elif self.history[0]["content"] != get_system_prompt():
             self.history[0]["content"] = get_system_prompt()
 
+        # Memory persistence throttling — limit SD-card writes for 24/7 uptime.
+        # Force a flush at most once every 60 s; pending changes flush on exit.
+        self._save_min_interval_s = 60.0
+        self._last_save_at = 0.0
+        self._save_dirty = False
+        import atexit as _atexit
+        _atexit.register(self._save_on_exit)
+
     def load_history(self):
         """Load chat history from memory.json if it exists."""
         if os.path.exists(MEMORY_FILE):
@@ -249,13 +289,26 @@ class Brain:
                 logger.error(f"Failed to load memory: {e}")
                 self.history = []
 
-    def save_history(self):
-        """Persist chat history to disk."""
+    def save_history(self, force: bool = False):
+        """Persist chat history to disk.  Throttled to once per ~60 s by
+        default to limit SD-card wear; call with force=True for hard flushes."""
+        import time as _t
+        self._save_dirty = True
+        now = _t.time()
+        if not force and (now - self._last_save_at) < self._save_min_interval_s:
+            return
         try:
             with open(MEMORY_FILE, 'w') as f:
                 json.dump(self.history, f, indent=2)
+            self._last_save_at = now
+            self._save_dirty = False
         except Exception as e:
             logger.error(f"Failed to save memory: {e}")
+
+    def _save_on_exit(self):
+        """atexit hook — flush any pending throttled writes before shutdown."""
+        if getattr(self, "_save_dirty", False):
+            self.save_history(force=True)
 
     def _trim_history(self):
         """Keep the system prompt + the most recent MAX_HISTORY_MESSAGES messages."""
@@ -284,8 +337,10 @@ class Brain:
         ]
         if any(kw in lower_text for kw in camera_keywords):
             action = '{"action": "take_photo"}'
-            self.history.append({"role": "assistant", "content": action})
-            return action
+            lead_in = _quick_lead_in(user_text, "photo")
+            combined = (lead_in + " " + action).strip() if lead_in else action
+            self.history.append({"role": "assistant", "content": combined})
+            return combined
 
         # Pre-LLM display_image check — handle image generation requests
         # directly instead of relying on the small model to emit correct JSON
@@ -294,8 +349,10 @@ class Brain:
             matched_kw = next(kw for kw in _DISPLAY_IMAGE_KEYWORDS if kw in lower_text)
             print(f"[LLM] Image keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
             print(f"[LLM] Emitting display_image action: {action[:80]}")
-            self.history.append({"role": "assistant", "content": action})
-            return action
+            lead_in = _quick_lead_in(user_text, "image")
+            combined = (lead_in + " " + action).strip() if lead_in else action
+            self.history.append({"role": "assistant", "content": combined})
+            return combined
 
         # Pre-LLM music check — emit play_music directly rather than
         # relying on the small model to emit correct JSON
@@ -304,8 +361,10 @@ class Brain:
             matched_kw = next(kw for kw in _MUSIC_KEYWORDS if kw in lower_text)
             print(f"[LLM] Music keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
             print(f"[LLM] Emitting play_music action")
-            self.history.append({"role": "assistant", "content": action})
-            return action
+            lead_in = _quick_lead_in(user_text, "music")
+            combined = (lead_in + " " + action).strip() if lead_in else action
+            self.history.append({"role": "assistant", "content": combined})
+            return combined
 
         print(f"[LLM] No pre-LLM action matched for: '{lower_text[:60]}'")
 
@@ -472,7 +531,10 @@ class Brain:
         ]
         if any(kw in lower_text for kw in camera_keywords):
             action = '{"action": "take_photo"}'
-            self.history.append({"role": "assistant", "content": action})
+            lead_in = _quick_lead_in(user_text, "photo")
+            if lead_in:
+                yield lead_in
+            self.history.append({"role": "assistant", "content": (lead_in + " " + action).strip()})
             yield action
             return
 
@@ -481,7 +543,10 @@ class Brain:
             action = _build_display_image_action(user_text)
             matched_kw = next(kw for kw in _DISPLAY_IMAGE_KEYWORDS if kw in lower_text)
             print(f"[LLM-STREAM] Image keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
-            self.history.append({"role": "assistant", "content": action})
+            lead_in = _quick_lead_in(user_text, "image")
+            if lead_in:
+                yield lead_in
+            self.history.append({"role": "assistant", "content": (lead_in + " " + action).strip()})
             yield action
             return
 
@@ -490,7 +555,10 @@ class Brain:
             action = '{"action": "play_music"}'
             matched_kw = next(kw for kw in _MUSIC_KEYWORDS if kw in lower_text)
             print(f"[LLM-STREAM] Music keyword MATCHED: '{matched_kw}' in '{lower_text[:60]}'")
-            self.history.append({"role": "assistant", "content": action})
+            lead_in = _quick_lead_in(user_text, "music")
+            if lead_in:
+                yield lead_in
+            self.history.append({"role": "assistant", "content": (lead_in + " " + action).strip()})
             yield action
             return
 

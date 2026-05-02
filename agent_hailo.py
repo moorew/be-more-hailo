@@ -105,6 +105,10 @@ class BotGUI:
         self.manual_wake_event = threading.Event()
         self.current_state = BotStates.WARMUP
         self.last_state_change = time.time()
+        # Tracks the last real user/agent interaction.  Updated on wake fire,
+        # tap, and trigger entry — NOT on every state transition.  Watchdog
+        # uses this so a long DISPLAY_IMAGE view doesn't false-fire as "stuck".
+        self.last_user_interaction = time.time()
         
         # Audio State
         self.active_sounds = []
@@ -120,9 +124,11 @@ class BotGUI:
         self._piper_proc = None  # Persistent Piper process for the turn
         self._piper_reader_thread = None  # Thread piping Piper stdout → aplay stdin
 
-        # Thinking sound (initialized here to avoid hasattr/getattr workarounds)
+        # Thinking sound — single controller (no more dueling threads)
         self.is_thinking_sound_playing = False
         self.thinking_audio_process = None
+        self._thinking_lock = threading.Lock()
+        self._thinking_thread = None
 
         # Per-turn LLM-action handoffs from _handle_response_chunk → main_loop
         self.taking_photo = False
@@ -232,6 +238,7 @@ class BotGUI:
         """Atomic check-and-set. Returns True iff this thread now owns the busy state."""
         if self._busy_lock.acquire(blocking=False):
             self.is_busy = True
+            self.last_user_interaction = time.time()
             return True
         return False
 
@@ -242,6 +249,50 @@ class BotGUI:
             self._busy_lock.release()
         except RuntimeError:
             pass  # already unlocked
+
+    # ── Thinking-sound controller ────────────────────────────────────────────
+    def _thinking_sound_start(self):
+        """Start the thinking-sound loop. Idempotent — if a previous loop is
+        still alive, no second thread is spawned (eliminates the prior race
+        where post-STT and post-photo each spawned their own loop)."""
+        with self._thinking_lock:
+            if self.is_thinking_sound_playing:
+                return  # Already running
+            self.is_thinking_sound_playing = True
+            t = threading.Thread(target=self._thinking_sound_loop, daemon=True)
+            self._thinking_thread = t
+            t.start()
+
+    def _thinking_sound_stop(self):
+        """Signal the loop to exit; terminate the current sound process."""
+        self.is_thinking_sound_playing = False
+        proc = self.thinking_audio_process
+        self.thinking_audio_process = None
+        if proc is not None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    def _thinking_sound_loop(self):
+        try:
+            ack_proc = self.play_sound("ack_sounds")
+            if ack_proc:
+                ack_proc.wait()
+            while self.current_state == BotStates.THINKING and self.is_thinking_sound_playing:
+                self.thinking_audio_process = self.play_sound("thinking_sounds")
+                if self.thinking_audio_process:
+                    self.thinking_audio_process.wait()
+                # Randomized 0.4–1.2 s gap between repeats — feels alive
+                gap_total = random.uniform(0.4, 1.2)
+                elapsed = 0.0
+                while elapsed < gap_total:
+                    if self.current_state != BotStates.THINKING or not self.is_thinking_sound_playing:
+                        break
+                    time.sleep(0.1)
+                    elapsed += 0.1
+        finally:
+            self.thinking_audio_process = None
 
     def handle_click(self, event):
         """Map screen clicks to hot corners, mouth-tap mute, or tap-to-speak."""
@@ -552,10 +603,6 @@ class BotGUI:
         
         print(f"[EARS] Waiting for wake word... (Index: {MIC_DEVICE_INDEX}, Rate: {capture_rate})")
         
-        # Prepare fast resampling indices once
-        # Downsample from capture_rate to 16000 by picking every Nth sample
-        resample_indices = np.arange(0, CHUNK * downsample_factor, downsample_factor).astype(np.int32)
-        
         retry_count = 0
         while not self.stop_event.is_set():
             try:
@@ -590,9 +637,18 @@ class BotGUI:
                         if current_max < 250: # Adjust threshold as needed
                             continue
 
-                        # 2. Fast Resampling (Nearest Neighbor slicing is much faster than scipy.signal.resample)
-                        audio_16k = data[resample_indices].flatten() 
-                        
+                        # 2. Down-sample 48 kHz → 16 kHz with an IIR low-pass
+                        # before decimating.  Nearest-neighbor slicing aliases
+                        # high-frequency speech content into the OWW band and
+                        # hurts wake-word reliability in noisy rooms.
+                        flat = data.flatten()
+                        if downsample_factor >= 2:
+                            audio_16k = scipy.signal.decimate(
+                                flat, downsample_factor, ftype='iir', zero_phase=False,
+                            ).astype(np.int16)
+                        else:
+                            audio_16k = flat
+
                         # 3. Predict
                         oww.predict(audio_16k)
                         
@@ -1196,8 +1252,11 @@ class BotGUI:
         self.set_state(BotStates.SPEAKING, "Ready!")
         greeting_proc = self.play_sound("greeting_sounds")
         if greeting_proc:
-            # Wait for greeting to finish before going idle
-            threading.Thread(target=lambda: (greeting_proc.wait(), self.set_state(BotStates.IDLE, "Tap to speak") if self.current_state == BotStates.SPEAKING else None), daemon=True).start()
+            def _await_greeting():
+                greeting_proc.wait()
+                if self.current_state == BotStates.SPEAKING:
+                    self.set_state(BotStates.IDLE, "Tap to speak")
+            threading.Thread(target=_await_greeting, daemon=True).start()
         else:
             self.set_state(BotStates.IDLE, "Tap to speak")
 
@@ -1210,6 +1269,7 @@ class BotGUI:
                     print("[MAIN] Couldn't claim busy lock; another flow is running.")
                     continue
                 self.is_busy = True
+                self.last_user_interaction = time.time()
                 # 2. Record
                 self.set_state(BotStates.LISTENING, "Listening...")
                 # Pre-warm Piper in parallel with STT so the first TTS chunk has zero start-up gap
@@ -1218,29 +1278,7 @@ class BotGUI:
                 
                 # 3. Transcribe
                 self.set_state(BotStates.THINKING, "Transcribing...")
-                
-                self.is_thinking_sound_playing = True
-                def play_thinking_sequence():
-                    ack_proc = self.play_sound("ack_sounds")
-                    if ack_proc:
-                        ack_proc.wait()
-                    
-                    while self.current_state == BotStates.THINKING and self.is_thinking_sound_playing:
-                        self.thinking_audio_process = self.play_sound("thinking_sounds")
-                        if self.thinking_audio_process:
-                            self.thinking_audio_process.wait()
-                        # Tiny randomized gap (0.4–1.2 s) between repeats — keeps the
-                        # ambience continuous instead of the prior 8-second silence.
-                        gap_total = random.uniform(0.4, 1.2)
-                        elapsed = 0.0
-                        step = 0.1
-                        while elapsed < gap_total:
-                            if self.current_state != BotStates.THINKING or not self.is_thinking_sound_playing:
-                                break
-                            time.sleep(step)
-                            elapsed += step
-                
-                threading.Thread(target=play_thinking_sequence, daemon=True).start()
+                self._thinking_sound_start()
 
                 user_text = self.transcribe(wav_file)
                 print(f"User Transcribed: {user_text}")
@@ -1248,13 +1286,7 @@ class BotGUI:
                 if len(user_text) < 2:
                     self.set_state(BotStates.IDLE, "Tap to speak")
                     self._release_busy()
-                    self.is_thinking_sound_playing = False
-                    if self.thinking_audio_process is not None:
-                        try:
-                            self.thinking_audio_process.terminate()
-                        except Exception:
-                            pass
-                        self.thinking_audio_process = None
+                    self._thinking_sound_stop()
                     continue
 
                 # 4. LLM
@@ -1315,16 +1347,15 @@ class BotGUI:
                             with open('temp.jpg', 'rb') as img_file:
                                 b64_string = base64.b64encode(img_file.read()).decode('utf-8')
                             self.set_state(BotStates.THINKING, "Analyzing...")
-                            self.is_thinking_sound_playing = True
-                            threading.Thread(target=play_thinking_sequence, daemon=True).start()
+                            self._thinking_sound_start()  # Idempotent — reuses existing loop if alive
                             response = self.brain.analyze_image(b64_string, user_text)
-                            self.is_thinking_sound_playing = False
-                            if self.thinking_audio_process is not None:
-                                try:
-                                    self.thinking_audio_process.terminate()
-                                except Exception:
-                                    pass
-                                self.thinking_audio_process = None
+                            self._thinking_sound_stop()
+                            # Clean up the captured image — we don't need it anymore
+                            try:
+                                if os.path.exists('temp.jpg'):
+                                    os.remove('temp.jpg')
+                            except Exception:
+                                pass
                             self.speak(response)
                         except FileNotFoundError as e:
                             print(f"Camera Error: {e}")
@@ -1338,10 +1369,11 @@ class BotGUI:
                             print(f"Camera Error: {e}")
                             self.speak("I tried to take a photo, but my camera isn't working.")
                     
-                    # 5. Display Image (if any)
+                    # 5. Display Image (if any). The pre-LLM lead-in (from
+                    # _quick_lead_in in core/llm.py) was already streamed and
+                    # spoken via _handle_response_chunk, so we don't need to
+                    # speak again here.
                     if image_url:
-                        # Speak confirmation before downloading
-                        self.speak("Ooh, let BMO draw something for you!")
                         self.set_state(BotStates.DISPLAY_IMAGE, "Showing Image...")
                         print(f"[IMAGE] Starting image display for: {image_url}")
                         try:
@@ -1784,9 +1816,10 @@ class BotGUI:
         while not self.stop_event.is_set():
             time.sleep(30) # Check every 30 seconds
             
-            # Watchdog: if is_busy is True for too long (e.g. > 2 mins), clear it.
-            # This prevents BMO from being 'stuck' forever if a thread dies.
-            if self.is_busy and (time.time() - self.last_state_change > 120):
+            # Watchdog: if busy for >2 min with no new interaction, clear it.
+            # Uses last_user_interaction (not last_state_change) so a long
+            # DISPLAY_IMAGE view doesn't get force-cleared.
+            if self.is_busy and (time.time() - self.last_user_interaction > 120):
                 print("[WATCHDOG] BMO was busy for > 120s. Force-clearing is_busy.")
                 self._release_busy()
                 self.set_state(BotStates.IDLE, "Tap to speak")
