@@ -61,7 +61,10 @@ if [ ! -f "requirements.txt" ] || [ ! -f "agent_hailo.py" ]; then
         echo "Directory 'be-more-agent' already exists. Entering it..."
         cd be-more-agent
     else
-        git clone https://github.com/moorew/be-more-hailo.git be-more-agent
+        # --recurse-submodules pulls whisper.cpp at the pinned upstream
+        # commit in the same step; section 7 also handles the case where
+        # someone cloned without it.
+        git clone --recurse-submodules https://github.com/moorew/be-more-hailo.git be-more-agent
         cd be-more-agent
     fi
     chmod +x *.sh
@@ -107,10 +110,19 @@ wget -nc -q -O piper/bmo.onnx.json "$BMO_VOICE/bmo.onnx.json"
 # 7. whisper.cpp (CPU-based STT)
 # ─────────────────────────────────────────────────────────────────────────────
 echo -e "${YELLOW}[7/13] Building whisper.cpp for CPU STT...${NC}"
-if [ ! -f "whisper.cpp/build/bin/whisper-cli" ]; then
-    if [ ! -d "whisper.cpp" ]; then
+# whisper.cpp is registered as a git submodule of this repo, pinned at
+# a known upstream commit. Inside a git checkout we initialise the
+# submodule (handles non-recursive clones); for users who got the source
+# as a tarball with no .git directory, fall back to a fresh clone.
+if [ ! -f "whisper.cpp/CMakeLists.txt" ]; then
+    if [ -d ".git" ] && [ -f ".gitmodules" ]; then
+        git submodule update --init --recursive whisper.cpp
+    else
+        rm -rf whisper.cpp
         git clone https://github.com/ggerganov/whisper.cpp.git
     fi
+fi
+if [ ! -f "whisper.cpp/build/bin/whisper-cli" ]; then
     cmake -B whisper.cpp/build -S whisper.cpp -DCMAKE_BUILD_TYPE=Release
     cmake --build whisper.cpp/build --config Release -j$(nproc)
 fi

@@ -211,11 +211,13 @@ The script handles everything:
 ### Manual install
 
 ```bash
-git clone https://github.com/moorew/be-more-hailo.git be-more-agent
+git clone --recurse-submodules https://github.com/moorew/be-more-hailo.git be-more-agent
 cd be-more-agent
 chmod +x *.sh
 ./install.sh
 ```
+
+> Already cloned without `--recurse-submodules`? Run `git submodule update --init --recursive` from inside the repo to pull `whisper.cpp` at the pinned upstream commit. (Or just re-run `install.sh` — it does this automatically.)
 
 ---
 
