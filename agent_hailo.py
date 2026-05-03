@@ -207,8 +207,17 @@ class BotGUI:
 
         self.animations = {}
         self.current_frame = 0
-        self.mouth_ema = 0.0 # Exponential moving average for smooth transitions
+        self.mouth_ema = 0.0 # Asymmetric envelope of mouth_open (fast attack, slow release)
         self.mouth_viseme_jitter = 0 # Offset for different "phoneme" looks
+        # Viseme palette state. speaking_frame indexes the 6-shape palette
+        # produced by generate_faces.gen_speaking(): 0=closed, 1=tiny,
+        # 2=small, 3=oh, 4=wide, 5=ah. The vowel-swap timer drives 3-way
+        # alternation between OH/WIDE/AH while sustained vowel energy is
+        # detected — keeps the mouth visibly articulating instead of locking
+        # onto one open shape.
+        self.speaking_frame = 0
+        self.speaking_frame_hold_until = 0.0
+        self._vowel_swap_until = 0.0
         self.load_animations()
         self.load_sounds()
         self.update_animation()
@@ -220,15 +229,11 @@ class BotGUI:
         self.last_screensaver_audio_time = time.time()
         threading.Thread(target=self.screensaver_audio_loop, daemon=True).start()
 
-        # Pre-warm the VLM (Hailo NPU) so the first "what is this?" doesn't
-        # eat a ~3 s init tax mid-conversation.  Best-effort only.
-        def _warmup_vlm():
-            try:
-                from core.llm import _get_vlm
-                _get_vlm()
-            except Exception as e:
-                print(f"[VLM] Warmup skipped: {e}")
-        threading.Thread(target=_warmup_vlm, daemon=True).start()
+        # NOTE: do NOT pre-warm the VLM here. The Hailo NPU is single-device
+        # and exclusive; warming the VLM at startup grabs /dev/hailo0 before
+        # hailo-ollama can load the LLM HEF, leaving the LLM service crashing
+        # in a SEGV loop. Pay the ~3 s VLM init the first time the user asks
+        # for vision instead.
 
     def exit_fullscreen(self, event=None):
         # Signal all background threads to wind down before tearing the UI.
@@ -386,47 +391,173 @@ class BotGUI:
             print(f"[CLICK] Ignored in state {self.current_state} ({x},{y})")
 
     # ── Volume overlay ────────────────────────────────────────────────────────
+    # Custom Canvas-based slider. tk.Scale's default thumb is ~15 px wide,
+    # which is fiddly to grab on a finger-driven 800×480 panel; this draws
+    # a chunky rounded track + 60 px knob + big readout in BMO's mouth
+    # palette. Tap anywhere on the track to jump; drag the knob (or
+    # anywhere on the track) to fine-tune.
+
+    # BMO palette (matches the new viseme assets)
+    _VOL_BG       = '#C9E4C3'   # body green
+    _VOL_FILL     = '#396337'   # mouth dark green
+    _VOL_TROUGH   = '#A2B36A'   # tongue light green
+    _VOL_OUTLINE  = 'black'
+    _VOL_TEXT     = '#1a3d18'   # nearly-black for readout
 
     def _create_volume_overlay(self):
-        frame = tk.Frame(self.master, bg='#C9E4C3', padx=10, pady=6)
-        tk.Label(frame, text="🔊", font=('Courier New', 16),
-                 fg='#1a5c2a', bg='#C9E4C3').pack(side=tk.LEFT, padx=(0, 6))
-        self._volume_var = tk.IntVar(value=int(self.volume * 100))
-        tk.Scale(
-            frame, from_=0, to=100, orient=tk.HORIZONTAL, length=280,
-            variable=self._volume_var, command=self._on_volume_change,
-            bg='#C9E4C3', fg='#1a5c2a', troughcolor='#a0c4a0',
-            activebackground='#7db87d', highlightthickness=0, bd=0,
-            font=('Courier New', 11), showvalue=True, tickinterval=0,
-        ).pack(side=tk.LEFT)
-        frame.place(relx=0.5, rely=0.0, anchor=tk.N)
-        self._volume_overlay = frame
+        win_w = self.master.winfo_width() or self.BG_WIDTH
+
+        OW = min(720, int(win_w * 0.92))
+        OH = 120
+        PAD = 14
+        ICON_W = 64
+        PCT_W = 90
+        TRACK_X0 = PAD + ICON_W
+        TRACK_X1 = OW - PAD - PCT_W
+        TRACK_H  = 32
+        TRACK_Y  = (OH - TRACK_H) // 2
+        KNOB_R   = 30
+
+        cv = tk.Canvas(self.master, width=OW, height=OH,
+                       bg=self._VOL_BG, highlightthickness=0, bd=0)
+
+        # Outer pill: BMO body green with a thick dark-green outline so the
+        # overlay reads as a unified card sitting on top of BMO's face.
+        self._draw_rounded_rect(cv, 3, 3, OW-3, OH-3, r=22,
+                                fill=self._VOL_BG, outline=self._VOL_FILL,
+                                width=4)
+
+        # Speaker glyph (left)
+        cv.create_text(PAD + ICON_W//2, OH//2, text='🔊',
+                       font=('DejaVu Sans', 30),
+                       fill=self._VOL_TEXT, anchor='center')
+
+        # Track background (the unfilled portion shows through this)
+        self._draw_rounded_rect(cv, TRACK_X0, TRACK_Y,
+                                TRACK_X1, TRACK_Y + TRACK_H, r=TRACK_H//2,
+                                fill=self._VOL_TROUGH,
+                                outline=self._VOL_OUTLINE, width=3)
+
+        # Track fill — placeholder, redrawn on every level change
+        fill_id = self._draw_rounded_rect(
+            cv, TRACK_X0, TRACK_Y, TRACK_X0 + 1, TRACK_Y + TRACK_H,
+            r=TRACK_H//2, fill=self._VOL_FILL, outline='',
+        )
+
+        # Knob — a fat circle with a black outline, like BMO's eyes
+        cy = TRACK_Y + TRACK_H // 2
+        knob_id = cv.create_oval(
+            TRACK_X0 - KNOB_R, cy - KNOB_R,
+            TRACK_X0 + KNOB_R, cy + KNOB_R,
+            fill=self._VOL_FILL, outline=self._VOL_OUTLINE, width=4,
+        )
+
+        # Percentage readout (right)
+        pct_id = cv.create_text(
+            OW - PAD - PCT_W//2, OH//2, text='100%',
+            font=('Courier New', 24, 'bold'),
+            fill=self._VOL_TEXT, anchor='center',
+        )
+
+        cv.place(relx=0.5, rely=0.02, anchor=tk.N)
+
+        # Stash geometry/IDs for the live update path
+        self._vol_canvas    = cv
+        self._vol_track_x0  = TRACK_X0
+        self._vol_track_x1  = TRACK_X1
+        self._vol_track_y   = TRACK_Y
+        self._vol_track_h   = TRACK_H
+        self._vol_knob_r    = KNOB_R
+        self._vol_knob_id   = knob_id
+        self._vol_fill_id   = fill_id
+        self._vol_pct_id    = pct_id
+
+        # Tap = jump; drag = follow finger; release = persist to disk.
+        cv.bind('<ButtonPress-1>',   self._on_vol_press)
+        cv.bind('<B1-Motion>',       self._on_vol_drag)
+        cv.bind('<ButtonRelease-1>', self._on_vol_release)
+
+        self._volume_overlay = cv
+        self._update_volume_visual()
+
+    def _draw_rounded_rect(self, cv, x1, y1, x2, y2, r=10, **kwargs):
+        """Draw an approximated rounded rectangle on cv. Returns the polygon
+        id so callers can delete/re-create on update. Uses smooth=True on a
+        12-point polygon, which is good enough at the chunky sizes we use
+        and avoids juggling 6 canvas items per shape."""
+        pts = [
+            x1+r, y1,   x2-r, y1,   x2, y1,
+            x2,   y1+r, x2,   y2-r, x2, y2,
+            x2-r, y2,   x1+r, y2,   x1, y2,
+            x1,   y2-r, x1,   y1+r, x1, y1,
+        ]
+        return cv.create_polygon(pts, smooth=True, **kwargs)
 
     def _show_volume_overlay(self):
         if self._volume_overlay is None:
             self._create_volume_overlay()
         else:
-            self._volume_var.set(int(self.volume * 100))
-            self._volume_overlay.place(relx=0.5, rely=0.0, anchor=tk.N)
-        if self._volume_hide_job:
-            self.master.after_cancel(self._volume_hide_job)
-        self._volume_hide_job = self.master.after(4000, self._hide_volume_overlay)
+            self._update_volume_visual()
+            self._volume_overlay.place(relx=0.5, rely=0.02, anchor=tk.N)
+            self._volume_overlay.tkraise()
+        self._reset_volume_hide()
 
     def _hide_volume_overlay(self):
         if self._volume_overlay:
             self._volume_overlay.place_forget()
         self._volume_hide_job = None
 
-    def _on_volume_change(self, val):
-        self.volume = int(val) / 100.0
-        if self._volume_hide_job:
-            self.master.after_cancel(self._volume_hide_job)
-        self._volume_hide_job = self.master.after(4000, self._hide_volume_overlay)
-        # Debounce disk writes — drags fire this 30+ times per second.
-        # Schedule a single write 500 ms after the last change.
+    def _on_vol_press(self, event):
+        self._set_volume_from_x(event.x)
+        self._reset_volume_hide()
+
+    def _on_vol_drag(self, event):
+        self._set_volume_from_x(event.x)
+        self._reset_volume_hide()
+
+    def _on_vol_release(self, event):
+        self._reset_volume_hide()
+        # Debounce disk writes — drags fire many press/drag events but only
+        # a single release. Schedule the write a beat later so a quick
+        # repeat tap doesn't write twice.
         if getattr(self, '_volume_save_job', None):
             self.master.after_cancel(self._volume_save_job)
-        self._volume_save_job = self.master.after(500, self._persist_volume)
+        self._volume_save_job = self.master.after(400, self._persist_volume)
+
+    def _set_volume_from_x(self, x):
+        x0, x1 = self._vol_track_x0, self._vol_track_x1
+        x = max(x0, min(x1, x))
+        self.volume = (x - x0) / (x1 - x0)
+        self._update_volume_visual()
+
+    def _update_volume_visual(self):
+        cv = self._vol_canvas
+        x0, x1 = self._vol_track_x0, self._vol_track_x1
+        ty, th = self._vol_track_y, self._vol_track_h
+        r  = self._vol_knob_r
+        cy = ty + th // 2
+        x  = x0 + self.volume * (x1 - x0)
+
+        # Knob
+        cv.coords(self._vol_knob_id, x - r, cy - r, x + r, cy + r)
+
+        # Fill — easier to recreate than to mutate a smoothed polygon
+        cv.delete(self._vol_fill_id)
+        # Draw at least a rounded "cap" so the fill never becomes a sliver
+        # that looks broken at the very-low end.
+        x_end = max(x, x0 + th // 2)
+        self._vol_fill_id = self._draw_rounded_rect(
+            cv, x0, ty, x_end, ty + th, r=th // 2,
+            fill=self._VOL_FILL, outline='',
+        )
+        cv.tag_raise(self._vol_knob_id)
+
+        cv.itemconfig(self._vol_pct_id, text=f"{int(round(self.volume * 100))}%")
+
+    def _reset_volume_hide(self):
+        if self._volume_hide_job:
+            self.master.after_cancel(self._volume_hide_job)
+        self._volume_hide_job = self.master.after(6000, self._hide_volume_overlay)
 
     def _persist_volume(self):
         self._volume_save_job = None
@@ -541,28 +672,55 @@ class BotGUI:
             print(f"Error playing sound {sound_file}: {e}")
             return None
 
+    # States needed before the GUI can be useful — loaded synchronously.
+    CORE_ANIMATION_STATES = (
+        BotStates.IDLE, BotStates.LISTENING, BotStates.SPEAKING,
+        BotStates.THINKING, BotStates.WARMUP, BotStates.ERROR,
+        BotStates.CAPTURING,
+    )
+
+    def _load_state_frames(self, state):
+        path = os.path.join("faces", state)
+        if not os.path.isdir(path):
+            return []
+        files = sorted(f for f in os.listdir(path) if f.lower().endswith('.png'))
+        frames = []
+        for f in files:
+            try:
+                img = Image.open(os.path.join(path, f))
+                if img.size != (self.BG_WIDTH, self.BG_HEIGHT):
+                    img = img.resize((self.BG_WIDTH, self.BG_HEIGHT), Image.Resampling.LANCZOS)
+                frames.append(ImageTk.PhotoImage(img))
+            except Exception as e:
+                print(f"Error loading frame {f}: {e}")
+        return frames
+
     def load_animations(self):
-        """Load PNG frames for each state from the faces/ directory."""
+        """Load core PNG frames synchronously; defer expressions to background."""
         self.animations = {}
-        states = [d for d in os.listdir("faces") if os.path.isdir(os.path.join("faces", d))]
-        for state in states:
-            path = os.path.join("faces", state)
-            files = sorted([f for f in os.listdir(path) if f.lower().endswith('.png')])
-            frames = []
-            for f in files:
-                try:
-                    img = Image.open(os.path.join(path, f))
-                    # Ensure it's the right size
-                    if img.size != (self.BG_WIDTH, self.BG_HEIGHT):
-                        img = img.resize((self.BG_WIDTH, self.BG_HEIGHT), Image.Resampling.LANCZOS)
-                    frames.append(ImageTk.PhotoImage(img))
-                except Exception as e:
-                    print(f"Error loading frame {f}: {e}")
+        for state in self.CORE_ANIMATION_STATES:
+            frames = self._load_state_frames(state)
             if frames:
                 self.animations[state] = frames
-        
-        print(f"Loaded animations for: {list(self.animations.keys())}")
+
+        all_states = [d for d in os.listdir("faces") if os.path.isdir(os.path.join("faces", d))]
+        self._pending_states = [s for s in all_states if s not in self.animations]
+        print(f"Loaded core animations: {list(self.animations.keys())}; "
+              f"deferring {len(self._pending_states)} expression states")
         self.tk_img = None
+        # Kick off lazy load on the Tk event loop after first render.
+        self.master.after(150, self._load_next_pending_state)
+
+    def _load_next_pending_state(self):
+        """Load one deferred animation per Tk tick to keep UI responsive."""
+        if not getattr(self, '_pending_states', None):
+            return
+        state = self._pending_states.pop(0)
+        frames = self._load_state_frames(state)
+        if frames:
+            self.animations[state] = frames
+        # Yield to the event loop between dirs so the UI stays smooth.
+        self.master.after(20, self._load_next_pending_state)
 
     def update_animation(self):
         if self.current_state == BotStates.DISPLAY_IMAGE:
@@ -608,26 +766,66 @@ class BotGUI:
         frames = self.animations.get(display_state, self.animations.get(BotStates.IDLE, []))
         if frames:
             if display_state == BotStates.SPEAKING:
-                # 1. Smooth out mouth movement with Exponential Moving Average (EMA)
-                # This prevents the mouth from "jumping" instantly to closed
-                # 0.4 weight on new value, 0.6 on old gives a nice ~100ms decay
-                self.mouth_ema = (self.mouth_ema * 0.6) + (self.mouth_open * 0.4)
-                
-                num_frames = len(frames)
-                if self.mouth_ema > 1:
-                    # 2. Base intensity mapping from smoothed EMA
-                    base_idx = int((self.mouth_ema / 60) * (num_frames - 1))
-                    
-                    # 3. Simulate Visemes (different mouth positions for different sounds)
-                    # We cycle a 'jitter' offset every few frames to simulate shifting phonemes
-                    # even when the volume is relatively steady.
-                    if int(time.time() * 20) % 2 == 0:
-                        self.mouth_viseme_jitter = random.randint(-1, 1)
+                # Drive a 5-shape viseme palette from the audio envelope.
+                # 0=CLOSED, 1=TINY, 2=SMALL, 3=OH, 4=WIDE. OH and WIDE are
+                # both "open vowel" shapes; we alternate between them on a
+                # timer so sustained vowels get visual variety instead of
+                # locking onto one shape (which is what made the old 12-blend
+                # animation read as a blur).
 
-                    idx = base_idx + self.mouth_viseme_jitter
-                    self.current_frame = min(num_frames - 1, max(0, idx))
+                # Asymmetric envelope: vowel onsets pop the mouth open in one
+                # tick (fast attack), then it relaxes over ~150 ms (slow
+                # release). A symmetric EMA smooths attacks too much and
+                # makes the mouth feel laggy.
+                if self.mouth_open > self.mouth_ema:
+                    self.mouth_ema = self.mouth_ema * 0.30 + self.mouth_open * 0.70
                 else:
-                    self.current_frame = 0 # Closed
+                    self.mouth_ema = self.mouth_ema * 0.85 + self.mouth_open * 0.15
+
+                cur = self.speaking_frame
+                lvl = self.mouth_ema
+
+                if cur >= 3:
+                    # In the open-vowel zone. Either drop out (energy fell)
+                    # or rotate to a different open shape on the swap timer.
+                    if lvl < 22:
+                        target = 2
+                    elif now >= self._vowel_swap_until:
+                        # 3-way rotation among OH(3) / WIDE(4) / AH(5).
+                        # random.choice keeps the variety unpredictable so
+                        # sustained vowels never settle into a 2-step pattern.
+                        choices = [i for i in (3, 4, 5) if i != cur]
+                        target = random.choice(choices)
+                        self._vowel_swap_until = now + random.uniform(0.12, 0.22)
+                    else:
+                        target = cur
+                else:
+                    # Closed/tiny/small zone — pick by energy with hysteresis.
+                    if   lvl < 4:   target = 0
+                    elif lvl < 13:  target = 1
+                    elif lvl < 26:  target = 2
+                    else:
+                        target = 3   # enter vowel zone via OH
+                        # Hold OH briefly on entry so the rotation above
+                        # doesn't immediately swap on the next tick.
+                        self._vowel_swap_until = now + random.uniform(0.12, 0.22)
+
+                # Coarticulation gate: when CLOSING, step through intermediate
+                # shapes one at a time so the mouth visibly relaxes instead of
+                # popping shut. Opens can still jump freely so vowel onsets
+                # feel snappy. The OH↔WIDE swap is treated as same-zone.
+                if target < cur - 1 and not (cur >= 3 and target >= 3):
+                    target = cur - 1
+
+                # Min hold so a single audio blip doesn't change the shape
+                # every 40 ms tick. Faster on opens, slower on closes — the
+                # mouth should look like it's doing something deliberate.
+                if target != cur and now >= self.speaking_frame_hold_until:
+                    self.speaking_frame = target
+                    self.speaking_frame_hold_until = now + (
+                        0.06 if target > cur else 0.10
+                    )
+                self.current_frame = self.speaking_frame
             else:
                 self.current_frame = (self.current_frame + 1) % len(frames)
 
@@ -940,6 +1138,7 @@ class BotGUI:
                 except Exception: pass
             self.mouth_open = 0
             self.mouth_ema = 0 # Final reset to closed
+            self.speaking_frame = 0
 
     def _warmup_piper(self):
         """Pre-spawn Piper (without aplay) to hide model-load latency behind STT.
@@ -1071,6 +1270,7 @@ class BotGUI:
 
         self.mouth_open = 0
         self.mouth_ema = 0
+        self.speaking_frame = 0
 
     def _write_to_piper(self, text):
         """Write one line of cleaned text to the persistent Piper process."""
@@ -1137,6 +1337,7 @@ class BotGUI:
 
         self.mouth_open = 0
         self.mouth_ema = 0
+        self.speaking_frame = 0
 
     def _kill_tts_pipeline(self):
         """Hard-kill the Piper + aplay pipeline without draining (used by mute / turn start).
@@ -1183,6 +1384,7 @@ class BotGUI:
 
         self.mouth_open = 0
         self.mouth_ema = 0
+        self.speaking_frame = 0
 
     def speak(self, text, msg="Speaking...", end_of_turn=True):
         """Synthesize text via Piper and play it through aplay.

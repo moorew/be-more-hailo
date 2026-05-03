@@ -28,6 +28,8 @@ piper/
 # Keep chat history local (Privacy)
 memory.json
 chat_memory.json
+# Per-device user preferences (volume level, etc.)
+settings.json
 
 # Keep personal API keys or settings local
 # (Optional: comment this out if you WANT to share your config)

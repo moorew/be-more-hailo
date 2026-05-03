@@ -42,8 +42,23 @@ def _get_vlm():
     from hailo_platform.genai import VLM
 
     logger.info(f"Initialising Hailo VLM from {hef} ...")
-    _vlm_vdevice = VDevice()
-    _vlm_instance = VLM(_vlm_vdevice, hef)
+    # Hold the device only locally until both the VDevice and VLM succeed —
+    # otherwise a failed VLM init (e.g. HAILO_INVALID_HEF when hailo-ollama
+    # already owns the NPU) leaks /dev/hailo0 for the rest of the process,
+    # which starves the LLM service into a SEGV loop.
+    vdevice = VDevice()
+    try:
+        instance = VLM(vdevice, hef)
+    except Exception:
+        try:
+            vdevice.release()
+        except Exception:
+            pass
+        del vdevice
+        raise
+
+    _vlm_vdevice = vdevice
+    _vlm_instance = instance
     shape = _vlm_instance.input_frame_shape()
     dtype = _vlm_instance.input_frame_format_type()
     logger.info(f"VLM ready — frame shape {shape}, dtype {dtype}")

@@ -189,27 +189,87 @@ def gen_idle(d="faces/idle"):
         _save(img, d, i)
 
 def gen_speaking(d="faces/speaking"):
-    # 12 frames ordered closed→open.  Only the mouth zone is blended so the
-    # eyes (from smile.svg) stay perfectly stable — no ghosting from the two
-    # different SVGs having eyes at slightly different positions.
+    # 5-shape viseme palette built with a hard mouth-zone swap (no alpha
+    # blending). The closed face (smile.svg) provides the eyes above the
+    # cutoff row; below it, the lower face is replaced wholesale with one
+    # of four mouth-only SVGs. Cutoff lands in the empty band between
+    # smile.svg's eyes (~row 203) and its smile-curve (~row 292), so the
+    # opened frames carry no smile-curve ghost — the smile is simply gone,
+    # replaced by the new mouth shape with no transparency.
     img_c = _svg_render("smile.svg")
-    img_o = _svg_render("open mouth.svg")
     arr_c = np.array(img_c).astype(float)
-    arr_o = np.array(img_o).astype(float)
 
-    # Vertical gradient mask: 0 = use closed face, 1 = use open mouth.
-    # Transition from 54 % to 68 % of image height (below eyes, into mouth).
-    blend_start = int(OUT_H * 0.54)
-    blend_end   = int(OUT_H * 0.68)
-    ys   = np.arange(OUT_H)
-    ramp = np.clip((ys - blend_start) / (blend_end - blend_start), 0.0, 1.0)
-    mask = ramp[:, None, None]  # (H, 1, 1) → broadcasts over (H, W, 3)
+    def _mouth_arr(svg_body):
+        """Render a mouth-only SVG (green BG + one shape) at native scale."""
+        svg = (
+            '<?xml version="1.0"?>\n'
+            '<svg width="1280" height="720" viewBox="0 0 1280 720" '
+            'xmlns="http://www.w3.org/2000/svg" fill="none">\n'
+            f'<rect width="1280" height="720" fill="{BMO_BG}"/>\n'
+            f'{svg_body}\n</svg>'
+        )
+        return np.array(_render(svg)).astype(float)
 
-    factors = [0.0, 0.0, 0.10, 0.22, 0.38, 0.55, 0.70, 0.82, 0.92, 1.0, 1.0, 1.0]
+    arr_tiny = _mouth_arr(
+        # Thin horizontal pill — barely-cracked lips.
+        '<rect x="550" y="468" width="180" height="18" rx="9" fill="#1a2a18"/>'
+    )
+    arr_small = _mouth_arr(
+        # Small flattened ellipse — narrow vowel.
+        '<ellipse cx="640" cy="478" rx="70" ry="24" '
+        'fill="#396337" stroke="black" stroke-width="12"/>'
+    )
+    arr_oh = _mouth_arr(
+        # Tall vertical oval — round /o/ /u/ — with a tongue at the bottom
+        # (lighter green wedge), matching open mouth.svg's tongue palette.
+        '<ellipse cx="640" cy="495" rx="52" ry="72" '
+        'fill="#396337" stroke="black" stroke-width="13"/>'
+        '<ellipse cx="640" cy="540" rx="34" ry="20" fill="#A2B36A"/>'
+    )
+    arr_wide = _mouth_arr(
+        # Wide oval — open /a/ — full BMO mouth with white teeth band at the
+        # top and a tongue wedge at the bottom (same palette as open mouth.svg).
+        '<ellipse cx="640" cy="498" rx="118" ry="52" '
+        'fill="#396337" stroke="black" stroke-width="14"/>'
+        '<rect x="540" y="463" width="200" height="14" '
+        'fill="white" stroke="black" stroke-width="6" stroke-linecap="round"/>'
+        '<ellipse cx="640" cy="535" rx="85" ry="13" fill="#A2B36A"/>'
+    )
+    arr_ah = _mouth_arr(
+        # Grinning open mouth — smile-arm corners pulled back over an open
+        # mouth with tongue. Reads as "BMO laughing while talking".
+        '<path d="M515 458 Q545 488 575 500" stroke="black" '
+        'stroke-width="13" fill="none" stroke-linecap="round"/>'
+        '<path d="M765 458 Q735 488 705 500" stroke="black" '
+        'stroke-width="13" fill="none" stroke-linecap="round"/>'
+        '<ellipse cx="640" cy="510" rx="78" ry="34" '
+        'fill="#396337" stroke="black" stroke-width="13"/>'
+        '<ellipse cx="640" cy="525" rx="55" ry="12" fill="#A2B36A"/>'
+    )
+
+    # Hard horizontal mask: above cutoff = closed face (eyes only — smile
+    # curve is below the cutoff so it's discarded), below = mouth-only SVG.
+    cutoff = int(OUT_H * 0.52)  # ≈ row 249
+    mask = np.zeros((OUT_H, 1, 1), dtype=float)
+    mask[cutoff:] = 1.0
+
+    def _swap(arr_o):
+        return (arr_c * (1 - mask) + arr_o * mask).astype(np.uint8)
+
+    frames = [
+        arr_c.astype(np.uint8),  # 1 CLOSED — smile.svg untouched
+        _swap(arr_tiny),         # 2 TINY
+        _swap(arr_small),        # 3 SMALL
+        _swap(arr_oh),           # 4 OH    — tall oval + tongue
+        _swap(arr_wide),         # 5 WIDE  — wide oval + teeth + tongue
+        _swap(arr_ah),           # 6 AH    — grinning open mouth + tongue
+    ]
+
+    if os.path.exists(d):
+        shutil.rmtree(d)
     os.makedirs(d, exist_ok=True)
-    for i, f in enumerate(factors, 1):
-        blended = (arr_c * (1 - mask * f) + arr_o * (mask * f)).astype(np.uint8)
-        _save(Image.fromarray(blended), d, i)
+    for i, frame in enumerate(frames, 1):
+        _save(Image.fromarray(frame), d, i)
 
 def gen_thinking(d="faces/thinking"):
     for i in range(1, 9):

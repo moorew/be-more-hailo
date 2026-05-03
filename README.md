@@ -95,6 +95,8 @@ Your BMO is then reachable from your phone, laptop, or any device on your Tailne
 ## Features & Recent Updates
 
 - **Gapless TTS:** Piper is held open for the entire speaking turn — sentences stream out one after another with no startup gap between them, so long answers sound natural rather than staccato.
+- **Articulate Lip-Sync:** Talking now drives a 6-shape viseme palette (closed → tiny lip-crack → small open → round /o/ → wide /a/ → grin) instead of a 12-frame alpha-blended ramp. Each frame is a fully-opaque shape produced by a hard mouth-zone swap on smile.svg, so opened mouths no longer show smile-curve ghosts. The OH/WIDE/AH "open vowel" shapes rotate every 120-220 ms during sustained vowels, with an asymmetric attack/release envelope (snappy onsets, slow relax) and a coarticulation gate so the mouth visibly steps through intermediate shapes when closing.
+- **Touch-Friendly Volume Slider:** Tap the top-centre of BMO's face to bring up a chunky, BMO-styled volume slider — 60 px knob, 538 px track, big monospace readout, BMO's mouth/tongue palette. Designed for finger taps on the 800×480 panel: tap anywhere on the track to jump, drag the knob to fine-tune. Auto-hides 6 s after the last interaction; settings persist to `settings.json` 400 ms after release.
 - **Tap to Speak:** After BMO answers, tap the screen to speak again immediately without re-saying the wake word. BMO shows "Tap to speak" when ready.
 - **Persistent Chat History:** Conversations are saved to `memory.json` and reloaded on restart so BMO remembers previous exchanges.
 - **Web UI Refactor:** Fully responsive, mobile-friendly interface for interacting with BMO from any device.
@@ -102,6 +104,20 @@ Your BMO is then reachable from your phone, laptop, or any device on your Tailne
 - **Enhanced Search:** BMO can now search for current news and regional information (Canada/Ontario prioritized).
 - **Audio Stability:** Fast nearest-neighbor resampling and improved ALSA contention handling for more reliable wake-word detection and voice recording.
 - **Desktop Ready:** Includes a `.desktop` launcher (`install.sh` creates it automatically).
+
+---
+
+## Help Wanted: Mouth Artists 🎨
+
+BMO's talking animation currently uses **6 procedurally-rendered mouth shapes** generated from `svg_faces/smile.svg` plus a few tongue/teeth ellipses I built by hand in `generate_faces.py`. The state machine and timing are dialled in, but the *shapes themselves* are clearly programmer-art — basic ovals on a green canvas.
+
+**This is where you come in.** If you're an illustrator who loves BMO and wants to draw real talking frames, I would *love* to collaborate. Even a single set of 6-8 polished SVG visemes would massively level up how alive BMO feels. Things I'd love help with:
+
+- A proper closed → tiny → small → /o/ → /a/ → grin viseme set in BMO's house style
+- Bonus shapes: tongue-poke, surprised gasp, mid-syllable smirk, "mmm"-ing pressed lips
+- Idle mouth flourishes (a half-yawn, a tongue-flick) for the screensaver state
+
+The render pipeline already does the hard part (mask-blending only the mouth zone so the eyes stay stable across frames), so you can just hand me an SVG with your mouth shape and I'll wire it in. Open an issue on GitHub or DM me — happy to credit you prominently in the README and the splash screen.
 
 ---
 
