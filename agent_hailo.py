@@ -403,6 +403,7 @@ class BotGUI:
     _VOL_TROUGH   = '#A2B36A'   # tongue light green
     _VOL_OUTLINE  = 'black'
     _VOL_TEXT     = '#1a3d18'   # nearly-black for readout
+    _VOL_MUTE_FG  = '#8a1a1a'   # muted-red for the muted-state cues
 
     def _create_volume_overlay(self):
         win_w = self.master.winfo_width() or self.BG_WIDTH
@@ -427,10 +428,10 @@ class BotGUI:
                                 fill=self._VOL_BG, outline=self._VOL_FILL,
                                 width=4)
 
-        # Speaker glyph (left)
-        cv.create_text(PAD + ICON_W//2, OH//2, text='🔊',
-                       font=('DejaVu Sans', 30),
-                       fill=self._VOL_TEXT, anchor='center')
+        # Speaker glyph (left) — switches to 🔇 when muted (volume == 0).
+        icon_id = cv.create_text(PAD + ICON_W//2, OH//2, text='🔊',
+                                 font=('DejaVu Sans', 30),
+                                 fill=self._VOL_TEXT, anchor='center')
 
         # Track background (the unfilled portion shows through this)
         self._draw_rounded_rect(cv, TRACK_X0, TRACK_Y,
@@ -471,6 +472,7 @@ class BotGUI:
         self._vol_knob_id   = knob_id
         self._vol_fill_id   = fill_id
         self._vol_pct_id    = pct_id
+        self._vol_icon_id   = icon_id
 
         # Tap = jump; drag = follow finger; release = persist to disk.
         cv.bind('<ButtonPress-1>',   self._on_vol_press)
@@ -538,8 +540,17 @@ class BotGUI:
         cy = ty + th // 2
         x  = x0 + self.volume * (x1 - x0)
 
-        # Knob
+        # When the slider sits at 0 every audio path multiplies PCM by 0
+        # → silent output. That's a hard mute, so make it visually
+        # unmistakable: 🔇 icon, red knob, "MUTED" readout. Otherwise an
+        # accidental drag-to-zero looks identical to a stuck app.
+        muted = self.volume <= 0.001
+        knob_fill = self._VOL_MUTE_FG if muted else self._VOL_FILL
+        text_fg   = self._VOL_MUTE_FG if muted else self._VOL_TEXT
+
+        # Knob — recolour as well as reposition
         cv.coords(self._vol_knob_id, x - r, cy - r, x + r, cy + r)
+        cv.itemconfig(self._vol_knob_id, fill=knob_fill)
 
         # Fill — easier to recreate than to mutate a smoothed polygon
         cv.delete(self._vol_fill_id)
@@ -548,11 +559,18 @@ class BotGUI:
         x_end = max(x, x0 + th // 2)
         self._vol_fill_id = self._draw_rounded_rect(
             cv, x0, ty, x_end, ty + th, r=th // 2,
-            fill=self._VOL_FILL, outline='',
+            fill=knob_fill, outline='',
         )
         cv.tag_raise(self._vol_knob_id)
 
-        cv.itemconfig(self._vol_pct_id, text=f"{int(round(self.volume * 100))}%")
+        cv.itemconfig(self._vol_icon_id,
+                      text='🔇' if muted else '🔊',
+                      fill=text_fg)
+        cv.itemconfig(self._vol_pct_id,
+                      text='MUTED' if muted else f"{int(round(self.volume * 100))}%",
+                      fill=text_fg,
+                      font=('Courier New', 18, 'bold') if muted
+                           else ('Courier New', 24, 'bold'))
 
     def _reset_volume_hide(self):
         if self._volume_hide_job:
