@@ -162,7 +162,8 @@ def strip_prompt_leakage(content: str) -> str:
     2. Honour [BMO]…[/BMO] markers if present — return only what's between.
     3. Otherwise, just remove unambiguous template placeholders and line-start
        labels.  We deliberately do NOT truncate the reply at phrases like
-       "Rule 1:" or "Summarize:" because users legitimately say those things."""
+       "Rule 1:" or "Summarize:" because users legitimately say those things.
+    4. Strip any residual HTML tags and unescape HTML entities."""
     if not content:
         return ""
 
@@ -191,7 +192,15 @@ def strip_prompt_leakage(content: str) -> str:
     for pat in _LEAK_PATTERNS:
         content = pat.sub('', content)
 
-    # 5. Collapse runs of blank lines / leading-trailing whitespace
+    # 5. Strip HTML tags and unescape entities echoed from search snippets.
+    #    Two-pass: strip tags → unescape → strip decoded tags (handles &lt;b&gt; forms).
+    import html as _html
+    content = re.sub(r'<[^>]+>', ' ', content)
+    content = _html.unescape(content)
+    content = re.sub(r'<[^>]+>', ' ', content)
+
+    # 6. Collapse runs of whitespace / leading-trailing whitespace
+    content = re.sub(r'\s+', ' ', content)
     content = re.sub(r'\n{3,}', '\n\n', content).strip()
     return content
 

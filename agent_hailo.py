@@ -1194,7 +1194,8 @@ class BotGUI:
         if not piper_warm:
             self._kill_tts_pipeline()
 
-        # Release ALSA by stopping the thinking sound ONCE before the retry loop
+        # Release ALSA: stop the thinking sound AND any other active sound
+        # (ack sounds are tracked in active_sounds, not thinking_audio_process).
         self.is_thinking_sound_playing = False
         if self.thinking_audio_process is not None:
             try:
@@ -1203,6 +1204,11 @@ class BotGUI:
             except Exception:
                 pass
             self.thinking_audio_process = None
+        for proc in list(self.active_sounds):
+            try:
+                proc.terminate()
+            except Exception:
+                pass
 
         # Start aplay (retry on busy ALSA device)
         aplay_cmd = ["aplay", "-D", ALSA_DEVICE, "-r", "22050", "-f", "S16_LE",
@@ -1225,6 +1231,19 @@ class BotGUI:
         if self._tts_aplay is None or self._tts_aplay.poll() is not None:
             print("[TTS] Failed to open audio device after retries.")
             self._tts_aplay = None
+            # Also kill any pre-warmed piper so speak() sees _piper_proc is None
+            # and bails cleanly rather than writing audio nobody can play.
+            if self._piper_proc is not None:
+                try:
+                    self._piper_proc.stdin.close()
+                except Exception:
+                    pass
+                try:
+                    self._piper_proc.terminate()
+                    self._piper_proc.wait(timeout=1.0)
+                except Exception:
+                    pass
+                self._piper_proc = None
             return
 
         # Spawn Piper if not already warmed up
@@ -1246,17 +1265,20 @@ class BotGUI:
         """Read Piper's raw PCM output and stream it into aplay with lip-sync."""
         chunk_size = 512  # samples (~23 ms at 22050 Hz)
         start_time = None
-        chunk_idx = 0
+        exit_reason = "unknown"
 
         while True:
             try:
                 raw_chunk = self._piper_proc.stdout.read(chunk_size * 2)
-            except Exception:
+            except Exception as e:
+                exit_reason = f"piper read error: {e}"
                 break
             if not raw_chunk:
+                exit_reason = "piper EOF (normal)"
                 break  # Piper stdout closed — all audio transferred
 
             if self.is_muted:
+                exit_reason = "muted"
                 break  # mute_bmo will kill the pipeline
 
             if start_time is None:
@@ -1279,12 +1301,24 @@ class BotGUI:
                 self._tts_aplay.stdin.write(write_chunk)
                 self._tts_aplay.stdin.flush()
             except (BrokenPipeError, OSError) as e:
+                exit_reason = f"aplay write error: {e}"
                 print(f"[TTS] aplay write error: {e}")
                 break
 
             # No manual pacing: aplay's 500 ms hardware buffer applies natural
             # back-pressure on stdin.write once it's full. The old time.sleep()
             # could stack on top of that and starve the buffer briefly.
+
+        print(f"[TTS] Reader thread exiting: {exit_reason}")
+
+        # Close aplay's stdin immediately when we're done pumping — this signals
+        # aplay to drain and exit as soon as the last bytes play out, without
+        # waiting for _end_tts_turn to call us back.
+        if exit_reason == "piper EOF (normal)" and self._tts_aplay is not None:
+            try:
+                self._tts_aplay.stdin.close()
+            except Exception:
+                pass
 
         self.mouth_open = 0
         self.mouth_ema = 0
@@ -1303,9 +1337,11 @@ class BotGUI:
     def _end_tts_turn(self, drain=True):
         """Close the Piper + aplay pipeline at the end of a speaking turn.
 
-        Closing Piper's stdin signals it to finish processing.  We then wait for
-        the reader thread to transfer all remaining audio into aplay, then close
-        aplay's stdin and optionally wait for its hardware buffer to drain.
+        Closing Piper's stdin signals it to finish processing.  The reader thread
+        pumps remaining audio into aplay and then closes aplay's stdin itself.
+        We join the reader thread (which blocks until all audio is queued), then
+        wait for aplay to drain with no hard timeout so long responses always
+        finish playing.
         """
         # Signal Piper to finish — it will write remaining audio then close stdout
         if self._piper_proc is not None:
@@ -1316,9 +1352,11 @@ class BotGUI:
 
         # Wait for reader thread to pump all remaining audio into aplay.
         # The thread paces itself at real-time audio speed, so a 60-second
-        # response takes ~60 seconds — use a generous timeout here.
+        # response takes ~60 seconds.  No timeout — we must never cut BMO off
+        # mid-sentence; a hard limit here is the wrong tool.  The thread will
+        # always exit once piper's stdout closes.
         if self._piper_reader_thread is not None:
-            self._piper_reader_thread.join(timeout=300.0)
+            self._piper_reader_thread.join()
             self._piper_reader_thread = None
 
         # Reap Piper process
@@ -1332,20 +1370,20 @@ class BotGUI:
                     pass
             self._piper_proc = None
 
-        # Close aplay — it will drain its hardware buffer then exit
+        # The reader thread already closed aplay's stdin on a clean exit.
+        # Close it here too (idempotent) to handle early-exit cases, then wait.
         if self._tts_aplay is not None:
             try:
                 self._tts_aplay.stdin.close()
             except Exception:
                 pass
             if drain:
-                try:
-                    self._tts_aplay.wait(timeout=2.0)
-                except subprocess.TimeoutExpired:
-                    try:
-                        self._tts_aplay.terminate()
-                    except Exception:
-                        pass
+                # Wait indefinitely — after stdin closes, aplay drains its
+                # hardware buffer (~500 ms) and exits on its own.  There is
+                # no hard cutoff; the response length drives the wait time.
+                print("[TTS] Waiting for aplay to finish draining...")
+                self._tts_aplay.wait()
+                print("[TTS] aplay finished.")
             else:
                 try:
                     self._tts_aplay.terminate()
@@ -1533,6 +1571,10 @@ class BotGUI:
         # 2. Speak the remaining text
         if chunk.strip():
             self.speak(chunk, msg=None, end_of_turn=is_last)
+        elif is_last:
+            # Last chunk was a pure JSON action with no spoken text.  Close any
+            # open TTS pipeline so piper+aplay don't stay open holding ALSA.
+            self._end_tts_turn(drain=True)
 
     # --- MAIN LOOP ---
     def main_loop(self):
@@ -1754,6 +1796,7 @@ class BotGUI:
             from core.config import LLM_URL, FAST_LLM_MODEL
             import requests as http_requests
 
+            display_owns_busy = False
             try:
                 topics = [
                     "interesting fun fact of the day", "weather forecast today in Brantford, Ontario",
@@ -1793,8 +1836,9 @@ class BotGUI:
 
                         self.speak(phrase, msg="Pondering...")
                         if image_url:
-                            # Wait for BMO to start speaking before showing image
+                            # display_remote_image owns busy from here — don't double-release
                             time.sleep(1.5)
+                            display_owns_busy = True
                             self.display_remote_image(image_url, commentary_prompt=topic)
                         else:
                             self.set_state(BotStates.IDLE, "Tap to speak")
@@ -1806,7 +1850,8 @@ class BotGUI:
                 print(f"[BUTTON] Thought error: {e}")
                 self.set_state(BotStates.IDLE, "Tap to speak")
             finally:
-                self._release_busy()
+                if not display_owns_busy:
+                    self._release_busy()
 
         threading.Thread(target=run_thought, daemon=True).start()
 
@@ -1888,7 +1933,7 @@ class BotGUI:
                     resp = http_requests.post(LLM_URL, json=payload, timeout=30)
                     if resp.status_code == 200:
                         search_term = resp.json().get("message", {}).get("content", "").strip()
-                        search_term = search_term.replace('"', '').replace('\n', '').strip()
+                        search_term = search_term.replace('"', '').replace("'", '').replace('\n', '').strip()
                 except Exception as e:
                     print(f"[IMAGE] LLM call failed: {e}")
 
@@ -2011,24 +2056,31 @@ class BotGUI:
         if not self.llm_lock.acquire(blocking=False):
             return None
         try:
+            # Sanitise the search snippet: strip HTML tags and unescape entities
+            # so the LLM never echoes raw markup into BMO's speech.
+            import html as _html
+            clean_result = re.sub(r'<[^>]+>', ' ', search_result)
+            clean_result = _html.unescape(clean_result)
+            clean_result = re.sub(r'\s+', ' ', clean_result).strip()
+
             # Wrap the actual reply in [BMO]...[/BMO]. The stripper isolates
             # whatever's between the markers, so any rule-echo or numbered
             # preamble outside the tags is automatically discarded.
             thought_prompt = (
-                "Read this real-world info, then share a short charming musing "
-                "as BMO (under 50 words, finish the thought).\n"
-                "Wrap your final reply between [BMO] and [/BMO] markers — only "
-                "what's between the markers will be spoken.\n"
+                "Read this real-world info, then share a short charming observation "
+                "as BMO (under 40 words). Make a STATEMENT — do NOT ask questions.\n"
+                "Wrap your reply between [BMO] and [/BMO] markers.\n"
                 "If the topic is visual, include ONE JSON action AFTER [/BMO]:\n"
-                '  {"action": "display_image", "subject": "<short visual phrase>"}\n\n'
-                f"Info: {search_result[:1500]}"
+                '  {"action": "display_image", "subject": "<3-5 word visual phrase>"}\n\n'
+                f"Info: {clean_result[:1500]}"
             )
             payload = {
                 "model": FAST_LLM_MODEL,
                 "messages": [
                     {"role": "system", "content":
                      "You are BMO, a cute robot musing to yourself. Always wrap your "
-                     "spoken reply in [BMO]...[/BMO] tags. Be concise and specific."},
+                     "spoken reply in [BMO]...[/BMO] tags. Make statements, not questions. "
+                     "Be specific and under 40 words."},
                     {"role": "user", "content": thought_prompt},
                 ],
                 "stream": False,
@@ -2037,7 +2089,12 @@ class BotGUI:
             resp = http_requests.post(LLM_URL, json=payload, timeout=60)
             if resp.status_code == 200:
                 content = resp.json().get("message", {}).get("content", "").strip()
-                return strip_prompt_leakage(content)
+                result = strip_prompt_leakage(content)
+                # If the LLM returned something but stripping left nothing, return
+                # the raw content (minus obvious junk) so the caller always gets text.
+                if not result and content:
+                    result = re.sub(r'[\[\]<>]', '', content).strip()
+                return result or None
         except Exception as e:
             print(f"[LLM] Thought generation error: {e}")
         finally:
@@ -2180,20 +2237,29 @@ class BotGUI:
                         # 1. Ask the LLM for a random topic
                         topic = None
                         try:
+                            avoid_list = ", ".join(f"'{t}'" for t in list(self.recent_thoughts)[-6:]) if self.recent_thoughts else "none"
                             topic_messages = [
-                                {"role": "system", "content": "You are BMO's brain. Suggest one very specific, random, and interesting topic for BMO to learn about today. Examples: 'history of the first toaster', 'why do wombats have square poop', 'the mystery of the Voynich manuscript'. Keep it under 10 words. Provide ONLY the topic, no quotes or preamble."},
-                                {"role": "user", "content": "Give me a random topic."}
+                                {"role": "system", "content": (
+                                    "You are BMO's imagination. Pick ONE surprising, specific topic for BMO to ponder today. "
+                                    "Draw from any domain: science, history, nature, food, art, mythology, space, technology, "
+                                    "geography, animals, inventions, culture, or weird trivia. "
+                                    f"Do NOT repeat these recent topics: {avoid_list}. "
+                                    "Output ONLY the topic in under 10 words — no quotes, no explanation."
+                                )},
+                                {"role": "user", "content": "Give me a fresh, unexpected topic."}
                             ]
                             topic_payload = {
                                 "model": FAST_LLM_MODEL,
                                 "messages": topic_messages,
                                 "stream": False,
-                                "options": {"temperature": 1.0, "num_predict": 20}
+                                "options": {"temperature": 1.2, "num_predict": 30}
                             }
                             topic_resp = http_requests.post(LLM_URL, json=topic_payload, timeout=10)
                             if topic_resp.status_code == 200:
                                 topic = topic_resp.json().get("message", {}).get("content", "").strip().strip('"').strip("'")
                                 topic = re.sub(r'^Topic:|^BMO topic:|^I want to learn about: ', '', topic, flags=re.IGNORECASE)
+                                if topic in self.recent_thoughts:
+                                    topic = None  # force fallback to hardcoded list
                         except Exception as e:
                             print(f"[SCREENSAVER] LLM topic generation failed: {e}")
 
