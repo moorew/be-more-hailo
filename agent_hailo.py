@@ -110,6 +110,9 @@ class BotGUI:
         # uses this so a long DISPLAY_IMAGE view doesn't false-fire as "stuck".
         self.last_user_interaction = time.time()
         
+        # Triple-tap-to-exit: tracks timestamps of the last 3 taps
+        self._triple_tap_times = []
+
         # Audio State
         self.active_sounds = []
         self.current_audio_process = None
@@ -339,9 +342,19 @@ class BotGUI:
 
     def handle_click(self, event):
         """Map screen clicks to hot corners, mouth-tap mute, or tap-to-speak."""
+        now = time.time()
+
+        # Triple-tap anywhere within 0.8 s → clean exit (useful without keyboard)
+        self._triple_tap_times.append(now)
+        self._triple_tap_times = [t for t in self._triple_tap_times if now - t <= 0.8]
+        if len(self._triple_tap_times) >= 3:
+            print("[TRIPLE-TAP] Exiting BMO...")
+            self.exit_fullscreen()
+            return
+
         # Any click counts as a user interaction — keeps the watchdog honest
         # regardless of which branch handles the tap.
-        self.last_user_interaction = time.time()
+        self.last_user_interaction = now
 
         if self.current_state == BotStates.DISPLAY_IMAGE:
             self.set_state(BotStates.IDLE, "Tap to speak")
