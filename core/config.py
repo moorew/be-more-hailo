@@ -14,13 +14,13 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # To offload to your Linux server, change this to: "http://blackbox.clevercode.ts.net:11434/api/chat"
 # Make sure Ollama is running on the blackbox server and listening on 0.0.0.0
 LLM_URL = "http://127.0.0.1:8000/api/chat"
-LLM_MODEL = "qwen2.5-instruct:1.5b" # Native Hailo model for all queries
-FAST_LLM_MODEL = "qwen2.5-instruct:1.5b" # Unify models to prevent NPU swap crashing
+LLM_MODEL = "qwen3:1.7b" # Native Hailo model for all queries
+FAST_LLM_MODEL = "qwen3:1.7b" # Unify models to prevent NPU swap crashing
 VISION_MODEL = "qwen2-vl-instruct:2b" # Legacy Ollama name (unused — VLM runs via HailoRT directly)
 
 # VLM (Vision Language Model) Settings — uses HailoRT Python API directly
 # The HEF file is a precompiled model binary from Hailo's model zoo
-VLM_HEF_PATH = os.environ.get("VLM_HEF_PATH", os.path.join(_PROJECT_ROOT, "models", "Qwen2-VL-2B-Instruct.hef"))
+VLM_HEF_PATH = os.environ.get("VLM_HEF_PATH", os.path.join(_PROJECT_ROOT, "models", "Qwen3-VL-2B-Instruct.hef"))
 
 
 def get_current_context() -> str:
@@ -103,10 +103,18 @@ if not os.path.exists(PIPER_MODEL):
 else:
     print(f"[CONFIG] BMO voice model: {PIPER_MODEL}")
 
-# STT Settings (CPU whisper.cpp)
-# setup.sh downloads ggml-base.en.bin — keep this in sync with that filename.
+# STT Settings
+# NPU path: Whisper-Small runs on the Hailo-10H via hailo_platform.genai.Speech2Text.
+# CPU fallback: whisper.cpp is used if the HEF is missing or NPU init fails.
+WHISPER_HEF_PATH = os.environ.get(
+    "WHISPER_HEF_PATH",
+    os.path.join(_PROJECT_ROOT, "models", "Whisper-Small.hef"),
+)
 WHISPER_CMD = os.path.join(_PROJECT_ROOT, "whisper.cpp", "build", "bin", "whisper-cli")
-WHISPER_MODEL = os.path.join(_PROJECT_ROOT, "models", "ggml-base.en.bin")
+WHISPER_MODEL = os.path.join(_PROJECT_ROOT, "models", "ggml-small.en.bin")
+# Timeout for NPU Speech2Text inference (ms). Whisper-Small on H10H is typically
+# 3-8 s for a 5 s utterance; 20 s gives room for NPU scheduling overhead.
+WHISPER_NPU_TIMEOUT_MS = int(os.environ.get("WHISPER_NPU_TIMEOUT_MS", "20000"))
 
 # Audio Settings
 

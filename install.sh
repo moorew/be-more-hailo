@@ -107,9 +107,34 @@ wget -nc -q -O piper/bmo.onnx      "$BMO_VOICE/bmo.onnx"
 wget -nc -q -O piper/bmo.onnx.json "$BMO_VOICE/bmo.onnx.json"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. whisper.cpp (CPU-based STT)
+# 7. STT: Whisper-Small HEF (NPU) + whisper.cpp (CPU fallback)
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[7/13] Building whisper.cpp for CPU STT...${NC}"
+echo -e "${YELLOW}[7/13] Setting up STT (Whisper-Small on NPU + CPU fallback)...${NC}"
+
+# 7a. Whisper-Small HEF for Hailo-10H NPU (primary path)
+# Uses hailo_platform.genai.Speech2Text — no whisper.cpp needed for this path.
+WHISPER_HEF="models/Whisper-Small.hef"
+if [ -f "$WHISPER_HEF" ]; then
+    echo -e "${GREEN}  Whisper-Small HEF already present.${NC}"
+else
+    WHISPER_HEF_URL="https://dev-public.hailo.ai/v${HAILORT_VER}/blob/Whisper-Small.hef"
+    echo "  Downloading Whisper-Small HEF from $WHISPER_HEF_URL ..."
+    wget -c --tries=3 -O "$WHISPER_HEF" "$WHISPER_HEF_URL" 2>&1 || {
+        echo -e "${RED}  Failed to download Whisper-Small HEF. STT will use CPU whisper.cpp.${NC}"
+        rm -f "$WHISPER_HEF"
+    }
+    if [ -f "$WHISPER_HEF" ]; then
+        SIZE=$(stat --printf="%s" "$WHISPER_HEF" 2>/dev/null || stat -f "%z" "$WHISPER_HEF" 2>/dev/null)
+        if [ "${SIZE:-0}" -gt 10000000 ]; then
+            echo -e "${GREEN}  Whisper-Small HEF downloaded ($(du -h "$WHISPER_HEF" | cut -f1)).${NC}"
+        else
+            echo -e "${RED}  Download appears incomplete. Removing; STT will fall back to CPU.${NC}"
+            rm -f "$WHISPER_HEF"
+        fi
+    fi
+fi
+
+# 7b. whisper.cpp — CPU fallback if NPU is unavailable or inference fails.
 # whisper.cpp is registered as a git submodule of this repo, pinned at
 # a known upstream commit. Inside a git checkout we initialise the
 # submodule (handles non-recursive clones); for users who got the source
@@ -127,12 +152,12 @@ if [ ! -f "whisper.cpp/build/bin/whisper-cli" ]; then
     cmake --build whisper.cpp/build --config Release -j$(nproc)
 fi
 
-# Download Whisper base.en model
+# Download Whisper small.en model for CPU fallback
 # IMPORTANT: this filename must match WHISPER_MODEL in core/config.py
-if [ ! -f "models/ggml-base.en.bin" ]; then
-    echo -e "${YELLOW}Downloading Whisper base.en model...${NC}"
-    wget -q -O models/ggml-base.en.bin \
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+if [ ! -f "models/ggml-small.en.bin" ]; then
+    echo -e "${YELLOW}Downloading Whisper small.en model (CPU fallback)...${NC}"
+    wget -q -O models/ggml-small.en.bin \
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -199,6 +224,9 @@ pip install -r requirements.txt -q
 echo -e "${YELLOW}[10/13] Pulling LLM model via hailo-ollama...${NC}"
 OLLAMA_URL="http://localhost:8000/api"
 
+# Qwen2.5-1.5B is the best available LLM for HailoRT 5.2.x.
+# Qwen3-1.7B-Instruct will be the upgrade once HailoRT ≥ 5.3 ships in the Pi repo.
+# To upgrade later: hailo-ollama pull qwen3-instruct:1.7b  (then update LLM_MODEL in core/config.py)
 echo "  Pulling LLM: qwen2.5-instruct:1.5b..."
 curl -sf "$OLLAMA_URL/pull" \
     -H 'Content-Type: application/json' \
@@ -209,6 +237,9 @@ curl -sf "$OLLAMA_URL/pull" \
 # ─────────────────────────────────────────────────────────────────────────────
 # 11. Download VLM HEF (Vision Language Model for camera features)
 # ─────────────────────────────────────────────────────────────────────────────
+# Qwen2-VL-2B-Instruct is the best available VLM for HailoRT 5.2.x.
+# Qwen3-VL-2B-Instruct will be the upgrade once HailoRT ≥ 5.3 ships in the Pi repo.
+# To upgrade later: update VLM_HEF_PATH in core/config.py and re-run this script.
 echo -e "${YELLOW}[11/13] Downloading VLM model (Qwen2-VL-2B — ~2.2 GB)...${NC}"
 VLM_HEF="models/Qwen2-VL-2B-Instruct.hef"
 if [ -f "$VLM_HEF" ]; then

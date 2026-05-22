@@ -9,6 +9,6 @@ LLM_URL = "http://127.0.0.1:8000/api/chat"
 LLM_MODEL = "qwen2.5-instruct:1.5b"
 
 WHISPER_CMD = "./whisper.cpp/build/bin/whisper-cli"
-WHISPER_MODEL = "./models/ggml-base.en.bin"
+WHISPER_MODEL = "./models/ggml-small.en.bin"
 PIPER_CMD = "./piper/piper"
 PIPER_MODEL = "./piper/bmo.onnx"

@@ -17,11 +17,11 @@ This fork adds a browser-based **web interface**, a shared `core/` module layer 
 |-----------|--------------|-------|
 | LLM (`qwen2.5-instruct:1.5b`) | Hailo-10H NPU | via `hailo-ollama` |
 | Vision (`Qwen2-VL-2B-Instruct`) | Hailo-10H NPU | via HailoRT Python API; optional, requires camera |
-| STT (Whisper base.en) | CPU | via `whisper.cpp`; NPU path causes PCIe timeouts |
+| STT (`Whisper-Small`) | Hailo-10H NPU | via `hailo_platform.genai.Speech2Text`; falls back to `whisper.cpp` on CPU if HEF absent or NPU fails |
 | TTS (Piper) | CPU | streams sentence-by-sentence while LLM generates |
 | Wake word (openWakeWord) | CPU | "Hey BMO" custom model |
 
-STT runs on the CPU by design. Pushing 16kHz audio arrays through the Hailo PCIe bus caused consistent 15+ second timeouts during development. `whisper.cpp` on the quad-core ARM is fast enough and keeps the NPU free for inference.
+STT uses the native `Speech2Text` API introduced in HailoRT 5.x, which avoids the PCIe timeout issues seen with earlier direct-buffer approaches. `whisper.cpp` is kept as a CPU fallback — it activates automatically if the HEF is missing or NPU inference throws.
 
 ---
 
@@ -136,6 +136,7 @@ be-more-agent/
 ├── templates/              # Jinja2 HTML templates for the web UI
 ├── static/                 # CSS, JS, favicon
 ├── install.sh              # Automated installation script
+├── upgrade_hailo53.sh      # Upgrades HailoRT 5.2 → 5.3 and pulls Qwen3 models
 ├── setup_services.sh       # Installs systemd background services
 ├── start_web.sh            # Starts the web server
 ├── start_agent.sh          # Starts the on-device GUI
@@ -200,8 +201,9 @@ The script handles everything:
 - Fixes the Hailo driver conflict (blacklists the legacy `hailo_pci` module)
 - Builds and installs `hailo-ollama` from source if not already present
 - Downloads and extracts the Piper TTS engine
-- Clones and compiles `whisper.cpp`
-- Downloads the `ggml-base.en` Whisper model
+- Downloads the `Whisper-Small.hef` for NPU speech-to-text
+- Clones and compiles `whisper.cpp` as a CPU fallback for STT
+- Downloads the `ggml-small.en` Whisper model for CPU fallback
 - Creates a Python virtual environment and installs dependencies
 - Pulls `qwen2.5-instruct:1.5b` (LLM) via `hailo-ollama`
 - Downloads the `Qwen2-VL-2B-Instruct` VLM HEF directly from Hailo's CDN (~2.2 GB)
@@ -266,15 +268,42 @@ ALSA_DEVICE = "plughw:UACDemoV10,0"
 MIC_DEVICE_INDEX = 1
 MIC_SAMPLE_RATE  = 48000
 
-# STT binary and model
-WHISPER_CMD   = "./whisper.cpp/build/bin/whisper-cli"
-WHISPER_MODEL = "./models/ggml-base.en.bin"
+# STT: NPU path (Whisper-Small on Hailo-10H) and CPU fallback (whisper.cpp)
+WHISPER_HEF_PATH = "./models/Whisper-Small.hef"
+WHISPER_CMD      = "./whisper.cpp/build/bin/whisper-cli"
+WHISPER_MODEL    = "./models/ggml-small.en.bin"
 ```
 
 Environment variables override any of these at runtime:
 ```bash
 export ALSA_DEVICE="plughw:2,0"
 ```
+
+---
+
+## Upgrading to HailoRT 5.3 + Qwen3
+
+HailoRT 5.3 adds **Qwen3-1.7B-Instruct** (LLM) and **Qwen3-VL-2B-Instruct** (VLM). The Raspberry Pi apt repo lags behind upstream, so 5.3 isn't in apt yet — but the vendor packages are available directly from Hailo's CDN. A direct apt upgrade is blocked by package name conflicts (the Pi repo uses `h10-hailort` while upstream uses `hailort`), so the upgrade requires a purge-and-reinstall.
+
+A script handles all of this automatically:
+
+```bash
+./upgrade_hailo53.sh
+```
+
+The script:
+1. Stops BMO services
+2. Downloads the three upstream 5.3 `.deb` files
+3. Purges the Pi-repo 5.2 packages
+4. Installs the 5.3 vendor packages (runtime + DKMS PCIe driver + model zoo)
+5. Reloads the kernel module
+6. Pulls `qwen3-instruct:1.7b` via hailo-ollama
+7. Downloads `Qwen3-VL-2B-Instruct.hef`
+8. Patches `core/config.py` with the new model names
+
+The systemd service already passes `OLLAMA_HOST` as an environment variable, so the 5.3 config format change (JSON → env var) requires no changes to the service file.
+
+> **Kernel module note:** The PCIe driver ships as DKMS source and builds against whatever kernel is running. If `/dev/hailo0` disappears after the upgrade, `sudo reboot` is all that's needed.
 
 ---
 
@@ -299,7 +328,7 @@ If you have a Raspberry Pi Camera Module connected:
    ```bash
    sudo apt install -y libcamera-apps
    ```
-3. Say something like "Hey BMO, take a photo and tell me what you see" — the agent captures a frame with `rpicam-still` and sends it to the vision model (`Qwen2-VL-2B-Instruct`) running natively on the NPU via the HailoRT Python API
+3. Say something like "Hey BMO, take a photo and tell me what you see" — the agent captures a frame with `rpicam-still` and sends it to the vision model (`Qwen2-VL-2B-Instruct`, or `Qwen3-VL-2B-Instruct` after HailoRT upgrade) running natively on the NPU via the HailoRT Python API
 
 The VLM runs as a separate process from the LLM server. Hailo's VDevice sharing allows both to coexist on the same NPU without conflicts. If the VLM HEF file isn't installed, BMO will politely say so rather than crashing.
 
