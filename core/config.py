@@ -81,7 +81,7 @@ def get_system_prompt():
         "For weather, be opinionated ('Bundle up!', 'BMO might melt!'). "
         "Pronunciation correction: if (and ONLY if) the user explicitly tells you "
         "you mispronounced a word and gives the phonetic spelling, append at the very end: "
-        "!PRONOUNCE: word=phonetic\n"
+        "!PRONOUNCE: word=phonetic "
         "Strong emotions may be expressed by including, on its own line: "
         '{"action": "set_expression", "value": "EMOTION"} '
         "where EMOTION is one of: happy, sad, angry, surprised, sleepy, dizzy, cheeky, heart, "

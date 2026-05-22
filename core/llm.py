@@ -207,6 +207,22 @@ def strip_prompt_leakage(content: str) -> str:
 
 MEMORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory.json")
 
+
+def _sanitize_messages(messages: list) -> list:
+    """Strip literal newlines from message content before sending to hailo-ollama.
+
+    hailo-ollama's Qwen3 prompt renderer uses a strict JSON parser (nlohmann/json)
+    that rejects control characters (RFC 7159 §7) in string values, even though
+    they arrive correctly escaped in the HTTP body.  Replace \\n with a space so
+    the semantic content is preserved but the renderer doesn't crash."""
+    result = []
+    for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, str) and "\n" in content:
+            content = content.replace("\n", " ")
+        result.append({**m, "content": content})
+    return result
+
 def _quick_lead_in(user_text: str, intent: str) -> str:
     """Return a one-line BMO acknowledgement before a pre-routed action runs.
 
@@ -238,12 +254,12 @@ def _quick_lead_in(user_text: str, intent: str) -> str:
     try:
         payload = {
             "model": FAST_LLM_MODEL,
-            "messages": [
+            "messages": _sanitize_messages([
                 {"role": "system", "content":
                  "You are BMO. Reply with ONE short, cheerful sentence (max 12 words) "
                  "acknowledging what the user asked for. No markdown, no quotes."},
                 {"role": "user", "content": user_text},
-            ],
+            ]),
             "stream": False,
             "options": {"temperature": 0.8, "num_predict": 30},
         }
@@ -465,7 +481,7 @@ class Brain:
 
         payload = {
             "model": chosen_model,
-            "messages": _with_current_context(self.history),
+            "messages": _sanitize_messages(_with_current_context(self.history)),
             "stream": False,
             "options": {
                 "temperature": 0.7,
@@ -508,15 +524,15 @@ class Brain:
                             # Feed the result back to the LLM to summarize
                             summary_prompt = [
                                 {"role": "system", "content": "Summarize this search result in one short, conversational sentence as BMO. Do not use markdown."},
-                                {"role": "user", "content": f"RESULT: {search_result}\nUser Question: {user_text}"}
+                                {"role": "user", "content": f"RESULT: {search_result} User Question: {user_text}"}
                             ]
-                            
+
                             summary_payload = {
                                 "model": FAST_LLM_MODEL,
-                                "messages": summary_prompt,
+                                "messages": _sanitize_messages(summary_prompt),
                                 "stream": False
                             }
-                            
+
                             summary_response = requests.post(LLM_URL, json=summary_payload, timeout=180)
                             if summary_response.status_code == 200:
                                 content = summary_response.json().get("message", {}).get("content", "")
@@ -686,7 +702,7 @@ class Brain:
 
         payload = {
             "model": chosen_model,
-            "messages": _with_current_context(self.history),
+            "messages": _sanitize_messages(_with_current_context(self.history)),
             "stream": True,
             "options": {
                 "temperature": 0.7,

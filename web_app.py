@@ -403,12 +403,12 @@ async def get_screensaver_thought():
         if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR"):
             thought_prompt = (
                 "Read this real-world info, then share a short charming musing "
-                "as BMO (under 50 words, finish the thought).\n"
+                "as BMO (under 50 words, finish the thought). "
                 "Wrap your final reply between [BMO] and [/BMO] markers — only "
-                "what's between the markers will be spoken.\n"
-                "If the topic is visual, include ONE JSON action AFTER [/BMO]:\n"
-                '  {"action": "display_image", "subject": "<short visual phrase>"}\n\n'
-                f"Topic: {topic}\n"
+                "what's between the markers will be spoken. "
+                "If the topic is visual, include ONE JSON action AFTER [/BMO]: "
+                '{"action": "display_image", "subject": "<short visual phrase>"} '
+                f"Topic: {topic} "
                 f"Info: {search_result[:1500]}"
             )
             messages = [
