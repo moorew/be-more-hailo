@@ -2068,10 +2068,10 @@ class BotGUI:
             # preamble outside the tags is automatically discarded.
             thought_prompt = (
                 "Read this real-world info, then share a short charming observation "
-                "as BMO (under 40 words). Make a STATEMENT — do NOT ask questions.\n"
-                "Wrap your reply between [BMO] and [/BMO] markers.\n"
-                "If the topic is visual, include ONE JSON action AFTER [/BMO]:\n"
-                '  {"action": "display_image", "subject": "<3-5 word visual phrase>"}\n\n'
+                "as BMO (under 40 words). Make a STATEMENT — do NOT ask questions. "
+                "Wrap your reply between [BMO] and [/BMO] markers. "
+                "If the topic is visual, include ONE JSON action AFTER [/BMO]: "
+                '{"action": "display_image", "subject": "<3-5 word visual phrase>"} '
                 f"Info: {clean_result[:1500]}"
             )
             payload = {
@@ -2084,7 +2084,7 @@ class BotGUI:
                     {"role": "user", "content": thought_prompt},
                 ],
                 "stream": False,
-                "options": {"temperature": 0.8, "num_predict": 256}  # was 512 — shorter cap matches new word limit
+                "options": {"temperature": 0.8, "num_predict": 256}
             }
             resp = http_requests.post(LLM_URL, json=payload, timeout=60)
             if resp.status_code == 200:
