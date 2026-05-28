@@ -797,12 +797,15 @@ class BotGUI:
         frames = self.animations.get(display_state, self.animations.get(BotStates.IDLE, []))
         if frames:
             if display_state == BotStates.SPEAKING:
-                # Drive a 5-shape viseme palette from the audio envelope.
-                # 0=CLOSED, 1=TINY, 2=SMALL, 3=OH, 4=WIDE. OH and WIDE are
-                # both "open vowel" shapes; we alternate between them on a
-                # timer so sustained vowels get visual variety instead of
-                # locking onto one shape (which is what made the old 12-blend
-                # animation read as a blur).
+                # Drive a 6-shape viseme palette from the audio envelope.
+                # Shapes come from Rhubarb-animated frames (24 fps, artist-drawn):
+                # 0=CLOSED (flat line, B/P/M), 1=TINY (small curve, rest/H),
+                # 2=SMALL (slightly open, medium vowels),
+                # 3=OH (wide teeth smile, EE/open vowel),
+                # 4=WIDE (round oval, OOH/W),
+                # 5=AH (very wide open, emphatic vowels).
+                # OH/WIDE/AH rotate on a timer so sustained vowels get visual
+                # variety instead of locking onto one shape.
 
                 # Asymmetric envelope: vowel onsets pop the mouth open in one
                 # tick (fast attack), then it relaxes over ~150 ms (slow
@@ -1799,6 +1802,10 @@ class BotGUI:
 
     def trigger_random_thought(self, event=None):
         """Manually trigger a random pondering thought (BMO's red button)."""
+        # Quiet Hours: 8 PM to 8 AM
+        _hour = datetime.datetime.now().hour
+        if _hour >= 20 or _hour < 8:
+            return
         if self.current_state in [BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING]:
             return
         if not self._try_claim_busy():
@@ -2206,8 +2213,8 @@ class BotGUI:
             now = datetime.datetime.now()
             hour = now.hour
             
-            # Quiet Hours: 10 PM to 8 AM
-            if hour >= 22 or hour < 8:
+            # Quiet Hours: 8 PM to 8 AM
+            if hour >= 20 or hour < 8:
                 continue
             
             # Skip if user was recently interacting
