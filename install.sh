@@ -281,6 +281,23 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 11b. Reclaim space from superseded models
+# ─────────────────────────────────────────────────────────────────────────────
+# Older installs left the previous-generation models on disk (~2.8 GB). Remove
+# each one ONLY once its replacement is confirmed present, so a failed download
+# above never deletes a still-working fallback.
+echo -e "${YELLOW}Cleaning up superseded models...${NC}"
+prune_old_model() {
+    # $1 = old file to remove, $2 = replacement that must exist first
+    if [ -f "$1" ] && [ -f "$2" ]; then
+        echo "  Removing superseded $(basename "$1") ($(du -h "$1" | cut -f1)); replaced by $(basename "$2")."
+        rm -f "$1"
+    fi
+}
+prune_old_model "models/ggml-small.en.bin"          "models/ggml-base.en.bin"
+prune_old_model "models/Qwen2-VL-2B-Instruct.hef"   "models/Qwen3-VL-2B-Instruct.hef"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 12. Camera check, wake word model, and misc
 # ─────────────────────────────────────────────────────────────────────────────
 echo -e "${YELLOW}[12/13] Checking camera and wake word...${NC}"
