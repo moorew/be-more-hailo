@@ -35,7 +35,7 @@ import scipy.signal
 from openwakeword.model import Model
 
 # Import unified core modules
-from core.llm import Brain, extract_json_object, strip_prompt_leakage
+from core.llm import Brain, extract_json_object, strip_prompt_leakage, sanitize_messages
 from core.tts import play_audio_on_hardware
 from core.stt import transcribe_audio
 from core.config import MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE, VOLUME
@@ -221,6 +221,18 @@ class BotGUI:
         self.speaking_frame = 0
         self.speaking_frame_hold_until = 0.0
         self._vowel_swap_until = 0.0
+        # Lip-sync envelope schedule. The TTS reader thread pumps audio into
+        # aplay's 500 ms buffer as fast as it can (to stay ahead of CPU/NPU
+        # spikes), which means it races several seconds AHEAD of the audio the
+        # user actually hears. If it drove self.mouth_open directly, the mouth
+        # would finish "speaking" long before playback and then sit closed —
+        # the exact bug. Instead the reader timestamps each chunk's envelope by
+        # its playback offset here, and update_animation replays the value for
+        # the audio that's playing *right now*, keeping the mouth in sync.
+        self._lip_lock = threading.Lock()
+        self._lip_sched = []      # list of (play_offset_seconds, mouth_open)
+        self._lip_start = None    # wall-clock time the first audio chunk was queued
+        self._lip_end = None      # play_offset of the most recent chunk
         self.load_animations()
         self.load_sounds()
         self.update_animation()
@@ -807,6 +819,28 @@ class BotGUI:
                 # OH/WIDE/AH rotate on a timer so sustained vowels get visual
                 # variety instead of locking onto one shape.
 
+                # Pull the loudness of the audio that's playing RIGHT NOW from
+                # the schedule the reader thread filled. `elapsed` is how long
+                # since the first chunk was queued (~playback start); we advance
+                # to the latest chunk whose playback offset has arrived and drop
+                # what's already played. Past the final chunk, close the mouth.
+                if self._lip_start is not None:
+                    elapsed = now - self._lip_start
+                    with self._lip_lock:
+                        sched = self._lip_sched
+                        val = None
+                        consumed = 0
+                        while consumed < len(sched) and sched[consumed][0] <= elapsed:
+                            val = sched[consumed][1]
+                            consumed += 1
+                        if consumed:
+                            del sched[:consumed]
+                        lip_end = self._lip_end
+                    if val is not None:
+                        self.mouth_open = val
+                    elif lip_end is not None and elapsed > lip_end + 0.15:
+                        self.mouth_open = 0
+
                 # Asymmetric envelope: vowel onsets pop the mouth open in one
                 # tick (fast attack), then it relaxes over ~150 ms (slow
                 # release). A symmetric EMA smooths attacks too much and
@@ -1271,6 +1305,13 @@ class BotGUI:
                 stderr=subprocess.DEVNULL,
             )
 
+        # Fresh lip-sync schedule for this turn: playback offsets restart at 0
+        # and _lip_start is stamped when the reader queues its first chunk.
+        with self._lip_lock:
+            self._lip_sched = []
+            self._lip_start = None
+            self._lip_end = None
+
         # Reader thread: Piper stdout → aplay stdin (with lip-sync)
         self._piper_reader_thread = threading.Thread(
             target=self._piper_to_aplay_loop, daemon=True
@@ -1280,7 +1321,8 @@ class BotGUI:
     def _piper_to_aplay_loop(self):
         """Read Piper's raw PCM output and stream it into aplay with lip-sync."""
         chunk_size = 512  # samples (~23 ms at 22050 Hz)
-        start_time = None
+        sample_rate = 22050
+        samples_written = 0  # drives each chunk's playback offset for lip-sync
         exit_reason = "unknown"
 
         while True:
@@ -1297,14 +1339,21 @@ class BotGUI:
                 exit_reason = "muted"
                 break  # mute_bmo will kill the pipeline
 
-            if start_time is None:
-                start_time = time.time()
-
-            # Lip-sync from unscaled signal, then apply software volume before playback
+            # Lip-sync: record this chunk's loudness against WHEN it will play,
+            # not when we queue it. We pump audio into aplay's buffer far faster
+            # than real time, so driving mouth_open here directly would race
+            # seconds ahead of what the user hears; update_animation replays the
+            # schedule in sync with playback instead.
             audio_chunk = np.frombuffer(raw_chunk, dtype=np.int16)
             vol = np.sqrt(np.mean(audio_chunk.astype(np.float32) ** 2))
             if self.current_state == BotStates.SPEAKING:
-                self.mouth_open = min(60, vol / 25)
+                play_offset = samples_written / sample_rate
+                with self._lip_lock:
+                    if self._lip_start is None:
+                        self._lip_start = time.time()
+                    self._lip_sched.append((play_offset, float(min(60, vol / 25))))
+                    self._lip_end = play_offset
+            samples_written += len(audio_chunk)
 
             vol_scale = getattr(self, 'volume', VOLUME)
             if vol_scale != 1.0:
@@ -1336,9 +1385,19 @@ class BotGUI:
             except Exception:
                 pass
 
-        self.mouth_open = 0
-        self.mouth_ema = 0
-        self.speaking_frame = 0
+        # On a normal EOF the reader finishes long before playback does — up to
+        # ~500 ms of audio is still draining from aplay's buffer. Leave the
+        # schedule in place so update_animation keeps the mouth moving through
+        # the tail and closes it (via _lip_end) when playback actually ends.
+        # Only force the mouth shut immediately on an abnormal exit (mute/error).
+        if exit_reason != "piper EOF (normal)":
+            with self._lip_lock:
+                self._lip_sched = []
+                self._lip_start = None
+                self._lip_end = None
+            self.mouth_open = 0
+            self.mouth_ema = 0
+            self.speaking_frame = 0
 
     def _write_to_piper(self, text):
         """Write one line of cleaned text to the persistent Piper process."""
@@ -1407,6 +1466,10 @@ class BotGUI:
                     pass
             self._tts_aplay = None
 
+        with self._lip_lock:
+            self._lip_sched = []
+            self._lip_start = None
+            self._lip_end = None
         self.mouth_open = 0
         self.mouth_ema = 0
         self.speaking_frame = 0
@@ -1454,6 +1517,10 @@ class BotGUI:
                 pass
             self._tts_aplay = None
 
+        with self._lip_lock:
+            self._lip_sched = []
+            self._lip_start = None
+            self._lip_end = None
         self.mouth_open = 0
         self.mouth_ema = 0
         self.speaking_frame = 0
@@ -1533,9 +1600,17 @@ class BotGUI:
         # or we can just use self.current_image_url etc.
         # But to match existing logic, we'll use regex here
         
-        # 1. Handle JSON actions (brace-balanced — handles nested objects + lax spacing)
-        action_data, span = extract_json_object(chunk)
-        if action_data is not None:
+        # 1. Handle JSON actions (brace-balanced — handles nested objects + lax spacing).
+        #    The model may emit several on one chunk (e.g. set_expression + set_timer),
+        #    so drain them all rather than acting on the first and speaking the rest.
+        while True:
+            action_data, span = extract_json_object(chunk)
+            if action_data is None:
+                break
+            if "action" not in action_data:
+                # Some other JSON-ish blob — drop it so it isn't spoken aloud.
+                chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
+                continue
             if action_data.get("action") == "take_photo":
                 self.taking_photo = True
                 return
@@ -1577,11 +1652,19 @@ class BotGUI:
                     raw_min = action_data.get("minutes", 0)
                     minutes = float(raw_min)
                     minutes = max(0.05, min(720.0, minutes))  # 3 s … 12 h
-                    msg_text = action_data.get("message") or "Timer is up!"
+                    msg_text = (action_data.get("message") or "").strip()
+                    # Models like to echo the prompt's placeholder verbatim.
+                    if msg_text in ("", "...", "…"):
+                        msg_text = "Timer is up!"
                     self.start_timer_thread(minutes, str(msg_text))
                     print(f"[TIMER] Scheduled: {minutes} min — {msg_text!r}")
                 except (TypeError, ValueError) as e:
                     print(f"[TIMER] Bad set_timer payload {action_data!r}: {e}")
+                chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
+            else:
+                # Unknown/legacy action (search_web, get_time, capture_image…).
+                # Must still consume it, or this loop never terminates.
+                print(f"[ACTION] Ignoring unknown action: {action_data.get('action')!r}")
                 chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
 
         # 2. Speak the remaining text
@@ -2096,13 +2179,15 @@ class BotGUI:
             )
             payload = {
                 "model": FAST_LLM_MODEL,
-                "messages": [
+                # Weather/search snippets carry ANSI escapes that crash hailo-ollama's
+                # JSON prompt renderer; the \s+ collapse above does not remove them.
+                "messages": sanitize_messages([
                     {"role": "system", "content":
                      "You are BMO, a cute robot musing to yourself. Always wrap your "
                      "spoken reply in [BMO]...[/BMO] tags. Make statements, not questions. "
                      "Be specific and under 40 words."},
                     {"role": "user", "content": thought_prompt},
-                ],
+                ]),
                 "stream": False,
                 "options": {"temperature": 0.8, "num_predict": 256}
             }
@@ -2124,7 +2209,7 @@ class BotGUI:
     def screensaver_audio_loop(self):
         import datetime
         import requests as http_requests
-        from core.search import search_web
+        from core.search import search_web, search_images
         from core.config import LLM_URL, FAST_LLM_MODEL
         
         # Topics BMO might wonder about — used as web search seeds
@@ -2225,8 +2310,9 @@ class BotGUI:
             if random.random() < 0.10:
                 expr = random.choice([BotStates.HEART, BotStates.SLEEPY, BotStates.STARRY_EYED, BotStates.DIZZY])
                 self.set_state(expr, "Zzz..." if expr == BotStates.SLEEPY else "...")
-                # Hold the expression for 4 seconds, then revert to Screensaver
-                def revert():
+                # Hold the expression for 4 seconds, then revert to Screensaver.
+                # Bind expr now: the callback fires later, after the loop may have rebound it.
+                def revert(expr=expr):
                     if self.current_state == expr:
                         self.set_state(BotStates.SCREENSAVER, "Screensaver...")
                 self.master.after(4000, revert)
@@ -2245,7 +2331,7 @@ class BotGUI:
                         pass
                 
                 # Hold the persona animation for 8 seconds
-                def revert_persona():
+                def revert_persona(persona=persona):
                     if self.current_state == persona:
                         self.set_state(BotStates.SCREENSAVER, "Screensaver...")
                 self.master.after(8000, revert_persona)
