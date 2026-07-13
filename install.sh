@@ -297,6 +297,17 @@ prune_old_model() {
 prune_old_model "models/ggml-small.en.bin"          "models/ggml-base.en.bin"
 prune_old_model "models/Qwen2-VL-2B-Instruct.hef"   "models/Qwen3-VL-2B-Instruct.hef"
 
+# Also prune the superseded LLM (~2 GB) from hailo-ollama's model store, but
+# only once qwen3:1.7b is confirmed installed — never delete the fallback if
+# the pull in step 10 failed.
+if curl -sf "$OLLAMA_URL/tags" 2>/dev/null | grep -qF '"qwen3:1.7b"'; then
+    if curl -sf "$OLLAMA_URL/tags" 2>/dev/null | grep -qF '"qwen2.5-instruct:1.5b"'; then
+        echo "  Removing superseded LLM qwen2.5-instruct:1.5b from hailo-ollama store (~2 GB)..."
+        curl -s -X DELETE "$OLLAMA_URL/delete" -H 'Content-Type: application/json' \
+            -d '{"model": "qwen2.5-instruct:1.5b"}' >/dev/null 2>&1
+    fi
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 12. Camera check, wake word model, and misc
 # ─────────────────────────────────────────────────────────────────────────────
