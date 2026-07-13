@@ -8,7 +8,7 @@ import urllib.error
 # Should match what's in agent.py or be passed in
 # But for simplicity, we hardcode the defaults for the Hailo setup
 OLLAMA_HOST = "http://localhost:8000"
-REQUIRED_MODEL = "qwen2.5-instruct:1.5b"
+REQUIRED_MODEL = "qwen3:1.7b"  # must match core/config.py:LLM_MODEL (authoritative)
 
 def get_installed_models():
     try:

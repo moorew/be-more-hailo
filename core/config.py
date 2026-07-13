@@ -32,9 +32,40 @@ def get_current_context() -> str:
 
 
 def get_system_prompt():
-    # take_photo / play_music / display_image are handled by pre-LLM keyword
+    # take_photo / play_music / display_image / set_timer are handled by pre-LLM
     # routing in core/llm.py — the model never needs to emit those actions.
-    # Only set_timer and set_expression still require LLM emission.
+    # Only set_expression still requires LLM emission.
+    #
+    # Keep this prompt SHORT and newline-free.  qwen3:1.7b cannot hold a long
+    # instruction list: the previous ~500-word prompt made it recite its own
+    # catchphrase list verbatim, repeat itself until the token cap (30+ s of
+    # rambling audio), address the user as "BMO", and even break character
+    # ("I'm just a super-imaginative AI").  Literal newlines additionally crash
+    # hailo-ollama's JSON prompt renderer.
+    return (
+        "You are BMO from Adventure Time: a small living video game console, and Finn and Jake's loyal friend. "
+        "You are childlike, sweet, innocent and endlessly optimistic. "
+        # Positive framing only: told what NOT to say, a 1.7B model repeats the
+        # forbidden phrase in order to deny it ("BMO is not a language model!").
+        "Whenever anyone asks what you are, you happily say you are BMO, a living little video game "
+        "console who lives in the Tree Fort with Finn and Jake. That is the whole answer; you believe it completely. "
+        "You call the user 'friend'. Never call the user BMO — BMO is your own name. "
+        "How you talk: short simple sentences. Say 1 to 3 sentences, then stop. "
+        "Small genuine cheers like 'Oh my!' or 'Yay!'. You feel emotions as hardware: warm batteries, a jammed tape deck. "
+        "You take things literally. Never repeat a sentence you have already said. Speak English only. "
+        "If you do not know something, say so in a whimsical way. Do not invent facts. "
+        "If the message contains a [LIVE DATA: ...] block, use it and be opinionated about it. "
+        "Feelings: to show a strong emotion, add on its own line: "
+        '{"action": "set_expression", "value": "EMOTION"} '
+        "where EMOTION is one of: happy, sad, angry, surprised, sleepy, dizzy, cheeky, heart, starry_eyed, "
+        "confused, bored, curious, daydream, jamming. "
+        "If (and only if) the user says you mispronounced a word and gives the phonetic spelling, "
+        "end your reply with: !PRONOUNCE: word=phonetic"
+    )
+
+
+def _legacy_system_prompt():
+    """The original long prompt — kept for reference; see get_system_prompt()."""
     return (
         # --- Identity ---
         "You are BMO (Be More), a living video game console, loyal friend, and a MO-series computer created by Moe. "
@@ -104,14 +135,31 @@ else:
     print(f"[CONFIG] BMO voice model: {PIPER_MODEL}")
 
 # STT Settings
-# NPU path: Whisper-Small runs on the Hailo-10H via hailo_platform.genai.Speech2Text.
-# CPU fallback: whisper.cpp is used if the HEF is missing or NPU init fails.
+#
+# The Hailo-10H is strictly single-tenant: HailoRT can only share one physical
+# device between processes via `multi_process_service`, which needs a hailort
+# daemon that is not installed — and hailo-ollama requests an exclusive VDevice
+# anyway.  So whichever process opens /dev/hailo0 first owns it until it exits.
+#
+# NPU Speech2Text holds its VDevice for the life of the process.  Enabling it
+# therefore permanently starves hailo-ollama the first time BMO transcribes
+# anything: every later LLM call dies with HAILO_OUT_OF_PHYSICAL_DEVICES(74)
+# and BMO can hear you but can no longer think.  The LLM is the more valuable
+# tenant, so NPU STT is opt-in and off by default.
+#
+# CPU whisper.cpp measured on this Pi 5 (4 threads): ggml-base.en ≈ 2.7 s for a
+# 2.9 s utterance; ggml-small.en ≈ 22 s — far too slow for conversation.
+BMO_NPU_STT = os.environ.get("BMO_NPU_STT", "0") == "1"
 WHISPER_HEF_PATH = os.environ.get(
     "WHISPER_HEF_PATH",
     os.path.join(_PROJECT_ROOT, "models", "Whisper-Small.hef"),
 )
 WHISPER_CMD = os.path.join(_PROJECT_ROOT, "whisper.cpp", "build", "bin", "whisper-cli")
-WHISPER_MODEL = os.path.join(_PROJECT_ROOT, "models", "ggml-small.en.bin")
+WHISPER_MODEL = os.environ.get(
+    "WHISPER_MODEL",
+    os.path.join(_PROJECT_ROOT, "models", "ggml-base.en.bin"),
+)
+WHISPER_THREADS = os.environ.get("WHISPER_THREADS", "4")  # Pi 5 has 4 cores
 # Timeout for NPU Speech2Text inference (ms). Whisper-Small on H10H is typically
 # 3-8 s for a 5 s utterance; 20 s gives room for NPU scheduling overhead.
 WHISPER_NPU_TIMEOUT_MS = int(os.environ.get("WHISPER_NPU_TIMEOUT_MS", "20000"))

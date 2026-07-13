@@ -9,16 +9,40 @@ import numpy as np
 from .config import LLM_URL, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt, get_current_context
 from .tts import add_pronunciation
 from .search import search_web, search_images
+from .timers import describe_duration, parse_timer_request
 
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 #  Hailo VLM (Vision Language Model) singleton
 # --------------------------------------------------------------------------- #
-# Lazy-loaded on first image analysis request.  Kept alive so subsequent
-# requests don't pay the ~3 s init cost again.
+# Lazy-loaded per image-analysis request and released immediately afterwards.
+#
+# The Hailo-10H is single-tenant (see core/config.py): a cached VLM would hold
+# /dev/hailo0 for the life of the process, so the first photo BMO ever took
+# would permanently starve hailo-ollama and BMO could never think again.  We pay
+# the ~3 s init cost per photo to keep the LLM alive — photos are rare, thinking
+# is not.
 _vlm_instance = None
 _vlm_vdevice = None
+_vlm_thread = None  # in-flight inference thread, if any
+
+
+def _vlm_inflight() -> bool:
+    """True while a VLM inference thread is still touching the device."""
+    return _vlm_thread is not None and _vlm_thread.is_alive()
+
+
+def _release_vlm():
+    """Tear down the VLM and hand /dev/hailo0 back to hailo-ollama."""
+    global _vlm_instance, _vlm_vdevice
+    _vlm_instance = None
+    if _vlm_vdevice is not None:
+        try:
+            _vlm_vdevice.release()
+        except Exception as exc:
+            logger.warning(f"VDevice release failed: {exc}")
+        _vlm_vdevice = None
 
 
 def _get_vlm():
@@ -207,21 +231,109 @@ def strip_prompt_leakage(content: str) -> str:
 
 MEMORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory.json")
 
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+def _partial_tag_tail(text: str, tag: str) -> int:
+    """Length of the suffix of `text` that could be the start of `tag`.
+
+    A streamed tag can arrive split across chunks ("<thi" + "nk>"), so the tail
+    that might still grow into a tag must be held back rather than emitted."""
+    lowered = text.lower()
+    for k in range(min(len(tag) - 1, len(lowered)), 0, -1):
+        if lowered.endswith(tag[:k]):
+            return k
+    return 0
+
+
+class ThinkStripper:
+    """Removes <think>…</think> spans from a *token stream*, statefully.
+
+    strip_prompt_leakage() only sees one sentence-buffer at a time, so once the
+    buffer holding the opening tag is flushed it has no way to know the reasoning
+    is still running — every later reasoning sentence looks like ordinary prose
+    and reaches the speaker.  This filter carries the open/closed state across
+    chunks so reasoning never escapes.  Unclosed reasoning at end of stream is
+    dropped (the model was cut off mid-thought)."""
+
+    def __init__(self):
+        self.in_think = False
+        self._buf = ""
+
+    def feed(self, chunk: str) -> str:
+        """Consume a stream chunk, return only text outside reasoning blocks."""
+        self._buf += chunk
+        out = []
+        while self._buf:
+            if not self.in_think:
+                i = self._buf.lower().find(_THINK_OPEN)
+                if i == -1:
+                    hold = _partial_tag_tail(self._buf, _THINK_OPEN)
+                    emit_to = len(self._buf) - hold
+                    out.append(self._buf[:emit_to])
+                    self._buf = self._buf[emit_to:]
+                    break
+                out.append(self._buf[:i])
+                self._buf = self._buf[i + len(_THINK_OPEN):]
+                self.in_think = True
+            else:
+                j = self._buf.lower().find(_THINK_CLOSE)
+                if j == -1:
+                    hold = _partial_tag_tail(self._buf, _THINK_CLOSE)
+                    self._buf = self._buf[len(self._buf) - hold:] if hold else ""
+                    break
+                self._buf = self._buf[j + len(_THINK_CLOSE):]
+                self.in_think = False
+        return "".join(out)
+
+    def flush(self) -> str:
+        """Return any held-back text at end of stream (nothing if still thinking)."""
+        rest = "" if self.in_think else self._buf
+        self._buf = ""
+        return rest
+
+
+def strip_think_blocks(content: str) -> str:
+    """Remove complete and unclosed <think> spans from a finished reply.
+
+    Used before persisting a turn to history: reasoning tokens must never be fed
+    back into the next request, where they burn context and teach the model to
+    keep reasoning out loud."""
+    if not content or "<think>" not in content.lower():
+        return content
+    if "</think>" in content.lower():
+        return re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL | re.IGNORECASE).strip()
+    return re.split(r'<think>', content, flags=re.IGNORECASE)[0].strip()
+
+
+# Control characters (incl. ANSI escape sequences from wttr.in / search snippets)
+# break hailo-ollama's strict JSON prompt renderer.
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+_CTRL_RE = re.compile(r'[\x00-\x1f\x7f]')
+
 
 def _sanitize_messages(messages: list) -> list:
-    """Strip literal newlines from message content before sending to hailo-ollama.
+    """Strip control characters from message content before sending to hailo-ollama.
 
     hailo-ollama's Qwen3 prompt renderer uses a strict JSON parser (nlohmann/json)
     that rejects control characters (RFC 7159 §7) in string values, even though
-    they arrive correctly escaped in the HTTP body.  Replace \\n with a space so
-    the semantic content is preserved but the renderer doesn't crash."""
+    they arrive correctly escaped in the HTTP body.  Newlines were the first
+    offender found; ANSI escapes from weather/search snippets are the same class
+    of bug.  Replace them with spaces so semantics survive but the renderer
+    doesn't crash."""
     result = []
     for m in messages:
         content = m.get("content", "")
-        if isinstance(content, str) and "\n" in content:
-            content = content.replace("\n", " ")
+        if isinstance(content, str):
+            content = _ANSI_RE.sub(' ', content)
+            content = _CTRL_RE.sub(' ', content)
         result.append({**m, "content": content})
     return result
+
+# Public alias — other modules that build their own LLM payloads must sanitize too.
+sanitize_messages = _sanitize_messages
+
 
 def _quick_lead_in(user_text: str, intent: str) -> str:
     """Return a one-line BMO acknowledgement before a pre-routed action runs.
@@ -330,9 +442,17 @@ def _with_current_context(messages):
 
 
 class Brain:
-    def __init__(self):
+    def __init__(self, persist: bool = True):
+        """persist=False keeps this Brain off memory.json entirely.
+
+        web_app builds a fresh Brain per request from the browser-supplied
+        history.  With persistence on, each request force-wrote that history to
+        memory.json, clobbering the long-lived desktop agent's memory — two
+        processes racing last-writer-wins over one file."""
+        self.persist = persist
         self.history = []
-        self.load_history()
+        if persist:
+            self.load_history()
         # System prompt is now static (no embedded time/date).  Ensure it's
         # present and matches the current source — but never mutate it on
         # subsequent turns, so the model's KV-cache prefix remains valid.
@@ -346,15 +466,20 @@ class Brain:
         self._save_min_interval_s = 60.0
         self._last_save_at = 0.0
         self._save_dirty = False
-        import atexit as _atexit
-        _atexit.register(self._save_on_exit)
+        if persist:
+            import atexit as _atexit
+            _atexit.register(self._save_on_exit)
 
     def load_history(self):
         """Load chat history from memory.json if it exists."""
         if os.path.exists(MEMORY_FILE):
             try:
                 with open(MEMORY_FILE, 'r') as f:
-                    self.history = json.load(f)
+                    loaded = json.load(f)
+                # Valid JSON that isn't a message list would crash __init__ later.
+                if not isinstance(loaded, list) or not all(isinstance(m, dict) for m in loaded):
+                    raise ValueError("memory.json is not a list of messages")
+                self.history = loaded
                 logger.info(f"Loaded {len(self.history)} messages from memory.")
             except Exception as e:
                 logger.error(f"Failed to load memory: {e}")
@@ -363,14 +488,21 @@ class Brain:
     def save_history(self, force: bool = False):
         """Persist chat history to disk.  Throttled to once per ~60 s by
         default to limit SD-card wear; call with force=True for hard flushes."""
+        if not getattr(self, "persist", True):
+            return
         import time as _t
         self._save_dirty = True
         now = _t.time()
         if not force and (now - self._last_save_at) < self._save_min_interval_s:
             return
         try:
-            with open(MEMORY_FILE, 'w') as f:
+            # Atomic replace: a power cut mid-write must not truncate memory.json.
+            tmp = MEMORY_FILE + ".tmp"
+            with open(tmp, 'w') as f:
                 json.dump(self.history, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, MEMORY_FILE)
             self._last_save_at = now
             self._save_dirty = False
         except Exception as e:
@@ -441,6 +573,17 @@ class Brain:
             self.history.append({"role": "assistant", "content": combined})
             return combined
 
+        # Pre-LLM timer check — parsed in Python, never left to the model
+        # (see core/timers.py).  Mirrors stream_think.
+        timer = parse_timer_request(user_text)
+        if timer is not None:
+            action = json.dumps({"action": "set_timer", **timer})
+            spoken = f"Okay friend! I set a timer for {describe_duration(timer['minutes'])}."
+            print(f"[LLM] Timer MATCHED: {timer}")
+            combined = (spoken + " " + action).strip()
+            self.history.append({"role": "assistant", "content": combined})
+            return combined
+
         print(f"[LLM] No pre-LLM action matched for: '{lower_text[:60]}'")
 
         # Pre-LLM web search — same logic as stream_think
@@ -485,7 +628,11 @@ class Brain:
             "stream": False,
             "options": {
                 "temperature": 0.7,
-                "num_predict": 1024,  # increased to prevent responses getting cut off
+                # ~4.5 tok/s on the H10H, so num_predict is a latency budget, not
+                # just a length cap: 1024 meant up to 3.5 min of generation and ~80 s
+                # of rambling audio.  BMO speaks 1-3 sentences (~40-60 tokens); 120
+                # leaves headroom while bounding a runaway turn at ~27 s.
+                "num_predict": 120,
                 "num_ctx": 4096,
             }
         }
@@ -655,6 +802,19 @@ class Brain:
             yield action
             return
 
+        # Pre-LLM timer check — parsed in Python, never left to the model.
+        # qwen3:1.7b mis-parses units ("30 seconds" → 30 minutes) and copies the
+        # example reminder text verbatim, so timers must not be probabilistic.
+        timer = parse_timer_request(user_text)
+        if timer is not None:
+            action = json.dumps({"action": "set_timer", **timer})
+            spoken = f"Okay friend! I set a timer for {describe_duration(timer['minutes'])}."
+            print(f"[LLM-STREAM] Timer MATCHED: {timer}")
+            yield spoken
+            self.history.append({"role": "assistant", "content": (spoken + " " + action).strip()})
+            yield action
+            return
+
         print(f"[LLM-STREAM] No pre-LLM action matched for: '{lower_text[:60]}'")
 
         # Pre-LLM keyword check: if the question likely needs real-time info,
@@ -706,7 +866,11 @@ class Brain:
             "stream": True,
             "options": {
                 "temperature": 0.7,
-                "num_predict": 1024,  # Increased to prevent responses getting cut off
+                # ~4.5 tok/s on the H10H, so num_predict is a latency budget, not
+                # just a length cap: 1024 meant up to 3.5 min of generation and ~80 s
+                # of rambling audio.  BMO speaks 1-3 sentences (~40-60 tokens); 120
+                # leaves headroom while bounding a runaway turn at ~27 s.
+                "num_predict": 120,
                 "num_ctx": 4096,      # Ensure context window is large enough
             }
         }
@@ -714,6 +878,7 @@ class Brain:
         full_content = ""
         buffer = ""
         assistant_appended = False
+        thinker = ThinkStripper()
 
         try:
             logger.info(f"Stream request to LLM ({chosen_model}): {LLM_URL}")
@@ -729,10 +894,15 @@ class Brain:
                                     
                                 # Replace smart quotes
                                 chunk = chunk.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
-                                
-                                buffer += chunk
+
                                 full_content += chunk
-                                
+                                # Reasoning must never reach the speaker; the filter
+                                # carries <think> state across chunk boundaries.
+                                chunk = thinker.feed(chunk)
+                                if not chunk:
+                                    continue
+                                buffer += chunk
+
                                 # If buffer ends with strong punctuation or newline, yield it.
                                 # Skip flush for: (a) digit-period-digit ("$4.99"),
                                 # (b) common abbreviations (Dr., Mr., Mrs., e.g., i.e.),
@@ -752,8 +922,12 @@ class Brain:
                                         ' st.', ' vs.', ' etc.', ' e.g.', ' i.e.',
                                     )
                                 )
+                                # Never flush mid-JSON: a set_timer message ending in
+                                # "." would split the action object across yields and
+                                # the action would be silently dropped downstream.
+                                unbalanced = buffer.count('{') > buffer.count('}')
                                 ready = ends_punct and not mid_decimal and not too_short and not abbrev_tail
-                                if ready or "\n\n" in buffer:
+                                if (ready and not unbalanced) or ("\n\n" in buffer and not unbalanced):
                                     # Strip system prompt leakage
                                     cleaned = strip_prompt_leakage(buffer)
                                     # Ensure BMO spelling before yielding
@@ -765,20 +939,21 @@ class Brain:
                             except json.JSONDecodeError:
                                 pass
                                 
-                    # Yield any remaining buffer
+                    # Yield any remaining buffer (plus text held back by the filter)
+                    buffer += thinker.flush()
                     if buffer.strip():
                         cleaned = strip_prompt_leakage(buffer)
                         out_chunk = re.sub(r'\bBeemo\b', 'BMO', cleaned, flags=re.IGNORECASE)
                         if out_chunk.strip():
                             yield out_chunk
-                        
+
                     # Handle json actions at the very end if applicable
                     final_action, _ = extract_json_object(full_content)
                     if final_action is not None and "action" in final_action:
                         # For advanced tool use we won't yield the json action to TTS
                         pass
                     
-                    self.history.append({"role": "assistant", "content": full_content})
+                    self.history.append({"role": "assistant", "content": strip_think_blocks(full_content) or full_content})
                     assistant_appended = True
                     self.save_history()
 
@@ -808,7 +983,8 @@ class Brain:
             # either record what we got OR pop the dangling user message.
             if not assistant_appended:
                 if full_content.strip():
-                    self.history.append({"role": "assistant", "content": full_content})
+                    salvaged = strip_think_blocks(full_content) or full_content
+                    self.history.append({"role": "assistant", "content": salvaged})
                 else:
                     # Drop the unmatched user message we appended at function start
                     if self.history and self.history[-1].get("role") == "user":
@@ -878,7 +1054,9 @@ class Brain:
                 except Exception as e:
                     result["exc"] = e
 
+            global _vlm_thread
             t = threading.Thread(target=_run, daemon=True)
+            _vlm_thread = t
             t.start()
             t.join(timeout=30)
             if t.is_alive():
@@ -908,6 +1086,14 @@ class Brain:
             logger.error(f"VLM Exception: {e}", exc_info=True)
             return "I tried to look, but my eyes aren't working right now."
         finally:
+            # Hand the NPU back to hailo-ollama, but never while an inference
+            # thread is still touching the device — releasing under it segfaults.
+            if _vlm_inflight():
+                logger.error("VLM inference still running; leaving /dev/hailo0 held. "
+                             "Restart BMO to recover the NPU for the LLM.")
+            else:
+                _release_vlm()
+
             # Preserve user/assistant alternation if any error path bailed.
             if not assistant_appended:
                 if self.history and self.history[-1].get("role") == "user":
