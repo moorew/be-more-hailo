@@ -14,7 +14,7 @@ import psutil
 import subprocess
 
 # Import our new unified core modules
-from core.llm import Brain, strip_prompt_leakage, extract_json_object
+from core.llm import Brain, strip_prompt_leakage, extract_json_object, sanitize_messages
 from core.tts import play_audio_on_hardware, generate_audio_file, add_pronunciation, load_pronunciations, clean_text_for_speech
 from core.stt import transcribe_audio
 from core.config import LLM_URL, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
@@ -141,7 +141,11 @@ async def get_debug_info():
     return info
 
 @app.post("/api/chat")
-async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
+# Sync def on purpose: brain.think() blocks for tens of seconds on the NPU.
+# As `async def` it would block uvicorn's event loop, freezing /api/status, the
+# wakeword WebSocket and every other route.  FastAPI runs sync handlers in a
+# threadpool, so slow turns no longer wedge the UI.
+def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     """
     Send text to local LLM (Hailo/Ollama) and get response.
     """
@@ -149,7 +153,9 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     play_on_hardware = request.play_on_hardware
     
     # Initialize brain and load history
-    brain = Brain()
+    # persist=False: the browser owns this conversation's history; writing it to
+    # memory.json would clobber the desktop agent's separate memory.
+    brain = Brain(persist=False)
     brain.set_history(request.history)
 
     # If an image is provided, use the vision model
@@ -212,7 +218,8 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
 
 
 @app.post("/api/transcribe")
-async def transcribe(audio: UploadFile = File(...)):
+# Sync def: whisper.cpp blocks for seconds (see chat() above).
+def transcribe(audio: UploadFile = File(...)):
     """
     Receive an audio file from the browser, save it temporarily,
     and transcribe it using whisper.cpp.
@@ -324,7 +331,8 @@ async def get_sounds(category: str):
     return {"sounds": sorted(sounds)}
 
 @app.get("/api/screensaver-thought")
-async def get_screensaver_thought():
+# Sync def: web search + LLM can block for a minute (see chat() above).
+def get_screensaver_thought():
     """Generate a random BMO thought for the web screensaver.
     Uses web search + local LLM."""
     import random
@@ -358,7 +366,7 @@ async def get_screensaver_thought():
             ]
             topic_payload = {
                 "model": FAST_LLM_MODEL,
-                "messages": topic_messages,
+                "messages": sanitize_messages(topic_messages),
                 "stream": False,
                 "options": {"temperature": 1.0, "num_predict": 20}
             }
@@ -422,7 +430,7 @@ async def get_screensaver_thought():
             try:
                 payload = {
                     "model": FAST_LLM_MODEL,
-                    "messages": messages,
+                    "messages": sanitize_messages(messages),
                     "stream": False,
                     "options": {"temperature": 0.8, "num_predict": 256}
                 }
