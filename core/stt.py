@@ -7,14 +7,22 @@ import threading
 import numpy as np
 import soundfile as sf
 
-from .config import WHISPER_CMD, WHISPER_HEF_PATH, WHISPER_MODEL, WHISPER_NPU_TIMEOUT_MS
+from .config import (
+    BMO_NPU_STT,
+    WHISPER_CMD,
+    WHISPER_HEF_PATH,
+    WHISPER_MODEL,
+    WHISPER_NPU_TIMEOUT_MS,
+    WHISPER_THREADS,
+)
 
 logger = logging.getLogger(__name__)
 
 # ─── NPU Speech2Text singleton ────────────────────────────────────────────────
-# Lazy-initialised on first call so hailo-ollama (which loads the LLM HEF at
-# startup) always gets the VDevice before we try to share it.  If the HEF is
-# absent or init fails the CPU whisper.cpp path is used for every call.
+# OFF by default (BMO_NPU_STT=1 to enable).  The Hailo-10H is single-tenant, and
+# this Speech2Text instance holds its VDevice for the life of the process — so
+# the first transcription would take the NPU away from hailo-ollama for good,
+# leaving BMO able to hear but unable to think.  See core/config.py.
 
 _s2t_lock = threading.Lock()
 _s2t = None           # Speech2Text instance once ready
@@ -26,6 +34,10 @@ def _init_npu_stt():
     """Try to create the Hailo Speech2Text singleton.  Called once, under lock."""
     global _s2t, _s2t_vdevice, _s2t_tried
     _s2t_tried = True
+    if not BMO_NPU_STT:
+        logger.info("NPU Speech2Text disabled (BMO_NPU_STT != 1) — using CPU whisper.cpp "
+                    "so hailo-ollama keeps the NPU for the LLM")
+        return
     hef = WHISPER_HEF_PATH
     if not os.path.exists(hef):
         logger.info(f"Whisper HEF not found at {hef} — using CPU whisper.cpp")
@@ -63,8 +75,9 @@ def _get_s2t():
 def _clean_transcript(text: str) -> str:
     """Remove timestamps, fix BMO spelling, filter hallucinations."""
     text = re.sub(r'\[.*?\]', '', text).strip()
-    text = re.sub(r'\b[Bb]emo\b', 'BMO', text)
-    text = re.sub(r'\b[Bb]eemo\b', 'BMO', text)
+    # Whisper renders BMO's name a dozen ways; normalise so the agent's
+    # name-detection and the transcript shown to the user both agree.
+    text = re.sub(r'\b(?:bemo|beemo|beamo|pmo|b\.?\s?m\.?\s?o\.?)\b', 'BMO', text, flags=re.IGNORECASE)
 
     lowered = text.lower()
     hallucinations = [
@@ -116,10 +129,14 @@ def _transcribe_npu(audio_filepath: str) -> str | None:
 def _transcribe_cpu(audio_filepath: str) -> str:
     """Run whisper.cpp on the CPU."""
     try:
-        cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", audio_filepath, "-nt", "-t", "3", "-l", "en"]
+        cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", audio_filepath, "-nt", "-t", str(WHISPER_THREADS), "-l", "en"]
         logger.info(f"Running CPU whisper.cpp... CMD: {' '.join(cmd)}")
-        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode("utf-8").strip()
+        # Bounded: a wedged whisper subprocess would otherwise hang the turn forever.
+        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=120).decode("utf-8").strip()
         return _clean_transcript(output)
+    except subprocess.TimeoutExpired:
+        logger.error("Whisper CPU timed out after 120 s")
+        return ""
     except subprocess.CalledProcessError as exc:
         logger.error(f"Whisper CPU process failed (exit {exc.returncode})")
         return ""
