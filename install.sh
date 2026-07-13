@@ -12,6 +12,17 @@ echo -e "${GREEN}BMO Agent Setup${NC}"
 HAILORT_VER=$(dpkg-query -W -f='${Version}' h10-hailort 2>/dev/null || echo "5.1.1")
 echo -e "${YELLOW}Detected HailoRT version: ${HAILORT_VER}${NC}"
 
+# The current model stack (qwen3:1.7b LLM, Qwen3-VL VLM, Whisper-Small STT)
+# requires HailoRT >= 5.3. On an older runtime the model pulls/HEF downloads
+# below will fail. Warn loudly but don't abort — the user may be offline or
+# installing everything except the NPU models.
+if ! dpkg --compare-versions "$HAILORT_VER" ge 5.3.0 2>/dev/null; then
+    echo -e "${RED}  WARNING: HailoRT ${HAILORT_VER} is older than 5.3.0.${NC}"
+    echo -e "${RED}  qwen3:1.7b and Qwen3-VL need HailoRT >= 5.3 — upgrade first${NC}"
+    echo -e "${RED}  (see upgrade_hailo53.sh) or the model steps below will fail.${NC}"
+    sleep 3
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. System packages
 # ─────────────────────────────────────────────────────────────────────────────
@@ -107,11 +118,14 @@ wget -nc -q -O piper/bmo.onnx      "$BMO_VOICE/bmo.onnx"
 wget -nc -q -O piper/bmo.onnx.json "$BMO_VOICE/bmo.onnx.json"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. STT: Whisper-Small HEF (NPU) + whisper.cpp (CPU fallback)
+# 7. STT: whisper.cpp on CPU (default) + Whisper-Small HEF (opt-in NPU path)
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[7/13] Setting up STT (Whisper-Small on NPU + CPU fallback)...${NC}"
+echo -e "${YELLOW}[7/13] Setting up STT (CPU whisper.cpp by default + opt-in NPU)...${NC}"
 
-# 7a. Whisper-Small HEF for Hailo-10H NPU (primary path)
+# 7a. Whisper-Small HEF for the Hailo-10H NPU. This is now OPT-IN only
+# (enable with BMO_NPU_STT=1) because the Hailo-10H is single-tenant and the
+# Speech2Text instance holds the NPU for the process lifetime, starving the
+# LLM. We still fetch the HEF so the opt-in path works without re-running setup.
 # Uses hailo_platform.genai.Speech2Text — no whisper.cpp needed for this path.
 WHISPER_HEF="models/Whisper-Small.hef"
 if [ -f "$WHISPER_HEF" ]; then
@@ -152,12 +166,14 @@ if [ ! -f "whisper.cpp/build/bin/whisper-cli" ]; then
     cmake --build whisper.cpp/build --config Release -j$(nproc)
 fi
 
-# Download Whisper small.en model for CPU fallback
-# IMPORTANT: this filename must match WHISPER_MODEL in core/config.py
-if [ ! -f "models/ggml-small.en.bin" ]; then
-    echo -e "${YELLOW}Downloading Whisper small.en model (CPU fallback)...${NC}"
-    wget -q -O models/ggml-small.en.bin \
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin"
+# Download the Whisper base.en model — this is the DEFAULT STT path.
+# IMPORTANT: this filename must match WHISPER_MODEL in core/config.py.
+# base.en runs ~2.7 s per utterance on the Pi 5 (4 threads); small.en took
+# ~22 s, which is far too slow for conversation.
+if [ ! -f "models/ggml-base.en.bin" ]; then
+    echo -e "${YELLOW}Downloading Whisper base.en model (default CPU STT)...${NC}"
+    wget -q -O models/ggml-base.en.bin \
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -224,35 +240,34 @@ pip install -r requirements.txt -q
 echo -e "${YELLOW}[10/13] Pulling LLM model via hailo-ollama...${NC}"
 OLLAMA_URL="http://localhost:8000/api"
 
-# Qwen2.5-1.5B is the best available LLM for HailoRT 5.2.x.
-# Qwen3-1.7B-Instruct will be the upgrade once HailoRT ≥ 5.3 ships in the Pi repo.
-# To upgrade later: hailo-ollama pull qwen3-instruct:1.7b  (then update LLM_MODEL in core/config.py)
-echo "  Pulling LLM: qwen2.5-instruct:1.5b..."
+# Qwen3-1.7B is the current LLM (requires HailoRT >= 5.3).
+# This name must match LLM_MODEL in core/config.py and REQUIRED_MODEL in
+# ensure_model.py, which also pulls it on first agent startup.
+echo "  Pulling LLM: qwen3:1.7b..."
 curl -sf "$OLLAMA_URL/pull" \
     -H 'Content-Type: application/json' \
-    -d '{"model": "qwen2.5-instruct:1.5b", "stream": false}' \
+    -d '{"model": "qwen3:1.7b", "stream": false}' \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print('  Done.' if d.get('status')=='success' else f'  Warning: {d}')" \
     2>/dev/null || echo -e "${RED}  Could not reach hailo-ollama at $OLLAMA_URL. Start it first if needed.${NC}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 11. Download VLM HEF (Vision Language Model for camera features)
 # ─────────────────────────────────────────────────────────────────────────────
-# Qwen2-VL-2B-Instruct is the best available VLM for HailoRT 5.2.x.
-# Qwen3-VL-2B-Instruct will be the upgrade once HailoRT ≥ 5.3 ships in the Pi repo.
-# To upgrade later: update VLM_HEF_PATH in core/config.py and re-run this script.
-echo -e "${YELLOW}[11/13] Downloading VLM model (Qwen2-VL-2B — ~2.2 GB)...${NC}"
-VLM_HEF="models/Qwen2-VL-2B-Instruct.hef"
+# Qwen3-VL-2B-Instruct is the current VLM (requires HailoRT >= 5.3).
+# Must match VLM_HEF_PATH in core/config.py.
+echo -e "${YELLOW}[11/13] Downloading VLM model (Qwen3-VL-2B — ~3.2 GB)...${NC}"
+VLM_HEF="models/Qwen3-VL-2B-Instruct.hef"
 if [ -f "$VLM_HEF" ]; then
     echo -e "${GREEN}  VLM HEF already present.${NC}"
 else
     # Download from Hailo's public CDN, matching the installed HailoRT version.
-    # Use wget with retries — curl sometimes fails on this 2+ GB file.
-    VLM_URL="https://dev-public.hailo.ai/v${HAILORT_VER}/blob/Qwen2-VL-2B-Instruct.hef"
+    # Use wget with retries — curl sometimes fails on this 3+ GB file.
+    VLM_URL="https://dev-public.hailo.ai/v${HAILORT_VER}/blob/Qwen3-VL-2B-Instruct.hef"
     echo "  Downloading from $VLM_URL ..."
     wget -c --tries=3 -O "$VLM_HEF" "$VLM_URL" 2>&1 || {
         echo -e "${RED}  Failed to download VLM HEF. Camera vision will be unavailable.${NC}"
         echo -e "${YELLOW}  You can download it manually later:${NC}"
-        echo "    wget -O models/Qwen2-VL-2B-Instruct.hef $VLM_URL"
+        echo "    wget -O models/Qwen3-VL-2B-Instruct.hef $VLM_URL"
     }
     if [ -f "$VLM_HEF" ]; then
         SIZE=$(stat --printf="%s" "$VLM_HEF" 2>/dev/null || stat -f "%z" "$VLM_HEF" 2>/dev/null)
