@@ -56,7 +56,9 @@ Thumbs.db
 ehthumbs.db
 
 # --- Debug / Temp files (created during dev/testing) ---
-test_*.py
+# Root-level scratch scripts only (test_vlm.py, test_stream.py, ...).
+# Anchored with a leading slash so the real suite under tests/ stays tracked.
+/test_*.py
 list_devices.py
 install_*.sh
 *.log
@@ -65,3 +67,9 @@ pull.json
 setup_remote.sh
 tmp_hailo_whisper/
 whisper.cpp/build/
+
+# --- Large local artifacts (never commit) ---
+# hailo52_snapshot/ is a 2.3 GB HailoRT 5.2 rollback snapshot (local only).
+# BMO_faces.zip is a face-asset archive; the frames are tracked under faces/.
+hailo52_snapshot/
+sounds/BMO_faces.zip

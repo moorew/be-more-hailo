@@ -1,0 +1,40 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+    "venv",
+    "whisper.cpp",
+    "hailo52_snapshot",
+    "piper",
+    "faces",
+    "sounds",
+    "static",
+    "models",
+]
+
+[tool.ruff.lint]
+# Start with real-bug classes only; style rules can come later.
+select = [
+    "F",      # pyflakes: undefined names, unused imports/vars, f-string bugs
+    "E7",     # comparison / statement errors
+    "E9",     # syntax errors
+    "B",      # bugbear: likely bugs (mutable defaults, no-op raise, ...)
+    "PLE",    # pylint errors
+    "RUF006", # asyncio dangling task
+]
+ignore = [
+    "E722", # bare except — pervasive in this codebase; tracked for cleanup
+    "E701", # one-line if/else bodies — established style in this codebase
+    "E702", # semicolon-separated statements — established style
+    "B905", # zip without strict= — py3.9 compat not needed but low value
+    "B008", # File(...) in defaults — standard FastAPI idiom in web_app.py
+]
+
+[tool.pytest.ini_options]
+# Default collection is the hardware-free unit suite; tests/integration drives
+# the real NPU, speaker and wake-word model and must be asked for explicitly.
+testpaths = ["tests/unit"]
+addopts = "-q"
+markers = [
+    "integration: exercises real hardware (NPU, Piper, wake word); run with `pytest tests/integration`",
+]

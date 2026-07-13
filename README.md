@@ -15,13 +15,33 @@ This fork adds a browser-based **web interface**, a shared `core/` module layer 
 
 | Component | Where it runs | Notes |
 |-----------|--------------|-------|
-| LLM (`qwen2.5-instruct:1.5b`) | Hailo-10H NPU | via `hailo-ollama` |
-| Vision (`Qwen2-VL-2B-Instruct`) | Hailo-10H NPU | via HailoRT Python API; optional, requires camera |
-| STT (`Whisper-Small`) | Hailo-10H NPU | via `hailo_platform.genai.Speech2Text`; falls back to `whisper.cpp` on CPU if HEF absent or NPU fails |
+| LLM (`qwen3:1.7b`) | Hailo-10H NPU | via `hailo-ollama` on port 8000 |
+| Vision (`Qwen3-VL-2B-Instruct`) | Hailo-10H NPU | via HailoRT Python API; optional, requires camera; borrows the NPU per photo |
+| STT (`whisper.cpp`, `ggml-base.en`) | CPU | ~2.7 s per utterance; NPU Whisper is opt-in, see below |
 | TTS (Piper) | CPU | streams sentence-by-sentence while LLM generates |
 | Wake word (openWakeWord) | CPU | "Hey BMO" custom model |
 
-STT uses the native `Speech2Text` API introduced in HailoRT 5.x, which avoids the PCIe timeout issues seen with earlier direct-buffer approaches. `whisper.cpp` is kept as a CPU fallback — it activates automatically if the HEF is missing or NPU inference throws.
+### The NPU is single-tenant
+
+This is the most important thing to know about this machine. HailoRT can only
+share one physical device between processes via `multi_process_service`, which
+needs a `hailort` daemon that isn't installed — and `hailo-ollama` requests an
+**exclusive** VDevice regardless. Whichever process opens `/dev/hailo0` first
+owns it until that process exits.
+
+So the NPU budget is: **the LLM gets it.** Consequences:
+
+- **NPU speech-to-text is off by default.** `hailo_platform.genai.Speech2Text`
+  holds its VDevice for the life of the process, so the first thing BMO ever
+  transcribed would permanently starve `hailo-ollama` — BMO could hear you but
+  never think again. Set `BMO_NPU_STT=1` to enable it anyway (and accept that
+  the LLM will stop working). CPU `whisper.cpp` with `ggml-base.en` is the
+  default: ~2.7 s for a 3 s utterance, against ~22 s for `ggml-small.en`.
+- **The VLM borrows the NPU per photo** and releases it immediately afterwards,
+  paying ~3 s of init each time so the LLM survives. Photos are rare; thinking
+  is not.
+- If everything suddenly stops working, the driver is the first suspect — see
+  [docs/MAINTENANCE.md](docs/MAINTENANCE.md).
 
 ---
 
@@ -81,6 +101,25 @@ Your BMO is then reachable from your phone, laptop, or any device on your Tailne
 - Raspberry Pi Camera Module (optional, for vision/photo features)
 
 ---
+
+---
+
+## Development
+
+```bash
+source venv/bin/activate
+ruff check .        # lint — configured in pyproject.toml (bug-classes only)
+pytest              # unit tests in tests/unit/
+```
+
+`tests/unit/` covers the pure logic that silently corrupted BMO's behaviour in
+the past: streaming `<think>` filtering, control-character sanitisation of
+LLM payloads, JSON action extraction, timer parsing, transcript cleaning, and
+`memory.json` durability. It needs no NPU, no microphone and no display, so it
+runs anywhere.
+
+Hardware-dependent behaviour (wake word, speaker output, VLM inference) is not
+unit-tested — verify those on the Pi. See [docs/MAINTENANCE.md](docs/MAINTENANCE.md).
 
 ## Credits & Acknowledgments
 
@@ -188,12 +227,12 @@ The script handles everything:
 - Fixes the Hailo driver conflict (blacklists the legacy `hailo_pci` module)
 - Builds and installs `hailo-ollama` from source if not already present
 - Downloads and extracts the Piper TTS engine
-- Downloads the `Whisper-Small.hef` for NPU speech-to-text
+- Downloads the `Whisper-Small.hef` for the (opt-in) NPU speech-to-text path
 - Clones and compiles `whisper.cpp` as a CPU fallback for STT
 - Downloads the `ggml-small.en` Whisper model for CPU fallback
 - Creates a Python virtual environment and installs dependencies
-- Pulls `qwen2.5-instruct:1.5b` (LLM) via `hailo-ollama`
-- Downloads the `Qwen2-VL-2B-Instruct` VLM HEF directly from Hailo's CDN (~2.2 GB)
+- Pulls `qwen3:1.7b` (LLM) via `hailo-ollama`
+- Downloads the `Qwen3-VL-2B-Instruct` VLM HEF directly from Hailo's CDN (~3.2 GB)
 - Enables system site-packages in the venv so Python can use `hailo_platform`
 - Checks camera availability and lets you know if anything's missing
 
@@ -241,11 +280,11 @@ All settings live in `core/config.py`. The most commonly changed values:
 
 ```python
 # LLM models (must be pulled via hailo-ollama)
-LLM_MODEL       = "qwen2.5-instruct:1.5b"
-FAST_LLM_MODEL  = "qwen2.5-instruct:1.5b"
+LLM_MODEL       = "qwen3:1.7b"
+FAST_LLM_MODEL  = "qwen3:1.7b"
 
 # Vision model — runs directly via HailoRT Python API (not hailo-ollama)
-VLM_HEF_PATH    = "./models/Qwen2-VL-2B-Instruct.hef"
+VLM_HEF_PATH    = "./models/Qwen3-VL-2B-Instruct.hef"
 
 # Audio device for local hardware playback (run `aplay -l` to find yours)
 # The USB speaker is typically on a different ALSA card from the mic — check both.
@@ -296,11 +335,11 @@ The systemd service already passes `OLLAMA_HOST` as an environment variable, so 
 
 ## Dual-model routing
 
-By default, all queries go to a single model (`qwen2.5-instruct:1.5b`). If you want to route longer or more complex queries to a larger model:
+By default, all queries go to a single model (`qwen3:1.7b`). If you want to route longer or more complex queries to a larger model:
 
 1. Pull the larger model via `hailo-ollama`
 2. Set `LLM_MODEL` to the larger model name in `core/config.py`
-3. Keep `FAST_LLM_MODEL` pointing to `qwen2.5-instruct:1.5b`
+3. Keep `FAST_LLM_MODEL` pointing to `qwen3:1.7b`
 
 Short, simple prompts (under 15 words, no complex keywords) stay on the fast model. Longer or more complex ones go to `LLM_MODEL`. Note that swapping models on the Hailo-10H takes a few seconds on the first query after a switch.
 
@@ -315,9 +354,9 @@ If you have a Raspberry Pi Camera Module connected:
    ```bash
    sudo apt install -y libcamera-apps
    ```
-3. Say something like "Hey BMO, take a photo and tell me what you see" — the agent captures a frame with `rpicam-still` and sends it to the vision model (`Qwen2-VL-2B-Instruct`, or `Qwen3-VL-2B-Instruct` after HailoRT upgrade) running natively on the NPU via the HailoRT Python API
+3. Say something like "Hey BMO, take a photo and tell me what you see" — the agent captures a frame with `rpicam-still` and sends it to the vision model (`Qwen3-VL-2B-Instruct`) running natively on the NPU via the HailoRT Python API
 
-The VLM runs as a separate process from the LLM server. Hailo's VDevice sharing allows both to coexist on the same NPU without conflicts. If the VLM HEF file isn't installed, BMO will politely say so rather than crashing.
+The VLM runs in the agent process, not the LLM server. The NPU cannot be shared (see *The NPU is single-tenant* above), so BMO acquires the device for the duration of one photo and releases it straight after, handing the NPU back to `hailo-ollama`. If the VLM HEF file isn't installed — or no camera is attached — BMO will politely say so rather than crashing.
 
 ---
 
@@ -411,8 +450,9 @@ dpkg -l | grep hailort  # check your version (e.g. 5.1.1)
 Re-download the matching HEF:
 ```bash
 HAILORT_VER=$(dpkg-query -W -f='${Version}' h10-hailort)
-wget -O models/Qwen2-VL-2B-Instruct.hef \
-    "https://dev-public.hailo.ai/v${HAILORT_VER}/blob/Qwen2-VL-2B-Instruct.hef"
+# Must match VLM_HEF_PATH in core/config.py (currently Qwen3-VL-2B-Instruct)
+wget -O models/Qwen3-VL-2B-Instruct.hef \
+    "https://dev-public.hailo.ai/v${HAILORT_VER}/blob/Qwen3-VL-2B-Instruct.hef"
 ```
 
 **TTS Audio Stuttering / Staccato Speech**
