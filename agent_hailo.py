@@ -1697,8 +1697,17 @@ class BotGUI:
         with self.speak_lock:
             try:
                 if not self.is_muted:
-                    # Lazily start the pipeline on the first sentence of a turn
-                    if self._piper_proc is None or self._piper_proc.poll() is not None:
+                    # Lazily start the pipeline on the first sentence of a turn.
+                    # Check the whole chain, not just Piper: the wake-word flow
+                    # pre-warms Piper with no reader/aplay attached, and writing
+                    # to that sends every sentence nowhere (logged, never heard).
+                    # _start_tts_turn() adopts a warm Piper and wires it up.
+                    pipeline_ready = (
+                        self._piper_proc is not None and self._piper_proc.poll() is None
+                        and self._piper_reader_thread is not None
+                        and self._tts_aplay is not None and self._tts_aplay.poll() is None
+                    )
+                    if not pipeline_ready:
                         self._start_tts_turn()
                         if self._piper_proc is None:
                             # Failed to start — skip audio, still transition state

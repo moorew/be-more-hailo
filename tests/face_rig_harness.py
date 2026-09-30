@@ -66,7 +66,7 @@ for name in ("sounddevice", "scipy", "scipy.signal", "openwakeword", "core"):
 stub("openwakeword.model", Model=_Any)
 stub("core.llm", Brain=_Any, extract_json_object=lambda s: (None, None),
      strip_prompt_leakage=lambda s: s, sanitize_messages=lambda m: m)
-stub("core.tts", play_audio_on_hardware=_Any())
+stub("core.tts", play_audio_on_hardware=_Any(), clean_text_for_speech=lambda t: t)
 stub("core.stt", transcribe_audio=_Any())
 stub("core.endpoint", EndpointDetector=_Any)
 stub("core.config", LLM_KEEP_ALIVE=-1, MIC_DEVICE_INDEX=0, MIC_SAMPLE_RATE=48000, WAKE_WORD_MODEL="", WAKE_WORD_THRESHOLD=0.5,
@@ -201,6 +201,21 @@ gui.current_state = S.IDLE
 run(0.1)
 assert gui.background_label.image == str(gui.face_view.photo), "rig should re-attach"
 log.append("hand-off: rig -> PNG (heart) -> rig")
+
+# The wake-word flow pre-warms Piper with nothing attached to its output.
+# speak() must still wire up the reader + aplay, or every reply is silent.
+wired = []
+gui._piper_proc = FakeProc()          # warm: alive, but no reader / aplay yet
+gui._piper_reader_thread = None
+gui._tts_aplay = None
+gui.speak_lock = threading.Lock()
+gui._start_tts_turn = lambda: wired.append(True)
+gui._write_to_piper = lambda text: None
+gui.speak("Hello friend!", msg=None, end_of_turn=False)
+assert wired, "speak() wrote to a warm Piper without starting the audio pipeline"
+log.append("speech: a pre-warmed Piper still gets wired to the speaker")
+del gui._start_tts_turn, gui._write_to_piper
+gui.current_state = S.IDLE
 
 gui.face_view.rig.frame = lambda: 1 / 0
 gui.animations[S.IDLE] = [FakePhoto()]
