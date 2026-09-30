@@ -6,7 +6,7 @@ import re
 import json
 import urllib.parse
 import numpy as np
-from .config import LLM_URL, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt, get_current_context
+from .config import LLM_URL, LLM_KEEP_ALIVE, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt, get_current_context
 from .tts import add_pronunciation
 from .search import search_web, search_images
 from .timers import describe_duration, parse_timer_request
@@ -108,9 +108,46 @@ def _decode_image_to_frame(image_b64: str, target_shape, target_dtype=np.uint8):
 
     return img.astype(target_dtype)
 
+_WEATHER_KEYWORDS = (
+    "weather", "forecast", "temperature", "raining", "snowing", "how cold", "how hot",
+    "jacket", "coat", "umbrella", "cold outside", "hot outside",
+)
+
 # Keep at most this many messages (plus the system prompt) to avoid
 # unbounded memory growth on memory-constrained devices like a Pi.
 MAX_HISTORY_MESSAGES = 20
+
+# hailo-ollama's qwen3:1.7b HEF has a fixed ~2k-token context and ignores
+# num_ctx.  Past it the server silently drops the stream ("Response ended
+# prematurely") — measured failing at ~6.2k chars of messages, fine at ~5.5k.
+# Because a failed turn never appends a reply, an over-long saved history kept
+# BMO stuck "thinking" forever, even across restarts.  Budget the prompt in
+# characters (system prompt included) with room left for the 120-token reply.
+MAX_CONTEXT_CHARS = 4500
+# When the saved history outgrows the budget, cut it well below so the next few
+# turns share an unchanged prefix — hailo-ollama only reuses its KV cache when
+# earlier turns match exactly (first token ~0.8 s cached vs ~3-10 s re-prefilled).
+TRIM_TARGET_CHARS = 2800
+
+
+def _fit_context(messages: list, budget: int = MAX_CONTEXT_CHARS) -> list:
+    """Drop the oldest non-system messages until the total content fits `budget`.
+
+    The system prompt and the final message are always kept, and the retained
+    conversation always starts on a user turn so roles keep alternating."""
+    if not messages:
+        return messages
+    head = [messages[0]] if messages[0].get("role") == "system" else []
+    body = list(messages[len(head):])
+
+    def size(msgs):
+        return sum(len(m.get("content") or "") for m in msgs)
+
+    while len(body) > 1 and size(head + body) > budget:
+        body.pop(0)
+        while len(body) > 1 and body[0].get("role") != "user":
+            body.pop(0)
+    return head + body
 
 _DISPLAY_IMAGE_KEYWORDS = [
     "show me a picture", "show me an image", "show me a photo",
@@ -373,6 +410,7 @@ def _quick_lead_in(user_text: str, intent: str) -> str:
                 {"role": "user", "content": user_text},
             ]),
             "stream": False,
+            "keep_alive": LLM_KEEP_ALIVE,
             "options": {"temperature": 0.8, "num_predict": 30},
         }
         r = requests.post(LLM_URL, json=payload, timeout=0.6)
@@ -470,6 +508,24 @@ class Brain:
             import atexit as _atexit
             _atexit.register(self._save_on_exit)
 
+    def warm_up(self):
+        """Load the model onto the NPU (and pin it there) before the first question.
+
+        hailo-ollama loads lazily, so without this the first question after a
+        boot or server restart waits 7-36 s for the model on top of generation."""
+        payload = {
+            "model": FAST_LLM_MODEL,
+            "messages": _sanitize_messages([self.history[0], {"role": "user", "content": "Hi"}]),
+            "stream": False,
+            "keep_alive": LLM_KEEP_ALIVE,
+            "options": {"num_predict": 1},
+        }
+        try:
+            requests.post(LLM_URL, json=payload, timeout=120)
+            logger.info("LLM warmed up.")
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"LLM warm-up failed: {e}")
+
     def load_history(self):
         """Load chat history from memory.json if it exists."""
         if os.path.exists(MEMORY_FILE):
@@ -519,6 +575,8 @@ class Brain:
         non_system = self.history[1:]
         if len(non_system) > MAX_HISTORY_MESSAGES:
             self.history = [self.history[0]] + non_system[-MAX_HISTORY_MESSAGES:]
+        if sum(len(m.get("content") or "") for m in self.history) > MAX_CONTEXT_CHARS:
+            self.history = _fit_context(self.history, budget=TRIM_TARGET_CHARS)
         self.save_history()
 
     def think(self, user_text: str) -> str:
@@ -594,10 +652,12 @@ class Brain:
         ]
         question_markers = [
             "what", "who", "when", "where", "find", "search", "tell me",
-            "look up", "check", "is there", "did", "?",
+            "look up", "check", "is there", "did", "?", "is it", "will it", "how",
         ]
-        has_realtime_kw = False  # Disabled pre-LLM web search for latency optimization
-        has_question = False
+        # General pre-LLM web search stays disabled for latency; weather is the
+        # exception — wttr.in answers in <1 s and without it BMO invents the weather.
+        has_realtime_kw = any(kw in lower_text for kw in _WEATHER_KEYWORDS)
+        has_question = any(m in lower_text for m in question_markers)
         search_injected = False
         if has_realtime_kw and has_question:
             try:
@@ -624,8 +684,9 @@ class Brain:
 
         payload = {
             "model": chosen_model,
-            "messages": _sanitize_messages(_with_current_context(self.history)),
+            "messages": _sanitize_messages(_fit_context(_with_current_context(self.history))),
             "stream": False,
+            "keep_alive": LLM_KEEP_ALIVE,
             "options": {
                 "temperature": 0.7,
                 # ~4.5 tok/s on the H10H, so num_predict is a latency budget, not
@@ -677,7 +738,8 @@ class Brain:
                             summary_payload = {
                                 "model": FAST_LLM_MODEL,
                                 "messages": _sanitize_messages(summary_prompt),
-                                "stream": False
+                                "stream": False,
+                                "keep_alive": LLM_KEEP_ALIVE,
                             }
 
                             summary_response = requests.post(LLM_URL, json=summary_payload, timeout=180)
@@ -829,10 +891,12 @@ class Brain:
         ]
         question_markers = [
             "what", "who", "when", "where", "find", "search", "tell me",
-            "look up", "check", "is there", "did", "?",
+            "look up", "check", "is there", "did", "?", "is it", "will it", "how",
         ]
-        has_realtime_kw = False  # Disabled pre-LLM web search for latency optimization
-        has_question = False
+        # General pre-LLM web search stays disabled for latency; weather is the
+        # exception — wttr.in answers in <1 s and without it BMO invents the weather.
+        has_realtime_kw = any(kw in lower_text for kw in _WEATHER_KEYWORDS)
+        has_question = any(m in lower_text for m in question_markers)
         needs_search = has_realtime_kw and has_question
         search_injected = False
         if needs_search:
@@ -860,10 +924,17 @@ class Brain:
 
 
 
+        messages = _fit_context(_with_current_context(self.history))
+        # Keep the time-stamped user turn in history so next turn's prefix is
+        # byte-identical to what the server saw and its KV cache is reused.
+        if self.history and self.history[-1].get("role") == "user":
+            self.history[-1] = messages[-1]
+
         payload = {
             "model": chosen_model,
-            "messages": _sanitize_messages(_with_current_context(self.history)),
+            "messages": _sanitize_messages(messages),
             "stream": True,
+            "keep_alive": LLM_KEEP_ALIVE,
             "options": {
                 "temperature": 0.7,
                 # ~4.5 tok/s on the H10H, so num_predict is a latency budget, not
@@ -876,6 +947,7 @@ class Brain:
         }
 
         full_content = ""
+        raw_content = ""  # exactly as generated, for history / KV-cache reuse
         buffer = ""
         assistant_appended = False
         thinker = ThinkStripper()
@@ -891,7 +963,8 @@ class Brain:
                                 chunk = data.get("message", {}).get("content", "")
                                 if not chunk:
                                     continue
-                                    
+                                raw_content += chunk
+
                                 # Replace smart quotes
                                 chunk = chunk.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
 
@@ -914,7 +987,9 @@ class Brain:
                                 )
                                 # Treat short buffers as not ready to flush
                                 trimmed = buffer.strip()
-                                too_short = len(trimmed) < 10
+                                # ...except exclamations/questions: speaking "Oh my!" the
+                                # moment it arrives gives BMO a voice ~2 s sooner at 5 tok/s.
+                                too_short = len(trimmed) < (4 if trimmed.endswith(('!', '?')) else 10)
                                 # Common abbrev. tail check (case-insensitive)
                                 abbrev_tail = any(
                                     trimmed.lower().endswith(a) for a in (
@@ -953,7 +1028,7 @@ class Brain:
                         # For advanced tool use we won't yield the json action to TTS
                         pass
                     
-                    self.history.append({"role": "assistant", "content": strip_think_blocks(full_content) or full_content})
+                    self.history.append({"role": "assistant", "content": strip_think_blocks(raw_content) or raw_content})
                     assistant_appended = True
                     self.save_history()
 
@@ -961,7 +1036,7 @@ class Brain:
                     # accumulate and confuse the model on future turns.
                     if search_injected:
                         for msg in reversed(self.history):
-                            if msg.get("role") == "user" and msg.get("content", "").startswith("[LIVE DATA:"):
+                            if msg.get("role") == "user" and "[LIVE DATA:" in msg.get("content", ""):
                                 msg["content"] = user_text
                                 break
 

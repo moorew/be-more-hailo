@@ -38,7 +38,8 @@ from openwakeword.model import Model
 from core.llm import Brain, extract_json_object, strip_prompt_leakage, sanitize_messages
 from core.tts import play_audio_on_hardware
 from core.stt import transcribe_audio
-from core.config import MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE, VOLUME
+from core.endpoint import EndpointDetector
+from core.config import LLM_KEEP_ALIVE, MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE, VOLUME
 
 # =========================================================================
 # 1. HARDWARE CONFIGURATION
@@ -139,6 +140,7 @@ class BotGUI:
         
         # Memory
         self.brain = Brain()
+        threading.Thread(target=self.brain.warm_up, daemon=True).start()
         self.recent_thoughts = deque(maxlen=20)
         
         # Mood System
@@ -997,25 +999,19 @@ class BotGUI:
         print("Recording...")
         filename = "input.wav"
         frames = []
-        silent_chunks = 0
-        has_spoken = False
         total_samples = 0
         MAX_SAMPLES = MIC_SAMPLE_RATE * 15  # 15-second hard cap
+        endpoint = EndpointDetector(MIC_SAMPLE_RATE)
 
         def callback(indata, frames_count, time, status):
-            nonlocal silent_chunks, has_spoken, total_samples
-            vol = np.linalg.norm(indata)
+            nonlocal total_samples
+            rms = endpoint.feed(indata[:, 0])
             # Update mouth_open for real-time lip sync during recording (listening mode)
             if self.current_state == BotStates.LISTENING:
-                self.mouth_open = min(60, vol / 500)
+                self.mouth_open = min(60, max(0.0, rms - (endpoint.floor or rms)) / 15)
 
             frames.append(indata.copy())
             total_samples += indata.shape[0]
-            if vol < 500: # Silence threshold
-                silent_chunks += 1
-            else:
-                silent_chunks = 0
-                has_spoken = True
 
         retry_count = 0
         while retry_count < 3:
@@ -1025,8 +1021,7 @@ class BotGUI:
                     last_callback_at = time.time()
                     while not self.stop_event.is_set():
                         sd.sleep(50)
-                        if not has_spoken and silent_chunks > 100: break
-                        if has_spoken and silent_chunks > 40: break
+                        if endpoint.done: break  # user stopped talking (or never started)
                         if total_samples >= MAX_SAMPLES: break  # 15-second hard cap (sample-accurate)
                         # Watchdog: if the callback stops firing mid-recording
                         # (USB unplug, driver crash) the polling loop would hang.
@@ -2028,6 +2023,7 @@ class BotGUI:
                         {"role": "user", "content": prompt}
                     ],
                     "stream": False,
+                    "keep_alive": LLM_KEEP_ALIVE,
                     "options": {"temperature": 0.9, "num_predict": 20}
                 }
                 
@@ -2124,6 +2120,7 @@ class BotGUI:
                             {"role": "user", "content": thought_prompt}
                         ],
                         "stream": False,
+                        "keep_alive": LLM_KEEP_ALIVE,
                         "options": {"temperature": 0.8, "num_predict": 40}
                     }
                     try:
@@ -2189,6 +2186,7 @@ class BotGUI:
                     {"role": "user", "content": thought_prompt},
                 ]),
                 "stream": False,
+                "keep_alive": LLM_KEEP_ALIVE,
                 "options": {"temperature": 0.8, "num_predict": 256}
             }
             resp = http_requests.post(LLM_URL, json=payload, timeout=60)
@@ -2358,6 +2356,7 @@ class BotGUI:
                                 "model": FAST_LLM_MODEL,
                                 "messages": topic_messages,
                                 "stream": False,
+                                "keep_alive": LLM_KEEP_ALIVE,
                                 "options": {"temperature": 1.2, "num_predict": 30}
                             }
                             topic_resp = http_requests.post(LLM_URL, json=topic_payload, timeout=10)

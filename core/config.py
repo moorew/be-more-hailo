@@ -14,6 +14,10 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # To offload to your Linux server, change this to: "http://blackbox.clevercode.ts.net:11434/api/chat"
 # Make sure Ollama is running on the blackbox server and listening on 0.0.0.0
 LLM_URL = "http://127.0.0.1:8000/api/chat"
+# Sent with every LLM request.  hailo-ollama otherwise unloads the model after
+# ~5 min idle, and the next question pays a 7-36 s reload (it looked like BMO
+# was stuck thinking).  -1 = keep loaded; verified the idle timer stops.
+LLM_KEEP_ALIVE = -1
 LLM_MODEL = "qwen3:1.7b" # Native Hailo model for all queries
 FAST_LLM_MODEL = "qwen3:1.7b" # Unify models to prevent NPU swap crashing
 VISION_MODEL = "qwen2-vl-instruct:2b" # Legacy Ollama name (unused — VLM runs via HailoRT directly)
@@ -178,16 +182,22 @@ def find_audio_devices():
     speaker_name = "plughw:UACDemoV10,0" # Default fallback
     
     # Preferred names for BMO hardware
-    pref_mic = "USB Audio Device"
+    # Ordered by priority: compact C-Media mic first, then the older USB mic
+    pref_mics = ["USB PnP Sound Device", "USB Audio Device"]
     pref_speaker = "UACDemoV10"
     
     found_mic = False
-    for i, dev in enumerate(devices):
-        # Ensure the device actually has input channels before picking it
-        if pref_mic in dev['name'] and dev.get('max_input_channels', 0) > 0:
-            mic_idx = i
-            found_mic = True
-            print(f"[CONFIG] Found Mic by name: {dev['name']} at index {i}")
+    for pref_mic in pref_mics:
+        for i, dev in enumerate(devices):
+            # Ensure the device actually has input channels before picking it
+            if pref_mic in dev['name'] and dev.get('max_input_channels', 0) > 0:
+                mic_idx = i
+                found_mic = True
+                print(f"[CONFIG] Found Mic by name: {dev['name']} at index {i}")
+                break
+        if found_mic:
+            break
+    for dev in devices:
         if pref_speaker in dev['name']:
             speaker_name = "plughw:UACDemoV10,0"
             print(f"[CONFIG] Found Speaker: {dev['name']} -> using {speaker_name}")

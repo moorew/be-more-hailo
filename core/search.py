@@ -22,11 +22,15 @@ def search_web(query: str) -> str:
         
         try:
             import requests
-            # Using format v2 with 0 days (just today's detailed table)
-            url = f"https://wttr.in/{location}?format=v2&0"
-            resp = requests.get(url, timeout=10)
-            if resp.status_code == 200:
-                result = f"LIVE WEATHER DATA for {location}:\n{resp.text}"
+            # One compact line: the v2 table was ~18k chars of ASCII art, which a
+            # 1.7B model can't read and which overflows hailo-ollama's ~2k-token
+            # context (the request is silently dropped).  &m = metric.
+            fmt = "%C,+%t+(feels+like+%f),+wind+%w,+humidity+%h"
+            url = f"https://wttr.in/{location}?format={fmt}&m"
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200 and resp.text.strip() and "Unknown location" not in resp.text:
+                place = location.replace("+", " ").title()
+                result = f"Weather in {place} right now: {' '.join(resp.text.split())}"
                 logger.info(f"Weather fetched from wttr.in: {location}")
                 return result
         except Exception as e:

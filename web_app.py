@@ -17,7 +17,7 @@ import subprocess
 from core.llm import Brain, strip_prompt_leakage, extract_json_object, sanitize_messages
 from core.tts import play_audio_on_hardware, generate_audio_file, add_pronunciation, load_pronunciations, clean_text_for_speech
 from core.stt import transcribe_audio
-from core.config import LLM_URL, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
+from core.config import LLM_URL, LLM_KEEP_ALIVE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -368,6 +368,7 @@ def get_screensaver_thought():
                 "model": FAST_LLM_MODEL,
                 "messages": sanitize_messages(topic_messages),
                 "stream": False,
+                "keep_alive": LLM_KEEP_ALIVE,
                 "options": {"temperature": 1.0, "num_predict": 20}
             }
             import requests as http_requests
@@ -432,6 +433,7 @@ def get_screensaver_thought():
                     "model": FAST_LLM_MODEL,
                     "messages": sanitize_messages(messages),
                     "stream": False,
+                    "keep_alive": LLM_KEEP_ALIVE,
                     "options": {"temperature": 0.8, "num_predict": 256}
                 }
                 resp = http_requests.post(LLM_URL, json=payload, timeout=60)
