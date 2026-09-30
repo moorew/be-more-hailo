@@ -2567,7 +2567,33 @@ class BotGUI:
                 if self.current_state != BotStates.SCREENSAVER and not self.is_busy and self.current_state != BotStates.DISPLAY_IMAGE:
                     self.set_state(BotStates.SCREENSAVER, "Sleeping...")
 
+def _claim_single_instance():
+    """Exit if another BMO agent is already running.
+
+    A second copy (e.g. the desktop icon tapped while BMO is up) can't open the
+    USB mic — the first holds it exclusively — so it silently falls back to
+    another input and the two talk over each other.  flock is released by the
+    kernel when the process exits or crashes, so a stale lock never blocks a
+    restart.  Returns the open lock file, which must stay referenced."""
+    import fcntl
+    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "bmo-agent.lock")
+    lock = open(path, "a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.seek(0)
+        other = lock.read().strip() or "unknown"
+        print(f"[BMO] Another BMO is already running (PID {other}) — exiting.")
+        sys.exit(0)
+    lock.seek(0)
+    lock.truncate()
+    lock.write(str(os.getpid()))
+    lock.flush()
+    return lock
+
+
 if __name__ == "__main__":
+    _instance_lock = _claim_single_instance()
     root = tk.Tk()
     app = BotGUI(root)
     # Window-manager close (X button, system kill) routes through the same
