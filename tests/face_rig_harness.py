@@ -217,6 +217,33 @@ log.append("speech: a pre-warmed Piper still gets wired to the speaker")
 del gui._start_tts_turn, gui._write_to_piper
 gui.current_state = S.IDLE
 
+# A set_expression tag that lands while BMO is still talking (Piper runs
+# ahead of playback) must change the talking mood, not freeze the face on
+# the expression.  Before this, a late "curious" tag showed an open-O face.
+import json  # noqa: E402
+import re  # noqa: E402
+
+
+def _extract_json(text):
+    m = re.search(r"\{[^{}]*\}", text)
+    return (json.loads(m.group()), m.span()) if m else (None, None)
+
+
+mod.extract_json_object = _extract_json
+spoken = []
+gui.speak = lambda text, msg=None, end_of_turn=True: spoken.append(text)
+gui.current_state = S.SPEAKING
+gui._talk_mood = "idle"
+gui._handle_response_chunk('It might rain. {"action": "set_expression", "value": "curious"}', is_last=False)
+assert gui.current_state == S.SPEAKING, gui.current_state
+assert gui._talk_mood == "surprised", gui._talk_mood
+gui.current_state = S.THINKING  # before speech starts, the tag still sets the face
+gui._handle_response_chunk('{"action": "set_expression", "value": "happy"} Yay!', is_last=False)
+assert gui.current_state == S.HAPPY, gui.current_state
+log.append("expressions: a late tag keeps BMO talking in that mood; an early one sets the face")
+del gui.speak
+gui.current_state = S.IDLE
+
 gui.face_view.rig.frame = lambda: 1 / 0
 gui.animations[S.IDLE] = [FakePhoto()]
 print("(an intentional ZeroDivisionError traceback follows)")

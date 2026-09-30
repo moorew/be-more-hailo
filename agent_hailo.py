@@ -1783,7 +1783,16 @@ class BotGUI:
                     BotStates.CURIOUS, BotStates.DAYDREAM, BotStates.JAMMING,
                     BotStates.SHHH, BotStates.LOW_BATTERY,
                 }
-                if expr in allowed:
+                # Piper runs ahead of playback, so a tag late in the reply lands
+                # while BMO is still talking.  Switching state then froze the face
+                # on the expression (an open "O" for curious) for the rest of the
+                # sentence; instead talk on in that mood.
+                talking = self.current_state == BotStates.SPEAKING or (
+                    self._tts_aplay is not None and self._tts_aplay.poll() is None)
+                if expr in allowed and talking:
+                    if expr in TALK_MOODS:
+                        self._talk_mood = TALK_MOODS[expr]
+                elif expr in allowed:
                     self.set_state(expr, f"Feeling {expr}...")
                 chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
             elif action_data.get("action") == "play_music":
