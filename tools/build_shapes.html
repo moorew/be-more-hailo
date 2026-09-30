@@ -1,0 +1,204 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BMO shape builder</title>
+<style>
+  body { font: 13px/1.4 system-ui, sans-serif; margin: 16px; background: #1d241c; color: #dfe9dc; }
+  canvas { background: #C9E4C3; width: 640px; max-width: 100%; display: block; margin: 8px 0; }
+  pre { white-space: pre-wrap; }
+</style>
+<p>Samples the artwork paths below into morph-compatible contours (same point count,
+top edge then bottom edge) and builds <code>shapes.json</code>. To add or redraw a mouth, paste
+its SVG path into <code>MOUTHS</code> in this file, open it in a browser, and copy the
+downloaded file to <code>bmo_face/</code> and <code>static/face/</code>.</p>
+<canvas id="c" width="1280" height="720"></canvas>
+<pre id="log"></pre>
+<svg id="svg" width="0" height="0" style="position:absolute"></svg>
+<script>
+// Every mouth becomes a closed contour of MOUTH_N points: the "top" chain runs
+// left anchor -> right anchor, the "bottom" chain runs back. Line-only mouths
+// (strokes like the smile) get a degenerate contour whose top and bottom chains
+// coincide, so they stroke as a line but can still morph into open shapes.
+const MOUTH_N = 128, TONGUE_N = 48, EYE_N = 64;
+
+const MOUTHS = {
+  // --- Rhubarb talking set (Talking.zip) ---
+  X: { line: 'M594 438 L685.5 438', stroke: 15 },
+  A: { line: 'M576.5 442.5C596.009 445.468 642.5 458.5 721.5 442.5', stroke: 15 },
+  B: { outline: 'M734.482 409.5H540.133C537.735 409.5 535.661 411.26 535.222 413.618C521.193 488.934 533.226 489.994 642.5 491.5C736.471 492.795 754.864 486.839 739.36 413.481C738.875 411.185 736.829 409.5 734.482 409.5Z',
+       stroke: 12, teethTop: 446, teethBot: 446 },
+  C: { outline: 'M734.397 409.5H540.025C537.675 409.5 535.632 411.143 535.181 413.449C526.341 458.728 541.993 480.904 643 481C729.512 481.082 747.08 458.835 739.252 413.541C738.846 411.19 736.782 409.5 734.397 409.5Z',
+       stroke: 12, teethTop: 444,
+       tongue: 'M719 463.5C658.2 443.1 584.5 449 561.5 463.5C572 472.833 605 480.796 643 480.396C681 479.996 712.833 478.5 719 463.5Z' },
+  D: { outline: 'M733.625 409.5H540.753C538.09 409.5 535.888 411.58 535.818 414.242C534.582 461.401 549.2 545.5 642 545.5C721.681 545.5 738.551 461.546 738.56 414.365C738.561 411.653 736.337 409.5 733.625 409.5Z',
+       stroke: 12, teethTop: 444,
+       tongue: 'M713 500C652.2 479.6 591 503.5 568 518C578.5 527.333 609 545.9 647 545.5C685 545.1 706.833 515 713 500Z' },
+  E: { outline: 'M702.112 464.21C688.523 410.385 585.185 421.812 574.124 464.21C563.064 506.608 580.445 546 641.121 546C693.264 546 715.701 518.035 702.112 464.21Z',
+       stroke: 12 },
+  F: { outline: 'M569.047 411.75C559.59 456.284 585.971 466.506 585.971 485.729C585.971 508.778 573.058 526.583 569.047 543.882C560.088 582.528 625.79 584 625.79 584C625.79 584 690 582.528 690 551.611C690 531.368 664.807 502.757 664.223 485.729C661.131 456.652 681.538 455.916 678.054 419.847C667.601 362.43 582.984 363.166 569.047 411.75Z',
+       stroke: 12,
+       tongue: 'M635 581.396C673 580.996 686.833 560.5 693 545.5C682.5 534.5 643 524 638.5 528C635.5 529.5 629.077 559.288 629 551.999C628.923 544.71 623.556 531.5 621 529.5C607.089 518.614 580.291 544.337 568.5 551.999C579 561.332 597 581.796 635 581.396Z' },
+  // --- Expression mouths (BMO Face Templates) ---
+  smile:      { line: 'M522 438.5C561 485.5 681 512.5 754.5 438.5', stroke: 15 },                  // Rosto-01
+  frown:      { line: 'M522 484.426C595.5 410.426 715.5 437.427 754.5 484.427', stroke: 15 },       // Rosto-03
+  smallSmile: { line: 'M563 442C591 524 690.5 527.5 716.5 442', stroke: 15 },                      // Rosto-14
+  hmm:        { line: 'M554.887 567.047C606.73 476.546 729.629 471.567 779.464 506.872', stroke: 15, dx: -27, dy: -62 }, // Rosto-16
+  oh:         { outline: 'M582 527A58 75 0 1 0 698 527A58 75 0 1 0 582 527Z', stroke: 15 },          // Rosto-22
+  wow:        { outline: 'M566 523A74.5 83 0 1 0 715 523A74.5 83 0 1 0 566 523Z', stroke: 12, teethTop: 496.5, dy: -20 }, // Rosto-13
+  shout:      { outline: 'M530.371 567.5C557.571 550.3 590.038 547 602.871 547.5C615.704 547 648.171 550.3 675.371 567.5C689.371 575.333 723.77 586.3 749.37 567.5C774.97 548.7 776.37 512.333 773.87 496.5C769.037 466.667 728.07 407 602.871 407C477.671 407 436.704 466.667 431.871 496.5C429.371 512.333 430.771 548.7 456.371 567.5C481.971 586.3 516.371 575.333 530.371 567.5Z',
+                stroke: 12, teethTop: 452, dx: 37,
+                tongue: 'M546.371 509.5C496.371 506.3 453.538 530.5 438.371 543C446.771 563.4 465.538 571.833 473.871 573.5C486.204 576.167 517.971 576.6 546.371 557C574.771 537.4 621.871 543.833 641.871 549.5C630.871 537.5 596.371 512.7 546.371 509.5Z' }, // Rosto-07
+  wail:       { outline: 'M592.888 569.611C610.376 555.828 631.249 553.184 639.5 553.585C647.751 553.184 668.625 555.828 686.112 569.611C695.113 575.887 717.23 584.675 733.688 569.611C750.147 554.546 751.047 525.405 749.44 512.717C746.332 488.812 719.994 441 639.5 441C559.006 441 532.668 488.812 529.56 512.718C527.953 525.405 528.853 554.546 545.312 569.611C561.771 584.675 583.887 575.888 592.888 569.611Z',
+                stroke: 12, teethTop: 477, dy: -30,
+                tongue: 'M603.175 523.135C571.028 520.571 543.49 539.962 533.739 549.979C539.139 566.326 551.205 573.083 556.563 574.419C564.492 576.556 584.916 576.903 603.175 561.197C621.434 545.491 651.716 550.646 664.574 555.187C657.502 545.571 635.321 525.699 603.175 523.135Z' }, // Rosto-11
+};
+
+// Eyes are stored relative to the eye centre (left eye; the rig mirrors for the right).
+const EYES = {
+  open:   { outline: 'M-37.5 0A37.5 43 0 1 0 37.5 0A37.5 43 0 1 0 -37.5 0Z', stroke: 0 },
+  closed: { line: 'M-39 10Q0 30 39 10', stroke: 12 },                      // blink lid, a soft ‿
+  happy:  { line: 'M-46 20C-34 -30 34 -30 46 20', stroke: 15 },            // ∩ squint
+  relax:  { line: 'M-64.5 -41C-41 64.7 42.7 69.2 64.5 -41', stroke: 15 },  // Rosto-04 ◡
+  wide:   { outline: 'M-47 0A47 55 0 1 0 47 0A47 55 0 1 0 -47 0Z', stroke: 0 },
+};
+
+const svg = document.getElementById('svg');
+const logEl = document.getElementById('log');
+const log = (s) => (logEl.textContent += s + '\n');
+
+function densePoints(d, n = 3000) {
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', d);
+  svg.appendChild(p);
+  const L = p.getTotalLength();
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const q = p.getPointAtLength((L * i) / n);
+    pts.push([q.x, q.y]);
+  }
+  svg.removeChild(p);
+  return pts;
+}
+
+function resample(chain, count) {
+  // Uniform arc-length resample of a polyline to `count` points (endpoints kept).
+  const cum = [0];
+  for (let i = 1; i < chain.length; i++) {
+    cum.push(cum[i - 1] + Math.hypot(chain[i][0] - chain[i - 1][0], chain[i][1] - chain[i - 1][1]));
+  }
+  const total = cum[cum.length - 1];
+  const out = [];
+  let j = 0;
+  for (let k = 0; k < count; k++) {
+    const s = count === 1 ? 0 : (total * k) / (count - 1);
+    while (j < chain.length - 2 && cum[j + 1] < s) j++;
+    const seg = cum[j + 1] - cum[j] || 1;
+    const t = Math.min(1, Math.max(0, (s - cum[j]) / seg));
+    out.push([chain[j][0] + (chain[j + 1][0] - chain[j][0]) * t, chain[j][1] + (chain[j + 1][1] - chain[j][1]) * t]);
+  }
+  return out;
+}
+
+function contourFromLine(d, N) {
+  let chain = densePoints(d);
+  if (chain[0][0] > chain[chain.length - 1][0]) chain = chain.reverse();
+  const top = resample(chain, N / 2 + 1);
+  const bottom = top.slice(1, -1).reverse();
+  return top.concat(bottom);
+}
+
+function contourFromOutline(d, N) {
+  let loop = densePoints(d);
+  loop.pop(); // closing duplicate
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of loop) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+  const midY = (minY + maxY) / 2;
+  const nearest = (tx, ty) => {
+    let best = 0, bd = Infinity;
+    loop.forEach(([x, y], i) => { const dd = (x - tx) ** 2 + (y - ty) ** 2; if (dd < bd) { bd = dd; best = i; } });
+    return best;
+  };
+  const iL = nearest(minX, midY), iR = nearest(maxX, midY);
+  const walk = (a, b) => { const out = []; for (let i = a; ; i = (i + 1) % loop.length) { out.push(loop[i]); if (i === b) break; } return out; };
+  const arc1 = walk(iL, iR), arc2 = walk(iR, iL);
+  const meanY = (c) => c.reduce((s, p) => s + p[1], 0) / c.length;
+  let top, bottom;
+  if (meanY(arc1) < meanY(arc2)) { top = arc1; bottom = arc2; }        // arc1 runs L->R already
+  else { top = arc2.slice().reverse(); bottom = arc1.slice().reverse(); }
+  const topS = resample(top, N / 2 + 1);
+  const botS = resample(bottom, N / 2 + 1).slice(1, -1);
+  return topS.concat(botS);
+}
+
+const round2 = (pts, dx = 0, dy = 0) => pts.map(([x, y]) => [+(x + dx).toFixed(2), +(y + dy).toFixed(2)]);
+
+function buildMouth(def) {
+  const dx = def.dx || 0, dy = def.dy || 0;
+  const outer = round2(def.line ? contourFromLine(def.line, MOUTH_N) : contourFromOutline(def.outline, MOUTH_N), dx, dy);
+  const ys = outer.map((p) => p[1]);
+  const top = Math.min(...ys), bottom = Math.max(...ys);
+  const bottomMid = outer[MOUTH_N / 2 + (MOUTH_N / 2) / 2]; // middle of the bottom chain
+  const tongue = def.tongue
+    ? round2(contourFromOutline(def.tongue, TONGUE_N), dx, dy)
+    : Array.from({ length: TONGUE_N }, () => [bottomMid[0], +(bottomMid[1] + 4).toFixed(2)]);
+  return {
+    outer,
+    stroke: def.stroke,
+    // No upper teeth -> line sits above the mouth, so its band is empty.
+    teethTop: def.teethTop != null ? def.teethTop + dy : +(top - 4).toFixed(2),
+    teethBot: def.teethBot != null ? def.teethBot + dy : +(bottom + 4).toFixed(2),
+    tongue,
+    hasTongue: !!def.tongue,
+  };
+}
+
+function buildEye(def) {
+  return { pts: round2(def.line ? contourFromLine(def.line, EYE_N) : contourFromOutline(def.outline, EYE_N)), stroke: def.stroke };
+}
+
+const shapes = {
+  version: 1,
+  art: { width: 1280, height: 720 },
+  colors: { bg: '#C9E4C3', line: '#000000', cavity: '#396337', tongue: '#A2B36A', teeth: '#FFFFFF', blush: '#548B51' },
+  eyeCenters: [[333.5, 271], [945.5, 271]],
+  mouthOrder: Object.keys(MOUTHS),
+  mouths: Object.fromEntries(Object.entries(MOUTHS).map(([k, v]) => [k, buildMouth(v)])),
+  eyeOrder: Object.keys(EYES),
+  eyes: Object.fromEntries(Object.entries(EYES).map(([k, v]) => [k, buildEye(v)])),
+};
+
+// Preview every contour so we can eyeball anchor placement.
+const ctx = document.getElementById('c').getContext('2d');
+const names = shapes.mouthOrder;
+names.forEach((name, i) => {
+  const m = shapes.mouths[name];
+  const col = i % 5, row = Math.floor(i / 5);
+  ctx.save();
+  ctx.translate(col * 256 + 128, row * 240 + 120);
+  ctx.scale(0.6, 0.6);
+  ctx.translate(-640, -480);
+  ctx.beginPath();
+  m.outer.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.closePath();
+  ctx.fillStyle = '#396337'; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke();
+  ctx.fillStyle = 'red'; ctx.beginPath(); ctx.arc(m.outer[0][0], m.outer[0][1], 6, 0, 7); ctx.fill();
+  ctx.fillStyle = 'blue'; ctx.beginPath(); ctx.arc(m.outer[MOUTH_N / 2][0], m.outer[MOUTH_N / 2][1], 6, 0, 7); ctx.fill();
+  ctx.fillStyle = '#000'; ctx.font = '22px sans-serif'; ctx.fillText(name, 560, 380);
+  ctx.restore();
+});
+
+const json = JSON.stringify(shapes);
+// Save: a download link always works; the PUTs only succeed on the dev server.
+const a = document.createElement('a');
+a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+a.download = 'shapes.json';
+a.textContent = `Download shapes.json (${json.length} bytes) - copy it to bmo_face/ and static/face/`;
+a.style.cssText = 'color:#9fe0c8;font-size:15px;display:block;margin:8px 0';
+document.body.insertBefore(a, document.getElementById('c'));
+Promise.all([
+  fetch('/web/shapes.json', { method: 'PUT', body: json }),
+  fetch('/python/bmo_face/shapes.json', { method: 'PUT', body: json }),
+]).then((rs) => log('dev server save: ' + rs.map((r) => r.status).join(', ')))
+  .catch(() => {});
+log(names.map((n) => `${n}: top=${shapes.mouths[n].teethTop} bot=${shapes.mouths[n].teethBot} stroke=${shapes.mouths[n].stroke}`).join('\n'));
+</script>

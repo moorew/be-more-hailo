@@ -1,0 +1,128 @@
+{
+  "_about": "Expression presets shared by web/bmo-face.js and python/bmo_face. Units are art pixels (1280x720). Brow points are relative to the eye centre with +x toward the nose. mouth/eye map pose names from shapes.json to weights. talk.* applies while speaking.",
+  "brows": {
+    "angry": [[-51.5, -130], [87.5, -29.5], 19],
+    "worried": [[-58, -80], [46, -108], 14],
+    "raised": [[-48, -110], [44, -122], 13]
+  },
+  "default": {
+    "mouth": { "smile": 1 },
+    "mouthMods": { "smile": 0, "jaw": 1, "width": 1, "dx": 0, "dy": 0, "tilt": 0 },
+    "talk": { "smile": 0.22, "width": 1 },
+    "eye": { "open": 1 },
+    "eyeScale": [1, 1],
+    "eyeOffset": [0, 0],
+    "lid": { "y": -95, "slope": 0, "line": 0 },
+    "brows": [null, null],
+    "blush": 0,
+    "gaze": "wander",
+    "blink": "normal",
+    "motion": null,
+    "head": { "tilt": 0, "dy": 0 },
+    "breathe": 1,
+    "enter": null
+  },
+  "expressions": {
+    "idle": {},
+    "listening": {
+      "mouth": { "smallSmile": 1 },
+      "mouthMods": { "width": 0.82, "smile": 0.1 },
+      "eyeScale": [1.07, 1.1],
+      "gaze": "attentive",
+      "blink": "attentive",
+      "head": { "tilt": -0.8, "dy": -3 },
+      "breathe": 0.7,
+      "enter": { "eyePop": 0.9 }
+    },
+    "thinking": {
+      "mouth": { "X": 1 },
+      "mouthMods": { "dx": 26, "dy": 4, "tilt": -0.16, "width": 0.8, "smile": -0.35 },
+      "eyeScale": [1, 0.93],
+      "brows": [null, "raised"],
+      "gaze": "think",
+      "head": { "tilt": 0.8, "dy": 0 }
+    },
+    "happy": {
+      "eye": { "happy": 1 },
+      "mouthMods": { "smile": 0.25, "width": 1.05 },
+      "talk": { "smile": 0.75, "width": 1.05 },
+      "blush": 1,
+      "motion": "bounce",
+      "enter": { "headKick": -140 }
+    },
+    "excited": {
+      "eye": { "happy": 1 },
+      "mouth": { "D": 1 },
+      "mouthMods": { "smile": 0.9, "jaw": 0.95, "width": 1.08 },
+      "talk": { "smile": 0.8, "width": 1.08 },
+      "blush": 1,
+      "motion": "hop",
+      "enter": { "headKick": -220 }
+    },
+    "sad": {
+      "mouth": { "frown": 1 },
+      "mouthMods": { "width": 0.78, "dy": 14 },
+      "talk": { "smile": -0.55, "width": 0.9 },
+      "eyeScale": [0.95, 0.92],
+      "eyeOffset": [0, 10],
+      "lid": { "y": -36, "slope": -0.28, "line": 0 },
+      "brows": ["worried", "worried"],
+      "gaze": "down",
+      "blink": "slow",
+      "head": { "tilt": 0, "dy": 8 },
+      "breathe": 1.3
+    },
+    "surprised": {
+      "mouth": { "oh": 1 },
+      "mouthMods": { "width": 0.9 },
+      "talk": { "smile": 0, "width": 0.95 },
+      "eye": { "wide": 1 },
+      "eyeScale": [1.12, 1.12],
+      "brows": ["raised", "raised"],
+      "gaze": "fixed",
+      "blink": "attentive",
+      "head": { "dy": -6 },
+      "enter": { "eyePop": 0.55, "headKick": -260 }
+    },
+    "angry": {
+      "mouth": { "frown": 1 },
+      "mouthMods": { "width": 1.12, "dy": 12 },
+      "talk": { "smile": -0.5, "width": 1.1 },
+      "eyeScale": [1, 0.92],
+      "lid": { "y": -20, "slope": 0.55, "line": 0 },
+      "brows": ["angry", "angry"],
+      "gaze": "fixed",
+      "motion": "tremble",
+      "enter": { "eyePop": 0.8 }
+    },
+    "sleepy": {
+      "mouth": { "X": 1 },
+      "mouthMods": { "width": 0.7, "dy": 6 },
+      "talk": { "smile": 0, "width": 0.85 },
+      "lid": { "y": -2, "slope": -0.08, "line": 10 },
+      "gaze": "down",
+      "blink": "sleepy",
+      "motion": "droop",
+      "head": { "tilt": 0, "dy": 6 },
+      "breathe": 1.6
+    },
+    "cheer": {
+      "eye": { "happy": 1 },
+      "mouth": { "shout": 1 },
+      "mouthMods": { "width": 0.9, "jaw": 0.95 },
+      "talk": { "smile": 0.5, "width": 1 },
+      "blush": 0.7,
+      "motion": "hop",
+      "enter": { "headKick": -260 }
+    },
+    "relaxed": {
+      "eye": { "relax": 1 },
+      "mouth": { "smile": 1 },
+      "mouthMods": { "width": 0.9 },
+      "blush": 0.5,
+      "gaze": "fixed",
+      "motion": "droop",
+      "breathe": 1.4
+    }
+  }
+}

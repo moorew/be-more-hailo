@@ -41,6 +41,20 @@ from core.stt import transcribe_audio
 from core.endpoint import EndpointDetector
 from core.config import LLM_KEEP_ALIVE, MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE, VOLUME
 
+# Live face rig (bmo_face/): morphs the artwork instead of flipping PNG frames.
+# Set BMO_FACE_RIG=0 to go back to the PNG faces; any load error does the same.
+try:
+    from bmo_face import SILENT as FACE_SILENT, LipSync, analyse_wav
+    from bmo_face.tk_face import FaceView
+    FACE_RIG_OK = True
+except Exception as _face_err:
+    print(f"[FACE] Rig unavailable, using PNG faces: {_face_err}")
+    FACE_RIG_OK = False
+USE_FACE_RIG = FACE_RIG_OK and os.environ.get("BMO_FACE_RIG", "1") != "0"
+FACE_FPS_ACTIVE = 30   # talking / listening
+FACE_FPS_CALM = 24     # everything else the rig draws
+WAV_LIPSYNC_DELAY = 0.05  # aplay start-up latency for pre-recorded clips
+
 # =========================================================================
 # 1. HARDWARE CONFIGURATION
 # =========================================================================
@@ -86,6 +100,38 @@ class BotStates:
     CURIOUS = "curious"
     LADYBUG = "ladybug"
     WORM = "worm"
+
+# States the rig draws live, mapped to a rig expression (bmo_face/expressions.json).
+# Anything not listed (bee, ladybug, hearts, dizzy...) keeps its PNG animation.
+# SPEAKING uses the current talk mood instead (see TALK_MOODS).
+RIG_EXPRESSIONS = {
+    BotStates.IDLE: "idle",
+    BotStates.LISTENING: "listening",
+    BotStates.THINKING: "thinking",
+    BotStates.SPEAKING: None,
+    BotStates.WARMUP: "sleepy",
+    BotStates.HAPPY: "happy",
+    BotStates.SAD: "sad",
+    BotStates.ANGRY: "angry",
+    BotStates.SURPRISED: "surprised",
+    BotStates.SLEEPY: "sleepy",
+    BotStates.CONFUSED: "thinking",
+    BotStates.CURIOUS: "surprised",
+    BotStates.DAYDREAM: "relaxed",
+    BotStates.LOW_BATTERY: "sleepy",
+    BotStates.JAMMING: "excited",
+    BotStates.FOOTBALL: "cheer",
+}
+
+# When the LLM sets an expression and then speaks, BMO talks in that mood
+# (mouth shapes bend into a smile or frown, eyes/brows/blush stay).
+TALK_MOODS = {
+    BotStates.HAPPY: "happy", BotStates.HEART: "happy", BotStates.CHEEKY: "happy",
+    BotStates.STARRY_EYED: "excited", BotStates.JAMMING: "excited", BotStates.FOOTBALL: "cheer",
+    BotStates.SAD: "sad", BotStates.ANGRY: "angry",
+    BotStates.SURPRISED: "surprised", BotStates.CURIOUS: "surprised",
+    BotStates.SLEEPY: "sleepy", BotStates.LOW_BATTERY: "sleepy", BotStates.DAYDREAM: "relaxed",
+}
 
 class BotGUI:
 
@@ -235,6 +281,24 @@ class BotGUI:
         self._lip_sched = []      # list of (play_offset_seconds, mouth_open)
         self._lip_start = None    # wall-clock time the first audio chunk was queued
         self._lip_end = None      # play_offset of the most recent chunk
+
+        # Live face rig. Schedule entries become (play_offset, mouth_open, speech)
+        # where speech is the rig's lip-sync result; index 1 stays the legacy
+        # loudness so the PNG path keeps working unchanged.
+        self.face_view = None
+        self._lip_sync = None
+        self._rig_state = None
+        self._rig_speech = FACE_SILENT if FACE_RIG_OK else None
+        self._rig_frames = 0
+        self._talk_mood = "idle"
+        if USE_FACE_RIG:
+            try:
+                self.face_view = FaceView(self.background_label, size=(self.BG_WIDTH, self.BG_HEIGHT))
+                self._lip_sync = LipSync(22050)
+                print("[FACE] Live face rig enabled")
+            except Exception as e:
+                print(f"[FACE] Rig failed to start, using PNG faces: {e}")
+                self.face_view = None
         self.load_animations()
         self.load_sounds()
         self.update_animation()
@@ -279,6 +343,10 @@ class BotGUI:
             self.current_frame = 0
             self.last_state_change = time.time()
             print(f"[STATE] {state.upper()}: {msg}")
+        if state in TALK_MOODS:
+            self._talk_mood = TALK_MOODS[state]
+        elif state in (BotStates.IDLE, BotStates.LISTENING):
+            self._talk_mood = "idle"
         if msg:
             self.master.after(0, lambda: self.status_label.config(text=msg))
 
@@ -693,8 +761,10 @@ class BotGUI:
             proc = subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', '--buffer-time=500000', sound_file])
             self.active_sounds.append(proc)
             
-            # Start mouth animation thread for this sound
-            if category in ["greeting_sounds", "thinking_sounds"]:
+            # Start mouth animation for this sound
+            if self.face_view is not None and category in ("greeting_sounds", "thinking_sounds", "ack_sounds"):
+                self._schedule_wav_lipsync(sound_file)
+            elif category in ["greeting_sounds", "thinking_sounds"]:
                 threading.Thread(target=animate_mouth_simple, args=(proc,), daemon=True).start()
             elif category == "music":
                 self.set_state(BotStates.JAMMING, "Jamming!")
@@ -716,6 +786,68 @@ class BotGUI:
         except Exception as e:
             print(f"Error playing sound {sound_file}: {e}")
             return None
+
+    def _schedule_wav_lipsync(self, path):
+        """Lip-sync a pre-recorded clip that aplay has just started playing."""
+        try:
+            items, duration = analyse_wav(path)
+        except Exception as e:
+            print(f"[FACE] Could not analyse {path}: {e}")
+            return
+        with self._lip_lock:
+            self._lip_sched = items
+            self._lip_start = time.time() + WAV_LIPSYNC_DELAY
+            self._lip_end = duration
+
+    def _lip_speech(self, now):
+        """Rig lip-sync state for the audio playing right now."""
+        if self._lip_start is None:
+            self._rig_speech = FACE_SILENT
+            return self._rig_speech
+        elapsed = now - self._lip_start
+        latest, onset = None, False
+        with self._lip_lock:
+            sched = self._lip_sched
+            consumed = 0
+            while consumed < len(sched) and sched[consumed][0] <= elapsed:
+                entry = sched[consumed]
+                if len(entry) > 2 and entry[2] is not None:
+                    latest = entry[2]
+                    onset = onset or latest["onset"]
+                consumed += 1
+            if consumed:
+                del sched[:consumed]
+            lip_end = self._lip_end
+        if latest is not None:
+            self._rig_speech = {**latest, "onset": onset}
+        elif lip_end is not None and elapsed > lip_end + 0.15:
+            self._rig_speech = FACE_SILENT
+        else:
+            self._rig_speech = {**self._rig_speech, "onset": False}
+        return self._rig_speech
+
+    def _update_face_rig(self, display_state, now):
+        """Advance and draw the live rig. Returns the delay (ms) until the next tick."""
+        fv = self.face_view
+        want = self._talk_mood if display_state == BotStates.SPEAKING else RIG_EXPRESSIONS[display_state]
+        if display_state != self._rig_state:
+            if self._rig_state == BotStates.WARMUP:
+                fv.rig.play_intro()  # eyes shut, then open with a stretch
+            fv.rig.set_expression(want)
+            self._rig_state = display_state
+        elif fv.rig.expr["name"] != want:
+            fv.rig.set_expression(want)  # talk mood changed mid-sentence
+        speech = self._lip_speech(now)
+        fv.tick(speech, now)
+        # Re-point the label if a PNG frame or photo was shown in between.
+        if self.background_label.cget("image") != str(fv.photo):
+            fv.attach()
+        self._last_render_key = None  # make the PNG path redraw if we hand back
+        self._rig_frames += 1
+        if self._rig_frames == 300:
+            print(f"[FACE] Rig costs ~{fv.render_ms:.1f} ms/frame")
+        busy = speech["active"] or display_state in (BotStates.SPEAKING, BotStates.LISTENING)
+        return int(1000 / (FACE_FPS_ACTIVE if busy else FACE_FPS_CALM))
 
     # States needed before the GUI can be useful — loaded synchronously.
     CORE_ANIMATION_STATES = (
@@ -806,6 +938,19 @@ class BotGUI:
         else:
             if not self.status_label.winfo_ismapped():
                 self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
+
+        # Live face rig for the states it covers; everything else stays on PNGs.
+        if self.face_view is not None and display_state in RIG_EXPRESSIONS:
+            try:
+                delay = self._update_face_rig(display_state, now)
+                self.master.after(delay, self.update_animation)
+                return
+            except Exception as e:
+                print(f"[FACE] Rig error, falling back to PNG faces: {e}")
+                traceback.print_exc()
+                self.face_view = None
+                self._rig_state = None
+                self._last_render_key = None
 
         # Animation Loop
         frames = self.animations.get(display_state, self.animations.get(BotStates.IDLE, []))
@@ -1306,6 +1451,8 @@ class BotGUI:
             self._lip_sched = []
             self._lip_start = None
             self._lip_end = None
+        if self._lip_sync is not None:
+            self._lip_sync.reset()
 
         # Reader thread: Piper stdout → aplay stdin (with lip-sync)
         self._piper_reader_thread = threading.Thread(
@@ -1343,10 +1490,11 @@ class BotGUI:
             vol = np.sqrt(np.mean(audio_chunk.astype(np.float32) ** 2))
             if self.current_state == BotStates.SPEAKING:
                 play_offset = samples_written / sample_rate
+                speech = self._lip_sync.push(audio_chunk) if self._lip_sync is not None else None
                 with self._lip_lock:
                     if self._lip_start is None:
                         self._lip_start = time.time()
-                    self._lip_sched.append((play_offset, float(min(60, vol / 25))))
+                    self._lip_sched.append((play_offset, float(min(60, vol / 25)), speech))
                     self._lip_end = play_offset
             samples_written += len(audio_chunk)
 
