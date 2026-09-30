@@ -2,7 +2,7 @@
 
     python -m bmo_face.preview sheet  out/expressions.png
     python -m bmo_face.preview wav    sounds/greeting_sounds/greeting_01.wav out/greeting_01
-    python -m bmo_face.preview bench  [--supersample 2]
+    python -m bmo_face.preview bench  [--supersample 4]
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def wav(path: str, out_dir: str, fps: int = 30, size=(800, 480)) -> None:
     print(f"wrote {n} frames + contact_sheet.png to {out_dir}")
 
 
-def bench(supersample: int = 2, frames: int = 300) -> None:
+def bench(supersample: int = 4, frames: int = 300) -> None:
     rig = FaceRig()
     renderer = PillowRenderer(rig.shapes, (800, 480), supersample=supersample)
     visemes = "XABCDEFBCDA"
@@ -89,7 +89,7 @@ def main() -> None:
     w.add_argument("out_dir")
     w.add_argument("--fps", type=int, default=30)
     b = sub.add_parser("bench")
-    b.add_argument("--supersample", type=int, default=2)
+    b.add_argument("--supersample", type=int, default=4)
     a = ap.parse_args()
     if a.cmd == "sheet":
         sheet(a.out)

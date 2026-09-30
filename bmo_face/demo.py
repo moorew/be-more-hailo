@@ -45,7 +45,7 @@ def main() -> None:
     ap.add_argument("--fullscreen", action="store_true")
     ap.add_argument("--sounds", default="sounds", help="folder with greeting_sounds/ etc.")
     ap.add_argument("--device", default=None, help="ALSA device for aplay, e.g. plughw:2,0")
-    ap.add_argument("--supersample", type=int, default=2, help="1 = faster, 2 = smoother edges")
+    ap.add_argument("--supersample", type=int, default=4, help="1 = fastest, 4 = crisp edges (matches the PNG faces)")
     args = ap.parse_args()
 
     root = tk.Tk()

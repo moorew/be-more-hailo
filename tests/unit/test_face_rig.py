@@ -27,7 +27,7 @@ def test_every_expression_renders():
         assert ImageChops.difference(img, renderer.base).getbbox() is not None, name
 
 
-@pytest.mark.parametrize("supersample", [1, 2])
+@pytest.mark.parametrize("supersample", [1, 2, 4])
 def test_line_mouth_has_no_stray_fill(supersample):
     # Regression: Pillow's polygon fill used to paint chords across zero-area
     # (line-only) mouths like the idle smile.

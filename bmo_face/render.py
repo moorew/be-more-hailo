@@ -1,8 +1,10 @@
 """Draw FaceRig frames with Pillow.
 
 Only the small regions around the eyes and mouth are redrawn each frame, at
-`supersample`x resolution and then box-filtered down, which gives smooth
+`supersample`x resolution and then Lanczos-filtered down, which gives smooth
 anti-aliased edges without paying for a full-screen supersample on the Pi.
+4x + Lanczos matches the PNG faces (generate_faces.py renders the SVGs large
+and downsizes with Lanczos); 2x + box filter left visible stair-steps.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ def _rgb(h: str) -> tuple[int, int, int]:
 class PillowRenderer:
     """fit: 'stretch' (matches generate_faces.py on the 800x480 panel), 'cover' or 'contain'."""
 
-    def __init__(self, shapes: dict, size: tuple[int, int] = (800, 480), fit: str = "stretch", supersample: int = 2):
+    def __init__(self, shapes: dict, size: tuple[int, int] = (800, 480), fit: str = "stretch", supersample: int = 4):
         self.W, self.H = size
         self.ss = max(1, int(supersample))
         sx, sy = self.W / 1280, self.H / 720
@@ -90,7 +92,7 @@ class PillowRenderer:
 
         draw_fn(tile, to)
         if ss > 1:
-            tile = tile.reduce(ss)
+            tile = tile.resize((x1 - x0, y1 - y0), Image.LANCZOS)
         img.paste(tile, (x0, y0))
 
     # -------------------------------------------------------------- render
