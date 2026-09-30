@@ -6,6 +6,61 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_WEATHER_LOCATION = "Brantford"
+# "in the morning", "in an hour"... are times, not places.
+_NOT_PLACES = ("the ", "a ", "an ", "my ", "this ", "next ", "today", "tomorrow", "tonight",
+               "morning", "afternoon", "evening", "here", "outside")
+
+
+def _weather_location(query_lower: str) -> str:
+    if " in " not in f" {query_lower}":
+        return DEFAULT_WEATHER_LOCATION
+    place = f" {query_lower}".split(" in ", 1)[1]
+    place = place.split(",")[0].split("?")[0].split(" today")[0].split(" tomorrow")[0].strip(" .!")
+    if not place or place.startswith(_NOT_PLACES) or len(place.split()) > 3:
+        return DEFAULT_WEATHER_LOCATION
+    return place
+
+
+def _day_summary(day: dict) -> str:
+    """One day from wttr.in j1 JSON: daytime condition, high/low, rain chance."""
+    daytime = [h for h in day["hourly"] if 900 <= int(h["time"]) <= 1800] or day["hourly"]
+    descs = [h["weatherDesc"][0]["value"].strip() for h in daytime]
+    desc = max(set(descs), key=descs.count)
+    rain = max(int(h.get("chanceofrain", 0)) for h in daytime)
+    return f"{desc}, high {day['maxtempC']}°C, low {day['mintempC']}°C, {rain}% chance of rain"
+
+
+def get_weather(query: str):
+    """Current conditions + 3-day forecast as ONE short line, or None on failure.
+
+    Kept to ~300 chars on purpose: the old wttr.in v2 table was ~18k chars of
+    ASCII art that a 1.7B model can't read and that overflows hailo-ollama's
+    ~2k-token context (the request is silently dropped).  Includes tomorrow so
+    "what's it doing tomorrow?" gets real data instead of an invented answer."""
+    import datetime
+    import requests
+    location = _weather_location(query.lower())
+    try:
+        resp = requests.get(f"https://wttr.in/{location.replace(' ', '+')}?format=j1&m", timeout=5)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        now = data["current_condition"][0]
+        days = data["weather"]
+        parts = [f"Weather in {location.title()}: now {now['weatherDesc'][0]['value'].strip()}, "
+                 f"{now['temp_C']}°C (feels like {now['FeelsLikeC']}°C)"]
+        labels = ["Today", "Tomorrow"]
+        for i, day in enumerate(days[:3]):
+            label = labels[i] if i < 2 else datetime.date.fromisoformat(day["date"]).strftime("%A")
+            parts.append(f"{label}: {_day_summary(day)}")
+        logger.info(f"Weather fetched from wttr.in: {location}")
+        return ". ".join(parts) + "."
+    except Exception as e:
+        logger.warning(f"wttr.in Weather Error: {e}")
+        return None
+
+
 def search_web(query: str) -> str:
     """
     Searches DuckDuckGo for the given query and returns a summary of the top result.
@@ -16,26 +71,10 @@ def search_web(query: str) -> str:
     
     # 0. Special Case: Weather
     if "weather" in query_lower:
-        location = "Brantford" # Default
-        if "in " in query_lower:
-            location = query_lower.split("in ")[1].split(",")[0].strip().replace(" ", "+")
-        
-        try:
-            import requests
-            # One compact line: the v2 table was ~18k chars of ASCII art, which a
-            # 1.7B model can't read and which overflows hailo-ollama's ~2k-token
-            # context (the request is silently dropped).  &m = metric.
-            fmt = "%C,+%t+(feels+like+%f),+wind+%w,+humidity+%h"
-            url = f"https://wttr.in/{location}?format={fmt}&m"
-            resp = requests.get(url, timeout=5)
-            if resp.status_code == 200 and resp.text.strip() and "Unknown location" not in resp.text:
-                place = location.replace("+", " ").title()
-                result = f"Weather in {place} right now: {' '.join(resp.text.split())}"
-                logger.info(f"Weather fetched from wttr.in: {location}")
-                return result
-        except Exception as e:
-            logger.warning(f"wttr.in Weather Error: {e}")
-            # Fall through to DDG if wttr.in fails
+        weather = get_weather(query)
+        if weather:
+            return weather
+        # Fall through to DDG if wttr.in fails
 
     try:
         with DDGS(timeout=10) as ddgs:

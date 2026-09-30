@@ -8,7 +8,7 @@ import urllib.parse
 import numpy as np
 from .config import LLM_URL, LLM_KEEP_ALIVE, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt, get_current_context
 from .tts import add_pronunciation
-from .search import search_web, search_images
+from .search import get_weather, search_web, search_images
 from .timers import describe_duration, parse_timer_request
 
 logger = logging.getLogger(__name__)
@@ -661,7 +661,7 @@ class Brain:
         search_injected = False
         if has_realtime_kw and has_question:
             try:
-                search_result = search_web(user_text)
+                search_result = get_weather(user_text)  # only weather is routed here
                 if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR") and len(search_result) > 50:
                     # Strip the verbose "SEARCH RESULTS for '...':" header from search.py
                     clean_result = re.sub(r"^SEARCH RESULTS for '.*?':\n?", "", search_result).strip()
@@ -901,7 +901,7 @@ class Brain:
         search_injected = False
         if needs_search:
             try:
-                search_result = search_web(user_text)
+                search_result = get_weather(user_text)  # only weather is routed here
                 # Only inject if we got a real result (not empty/error sentinel)
                 if search_result and search_result not in ("SEARCH_EMPTY", "SEARCH_ERROR") and len(search_result) > 50:
                     # Strip verbose "SEARCH RESULTS for '...':" prefix from search.py
