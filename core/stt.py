@@ -13,6 +13,7 @@ from .config import (
     WHISPER_HEF_PATH,
     WHISPER_MODEL,
     WHISPER_NPU_TIMEOUT_MS,
+    WHISPER_PROMPT,
     WHISPER_THREADS,
 )
 
@@ -84,6 +85,10 @@ def _clean_transcript(text: str) -> str:
         "[silence]", "(silence)", "you", "thanks for watching!",
         "[blank_audio]", "thank you.", "thank you", "thanks.",
     ]
+    # YouTube-caption hallucinations whisper produces from pure noise.
+    if re.search(r"\b(subscribe|thanks for watching|like and subscribe)\b", lowered):
+        logger.info(f"Whisper hallucination filtered: {repr(text)}")
+        return ""
     is_parenthetical = bool(re.match(r'^\s*[\(\[].*[\)\]]\s*$', text.strip()))
     if is_parenthetical or lowered in hallucinations or not re.search(r'[a-zA-Z0-9]', lowered):
         logger.info(f"Whisper hallucination filtered: {repr(text)}")
@@ -130,6 +135,8 @@ def _transcribe_cpu(audio_filepath: str) -> str:
     """Run whisper.cpp on the CPU."""
     try:
         cmd = [WHISPER_CMD, "-m", WHISPER_MODEL, "-f", audio_filepath, "-nt", "-t", str(WHISPER_THREADS), "-l", "en"]
+        if WHISPER_PROMPT:
+            cmd += ["--prompt", WHISPER_PROMPT]
         logger.info(f"Running CPU whisper.cpp... CMD: {' '.join(cmd)}")
         # Bounded: a wedged whisper subprocess would otherwise hang the turn forever.
         output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=120).decode("utf-8").strip()

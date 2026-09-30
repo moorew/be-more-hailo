@@ -21,6 +21,7 @@ def test_real_word_containing_name_is_not_mangled():
 @pytest.mark.parametrize("phantom", [
     "[silence]", "(silence)", "Thanks for watching!", "[BLANK_AUDIO]",
     "Thank you.", "you", "  ",
+    "Subscribe to our channel for more videos!", "[Music]",
 ])
 def test_hallucinations_are_filtered_to_empty(phantom):
     assert _clean_transcript(phantom) == ""
@@ -40,3 +41,21 @@ def test_punctuation_only_is_filtered():
 
 def test_ordinary_speech_survives():
     assert _clean_transcript("What is the weather today?") == "What is the weather today?"
+
+
+def test_real_sentence_mentioning_channel_is_kept():
+    assert _clean_transcript("Change the channel please") == "Change the channel please"
+
+
+def test_cpu_whisper_is_given_the_prompt(monkeypatch):
+    """base.en heard "weather doing tomorrow" as "method doing to Murray" without it."""
+    import core.stt as stt
+    seen = {}
+
+    def fake_check_output(cmd, **kw):
+        seen["cmd"] = cmd
+        return b" What's the weather doing tomorrow?"
+    monkeypatch.setattr(stt.subprocess, "check_output", fake_check_output)
+    assert stt._transcribe_cpu("x.wav") == "What's the weather doing tomorrow?"
+    i = seen["cmd"].index("--prompt")
+    assert seen["cmd"][i + 1] == stt.WHISPER_PROMPT and "weather" in stt.WHISPER_PROMPT

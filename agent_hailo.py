@@ -1187,6 +1187,11 @@ class BotGUI:
 
         self.mouth_open = 0 # Reset
         if not frames: return None
+        if not endpoint.has_spoken:
+            # Nothing but room noise: transcribing it only invents a question
+            # ("[Music]", "Subscribe to our channel...") for BMO to answer.
+            print("[REC] No speech detected — not transcribing.")
+            return None
         data = np.concatenate(frames, axis=0)
 
         # Down-sample 48 kHz → 16 kHz with a polyphase filter (better than the
@@ -1866,7 +1871,12 @@ class BotGUI:
                 # Pre-warm Piper in parallel with STT so the first TTS chunk has zero start-up gap
                 threading.Thread(target=self._warmup_piper, daemon=True).start()
                 wav_file = self.record_audio()
-                
+                if wav_file is None:  # no speech (or mic error): back to waiting
+                    if self.current_state != BotStates.ERROR:  # keep "Mic Error" visible
+                        self.set_state(BotStates.IDLE, "Tap to speak")
+                    self._release_busy()
+                    continue
+
                 # 3. Transcribe
                 self.set_state(BotStates.THINKING, "Transcribing...")
                 self._thinking_sound_start()

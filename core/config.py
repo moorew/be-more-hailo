@@ -164,6 +164,15 @@ WHISPER_MODEL = os.environ.get(
     os.path.join(_PROJECT_ROOT, "models", "ggml-base.en.bin"),
 )
 WHISPER_THREADS = os.environ.get("WHISPER_THREADS", "4")  # Pi 5 has 4 cores
+# Example text whisper conditions on.  base.en misheard a quick "What's the
+# weather doing tomorrow?" as "What's the method doing to Murray?" (and the LLM
+# improvised a creepy story about it).  Natural sentences, not a keyword list
+# (which had no effect); it must not contain phrasings users say verbatim, or
+# whisper bends their words towards it.  Tested on 9 unrelated clips: no change.
+WHISPER_PROMPT = os.environ.get(
+    "WHISPER_PROMPT",
+    "Hey BMO, what's the weather like? Is it going to rain tomorrow? Tell me a joke.",
+)
 # Timeout for NPU Speech2Text inference (ms). Whisper-Small on H10H is typically
 # 3-8 s for a 5 s utterance; 20 s gives room for NPU scheduling overhead.
 WHISPER_NPU_TIMEOUT_MS = int(os.environ.get("WHISPER_NPU_TIMEOUT_MS", "20000"))
