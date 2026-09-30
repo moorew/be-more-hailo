@@ -6,6 +6,7 @@
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk, ImageOps, ImageDraw
+import queue
 import threading
 import time
 import json
@@ -54,6 +55,9 @@ USE_FACE_RIG = FACE_RIG_OK and os.environ.get("BMO_FACE_RIG", "1") != "0"
 FACE_FPS_ACTIVE = 30   # talking / listening
 FACE_FPS_CALM = 24     # everything else the rig draws
 WAV_LIPSYNC_DELAY = 0.05  # aplay start-up latency for pre-recorded clips
+# Mic buffer.  PortAudio's default (160 ms here) overflowed whenever the Tk
+# thread held the GIL a little too long, restarting the capture stream.
+MIC_LATENCY_S = 0.5
 
 # =========================================================================
 # 1. HARDWARE CONFIGURATION
@@ -1067,39 +1071,51 @@ class BotGUI:
         print(f"[EARS] Waiting for wake word... (Index: {MIC_DEVICE_INDEX}, Rate: {capture_rate})")
         
         retry_count = 0
+        near_miss_at = 0.0
         while not self.stop_event.is_set():
             try:
-                # Use a smaller blocksize to reduce latency
-                with sd.InputStream(samplerate=capture_rate, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', blocksize=CHUNK * downsample_factor) as stream:
+                # Callback capture into a queue, with a generous ALSA buffer.
+                # A blocking read() with the default 160 ms buffer overflowed about
+                # once a second (the Tk thread drawing the face holds the GIL), and
+                # each overflow restarts the stream: audio was dropped so the wake
+                # word arrived in fragments, and occasionally the C-Media mic never
+                # resumed after a restart, leaving BMO deaf until the next reopen.
+                frames_q = queue.Queue(maxsize=64)  # ~5 s of 80 ms chunks
+
+                def _on_audio(indata, frames, time_info, status, q=frames_q):
+                    try:
+                        q.put_nowait(indata.copy())
+                    except queue.Full:
+                        pass  # consumer is far behind; dropping beats blocking PortAudio
+
+                with sd.InputStream(samplerate=capture_rate, device=MIC_DEVICE_INDEX, channels=1, dtype='int16',
+                                    blocksize=CHUNK * downsample_factor, latency=MIC_LATENCY_S, callback=_on_audio):
                     retry_count = 0 # Reset on success
-                    last_data_time = time.time()
                     while not self.stop_event.is_set():
                         if self.manual_wake_event.is_set():
                             self.manual_wake_event.clear()
                             print("[EARS] Wake triggered via tap.")
                             return True
 
-                        if self.is_busy:
-                            time.sleep(0.5)
-                            last_data_time = time.time() # Reset watchdog
-                            continue
-                            
-                        data, overflowed = stream.read(CHUNK * downsample_factor)
-                        
-                        # Real failure modes: None / wrong-shape data
-                        if data is None or data.size == 0:
-                            if time.time() - last_data_time > 10.0:
-                                print("[EARS] Watchdog: Mic stream returned None/empty. Restarting...")
-                                break
-                            time.sleep(0.01)
-                            continue
+                        try:
+                            data = frames_q.get(timeout=2.0)
+                        except queue.Empty:
+                            # No audio for 2 s from a running stream: the mic has
+                            # stalled.  Reopen it rather than stay deaf.
+                            print("[EARS] Watchdog: no audio from the mic for 2 s. Reopening stream...")
+                            break
 
-                        last_data_time = time.time()  # Pet the watchdog (we got real data)
+                        if self.is_busy:
+                            continue  # keep draining so audio stays fresh; don't listen
 
                         # 1. Quick Volume Check (Skip OWW if it's too quiet)
                         # All-zero arrays are valid (quiet room) — don't treat as a mic failure.
                         current_max = np.max(np.abs(data))
-                        if current_max < 250: # Adjust threshold as needed
+                        # Only skip digital near-silence.  At 250 the quieter parts
+                        # of a distant "Hey BMO" were dropped (peaks ~600-800 with
+                        # the mic's AGC off), so the model heard fragments and
+                        # scored 0.1-0.2.  Running predict costs ~9% of one core.
+                        if current_max < 50:
                             continue
 
                         # 2. Down-sample 48 kHz → 16 kHz with an IIR low-pass
@@ -1119,8 +1135,14 @@ class BotGUI:
                         
                         for key in oww.prediction_buffer.keys():
                             score = oww.prediction_buffer[key][-1]
+                            # Near misses explain "it didn't hear me" reports.
+                            if 0.1 <= score <= WAKE_WORD_THRESHOLD and time.time() - near_miss_at > 2.0:
+                                near_miss_at = time.time()
+                                print(f"[EARS] Near miss: {key} {score:.2f} (need > {WAKE_WORD_THRESHOLD}) "
+                                      f"state={self.current_state} peak={current_max}")
                             if score > WAKE_WORD_THRESHOLD:
-                                print(f"[EARS] Wake Word Detected: {key} (Score: {score:.2f})")
+                                print(f"[EARS] Wake Word Detected: {key} (Score: {score:.2f}) "
+                                      f"state={self.current_state} peak={current_max}")
                                 oww.reset()
                                 return True
             except Exception as e:
@@ -1161,7 +1183,8 @@ class BotGUI:
         retry_count = 0
         while retry_count < 3:
             try:
-                with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX, channels=1, dtype='int16', callback=callback):
+                with sd.InputStream(samplerate=MIC_SAMPLE_RATE, device=MIC_DEVICE_INDEX, channels=1, dtype='int16',
+                                    latency=MIC_LATENCY_S, callback=callback):
                     last_callback_samples = 0
                     last_callback_at = time.time()
                     while not self.stop_event.is_set():

@@ -14,8 +14,10 @@ import numpy as np
 # Speech must beat the floor by this factor to count (measured: floor ~470,
 # speech 1300-1800 RMS in 250 ms windows with AGC on).
 SPEECH_RATIO = 2.2
-# Absolute minimum for "speech".  With AGC off the room floor is ~100 RMS but
-# background clatter bursts to ~450; speech at normal distance is 1000-2800.
+# Absolute minimum for "speech".  With the mic's AGC off the room floor is ~100
+# RMS but clatter bursts to ~450; speech close up is 1000-2800.  With AGC on
+# (the default: distant speech was too quiet for the wake word) the floor is
+# ~470 and SPEECH_RATIO sets the bar instead.
 MIN_SPEECH_RMS = 600.0
 # How long without speech-level audio ends the utterance.
 END_SILENCE_S = 0.9
