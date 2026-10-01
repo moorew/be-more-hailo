@@ -761,6 +761,7 @@ class BotGUI:
             "greeting_sounds": [],
             "ack_sounds": [],
             "thinking_sounds": [],
+            "briefing_sounds": [],  # ready chime; not lip-synced (see play_sound)
             "music": []
         }
         base = "sounds"

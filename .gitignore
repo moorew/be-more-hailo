@@ -46,6 +46,8 @@ settings.json
 # Keep the generated BMO voice greetings and thinking sounds
 !sounds/greeting_sounds/*.wav
 !sounds/thinking_sounds/*.wav
+# Morning briefing ready chime (scripts/make_ready_chime.py)
+!sounds/briefing_sounds/*.wav
 camera_capture.jpg
 current_image.jpg
 test_audio.wav
