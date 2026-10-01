@@ -1,11 +1,11 @@
 /*!
  * bmo-face.js - procedural face rig for BMO (be-more-hailo).
  *
- * Instead of swapping between pre-rendered frames, every mouth and eye pose
- * from the artwork is stored as a morph-compatible contour (shapes.json) and
- * the rig blends between them with springs. On top of that sit small
- * "behaviour" layers: blinks, glances, breathing, and speech-driven head bob,
- * so BMO feels alive between words as well as during them.
+ * Every mouth and eye pose from the artwork is stored as a morph-compatible
+ * contour (shapes.json) and the rig blends between them with springs. Around
+ * that sit behaviour layers (blinks, winks, glances, breathing, speech bob),
+ * "marks" (tongues, dimples, brows, sparkles, notes...) that pop in with an
+ * expression, and critters (bee, ladybug, worm, butterfly) that BMO watches.
  *
  * The lip-sync analyser looks at the audio spectrum (not just loudness) to
  * pick Rhubarb-style mouth shapes: A/X closed, B teeth, C/D open, E/F round.
@@ -21,6 +21,11 @@
   const rand = (a, b) => a + Math.random() * (b - a);
   const easeInQuad = (t) => t * t;
   const easeInOutSine = (t) => 0.5 - 0.5 * Math.cos(Math.PI * t);
+  const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+  const wrapPi = (a) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
+  const TAU = 2 * Math.PI;
+  const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const rgbHex = (c) => '#' + c.map((v) => Math.round(clamp(v, 0, 255)).toString(16).padStart(2, '0')).join('');
 
   /** Damped spring. freq in Hz, damping 1 = critical (no overshoot). */
   class Spring {
@@ -51,6 +56,7 @@
   // ------------------------------------------------------------ expressions
   // Presets live in expressions.json (shared with the Python rig).
   const NO_LID_Y = -95;
+  const NO_LID2_Y = 95;
 
   function resolveExpression(presets, name) {
     const e = presets.expressions[name] || presets.expressions.idle || {};
@@ -64,14 +70,21 @@
       eye: pick('eye'),
       eyeScale: pick('eyeScale'),
       eyeOffset: pick('eyeOffset'),
+      eyeSpin: pick('eyeSpin'),
       lid: { ...d.lid, ...(e.lid || {}) },
+      lid2: { ...d.lid2, ...(e.lid2 || {}) },
       brows: pick('brows'),
+      marks: pick('marks'),
       blush: pick('blush'),
+      blushColor: pick('blushColor'),
       gaze: pick('gaze'),
       blink: pick('blink'),
       motion: pick('motion'),
       head: { ...d.head, ...(e.head || {}) },
       breathe: pick('breathe'),
+      flash: pick('flash'),
+      critter: pick('critter'),
+      react: pick('react'),
       enter: pick('enter'),
     };
   }
@@ -83,7 +96,10 @@
     attentive: { every: [3.0, 6.5], c: 0.055, h: 0.03, o: 0.11, dbl: 0.1 },
     slow:      { every: [3.0, 6.0], c: 0.1, h: 0.08, o: 0.22, dbl: 0.05 },
     sleepy:    { every: [1.4, 3.2], c: 0.16, h: 0.25, o: 0.45, dbl: 0.25 },
+    wink:      { every: [2.2, 5.5], c: 0.06, h: 0.04, o: 0.12, dbl: 0.1 },
+    none:      { every: [1e9, 1e9], c: 0.06, h: 0.04, o: 0.12, dbl: 0 },
   };
+  const WINK = { every: [2.5, 5.0], c: 0.08, h: 0.35, o: 0.18, dbl: 0 }; // right eye only
 
   class Blinker {
     constructor() {
@@ -99,7 +115,7 @@
       this.queued = double ? 1 : 0;
     }
     update(dt, mode) {
-      this.cfg = BLINK_MODES[mode] || BLINK_MODES.normal;
+      this.cfg = typeof mode === 'string' ? BLINK_MODES[mode] || BLINK_MODES.normal : mode;
       const { c, h, o } = this.cfg;
       if (this.phase >= 0) {
         this.phase += dt;
@@ -117,8 +133,10 @@
             this.next = rand(...this.cfg.every);
           }
         }
+      } else if (this.cfg.every[0] >= 1e8) {
+        this.next = 1e9; // 'none': never blink (a later mode clamps this back down)
       } else {
-        this.next -= dt;
+        this.next = Math.min(this.next, this.cfg.every[1]) - dt;
         if (this.next <= 0) this.trigger(Math.random() < this.cfg.dbl);
       }
       return this.value;
@@ -131,68 +149,122 @@
       this.y = new Spring(0, 7, 0.72);
       this.hold = 0.5;
       this.mode = 'wander';
-      this.thinkSide = 1;
+      this.side = 1;
     }
     pick(mode) {
-      let x = 0, y = 0, hold = 1.5;
+      let x = 0, y = 0, hold = 1.5, freq = 7;
+      const side = () => (Math.random() < 0.5 ? -1 : 1);
       switch (mode) {
         case 'wander':
-          if (Math.random() < 0.3) {
-            x = rand(14, 24) * (Math.random() < 0.5 ? -1 : 1);
-            y = rand(-12, 10);
-            hold = rand(0.5, 1.3);
-          } else {
-            x = rand(-5, 5);
-            y = rand(-3, 3);
-            hold = rand(1.0, 3.2);
-          }
+          if (Math.random() < 0.3) { x = rand(14, 24) * side(); y = rand(-12, 10); hold = rand(0.5, 1.3); }
+          else { x = rand(-5, 5); y = rand(-3, 3); hold = rand(1.0, 3.2); }
           break;
         case 'attentive':
-          x = rand(-3, 3);
-          y = rand(-2, 2);
-          hold = rand(1.2, 3.5);
+          x = rand(-3, 3); y = rand(-2, 2); hold = rand(1.2, 3.5);
           break;
         case 'think': {
           const r = Math.random();
-          if (r < 0.75) this.thinkSide = -this.thinkSide;
-          x = r < 0.85 ? 20 * this.thinkSide + rand(-4, 4) : rand(-4, 4);
-          y = rand(-20, -13);
-          hold = rand(0.9, 2.2);
+          if (r < 0.75) this.side = -this.side;
+          x = r < 0.85 ? 20 * this.side + rand(-4, 4) : rand(-4, 4);
+          y = rand(-20, -13); hold = rand(0.9, 2.2);
           break;
         }
         case 'talk':
-          if (Math.random() < 0.2) {
-            x = rand(9, 15) * (Math.random() < 0.5 ? -1 : 1);
-            y = rand(-6, 4);
-            hold = rand(0.4, 0.9);
-          } else {
-            x = rand(-4, 4);
-            y = rand(-3, 2);
-            hold = rand(0.8, 2.2);
-          }
+          if (Math.random() < 0.2) { x = rand(9, 15) * side(); y = rand(-6, 4); hold = rand(0.4, 0.9); }
+          else { x = rand(-4, 4); y = rand(-3, 2); hold = rand(0.8, 2.2); }
           break;
         case 'down':
-          x = rand(-9, 9);
-          y = rand(9, 14);
-          hold = rand(1.5, 3.5);
+          x = rand(-9, 9); y = rand(9, 14); hold = rand(1.5, 3.5);
+          break;
+        case 'shifty': // detective: slow slides from side to side
+          this.side = Math.random() < 0.8 ? -this.side : this.side;
+          x = Math.random() < 0.85 ? rand(18, 26) * this.side : 0;
+          y = rand(-2, 2); hold = rand(1.0, 2.4); freq = 2.2;
+          break;
+        case 'away': // bored: looks off and up, rarely back
+          if (Math.random() < 0.18) { x = rand(-3, 3); y = rand(-2, 2); hold = rand(0.6, 1.2); }
+          else { x = rand(14, 22) * this.side; y = rand(-14, -6); hold = rand(2.5, 5); }
+          freq = 3.5;
           break;
         default: // fixed
           hold = 1;
       }
       this.x.target = x;
       this.y.target = y;
+      this.x.freq = this.y.freq = freq;
       this.hold = hold;
     }
-    update(dt, mode) {
+    update(dt, mode, target) {
       if (mode !== this.mode) {
         this.mode = mode;
         this.hold = 0;
       }
-      this.hold -= dt;
-      if (this.hold <= 0) this.pick(mode);
+      if (mode === 'track' && target) {
+        this.x.target = target[0];
+        this.y.target = target[1];
+        this.x.freq = this.y.freq = 5;
+      } else {
+        this.hold -= dt;
+        if (this.hold <= 0) this.pick(mode);
+      }
       this.x.step(dt);
       this.y.step(dt);
     }
+  }
+
+  // Critter paths (art pixels). facing: +1 moving right, -1 moving left.
+  function critterPose(name, t) {
+    switch (name) {
+      case 'bee': {
+        const u = (TAU * t) / 8;
+        return {
+          x: 640 + 470 * Math.sin(u),
+          y: 290 + 140 * Math.sin(2 * u + 0.6) + 6 * Math.sin(TAU * 9 * t),
+          facing: clamp(Math.cos(u) * 4, -1, 1),
+          angle: 0.12 * Math.sin(TAU * 0.7 * t),
+          flap: 0.55 + 0.45 * Math.abs(Math.sin(TAU * 13 * t)),
+          sx: 1, sy: 1,
+        };
+      }
+      case 'ladybug': {
+        const s = t % 15;
+        let x, facing;
+        if (s < 7) { x = lerp(-110, 1390, s / 7); facing = 1; }
+        else if (s < 7.5) { x = 1390; facing = 1; }
+        else if (s < 14.5) { x = lerp(1390, -110, (s - 7.5) / 7); facing = -1; }
+        else { x = -110; facing = -1; }
+        return {
+          x, y: 652 - 3 * Math.abs(Math.sin(TAU * 3 * t)), facing,
+          angle: 0.07 * Math.sin(TAU * 3 * t), flap: 1, sx: 1, sy: 1,
+        };
+      }
+      case 'worm': {
+        const s = t % 18, k = Math.sin(TAU * 1.1 * t);
+        return {
+          x: 1400 - (1520 * Math.min(s, 16)) / 16 + 18 * k, y: 600, facing: -1,
+          angle: 0.03 * k, flap: 1, sx: 1 + 0.1 * k, sy: 1 - 0.07 * k,
+        };
+      }
+      case 'butterfly': {
+        const u = (TAU * t) / 12;
+        return {
+          x: 640 + 520 * Math.sin(u),
+          y: 165 + 60 * Math.sin((TAU * t) / 6 + 1) + 12 * Math.sin(TAU * 0.9 * t),
+          facing: clamp(Math.cos(u) * 4, -1, 1),
+          angle: 0.18 * Math.sin((TAU * t) / 3.3), flap: 1,
+          sx: 0.3 + 0.7 * Math.abs(Math.cos(TAU * 2.4 * t)), sy: 1,
+        };
+      }
+      default:
+        return { x: -500, y: -500, facing: 1, angle: 0, flap: 1, sx: 1, sy: 1 };
+    }
+  }
+
+  // Lub-dub, once a second (0..~1).
+  function heartbeat(t) {
+    const ph = t % 1;
+    const p1 = ph > 0.5 ? ph - 1 : ph;
+    return Math.exp(-((p1 / 0.06) ** 2)) + 0.6 * Math.exp(-(((ph - 0.22) / 0.07) ** 2));
   }
 
   // Visemes whose jaw opening should follow loudness.
@@ -216,23 +288,33 @@
       for (const k of shapes.mouthOrder) this.mouthW[k] = S(k === 'smile' ? 1 : 0, 5, 0.9);
       this.eyeW = {};
       for (const k of shapes.eyeOrder) if (k !== 'closed') this.eyeW[k] = S(k === 'open' ? 1 : 0, 4.5, 0.85);
+      this.markVis = {};
+      for (const k of Object.keys(shapes.marks || {})) this.markVis[k] = S(0, 4.5, 0.55);
 
       this.p = {
         smile: S(0, 5, 0.85), jaw: S(1, 9, 0.55), width: S(1, 5, 0.8),
         mdx: S(0, 4, 0.85), mdy: S(0, 4, 0.85), mtilt: S(0, 4, 0.85),
         esx: S(1, 4.5, 0.55), esy: S(1, 4.5, 0.55), eox: S(0, 4, 0.85), eoy: S(0, 4, 0.85),
-        lidY: S(NO_LID_Y, 4, 0.9), lidSlope: S(0, 4, 0.9), lidLine: S(0, 4, 0.9),
+        lidY: S(NO_LID_Y, 4, 0.9), lidSlope: S(0, 4, 0.9), lidLine: S(0, 4, 0.9), lidLen: S(46, 4, 0.9),
+        lid2Y: S(NO_LID2_Y, 4, 0.9), lid2Slope: S(0, 4, 0.9), lid2Line: S(0, 4, 0.9), lid2Len: S(46, 4, 0.9),
         blush: S(0, 1.5, 1), tilt: S(0, 2.5, 0.8), headDy: S(0, 2.5, 0.8),
         bob: S(0, 5, 0.38), squash: S(0, 6, 0.4), talkMix: S(0, 5, 1),
-        motion: S(0, 1.5, 1), breathe: S(1, 1, 1),
+        motion: S(0, 1.5, 1), breathe: S(1, 1, 1), spinSpeed: S(0, 1.2, 1),
       };
       this.brows = [0, 1].map(() => ({
         ox: S(0, 5, 0.8), oy: S(-100, 5, 0.8), ix: S(0, 5, 0.8), iy: S(-100, 5, 0.8), w: S(0, 5, 0.9),
       }));
+      this.critter = { name: null, t: 0, vis: S(0, 3, 0.7), pose: null };
 
       this.blinker = new Blinker();
+      this.winker = new Blinker();
       this.gaze = new Gaze();
       this.speech = { viseme: 'X', intensity: 0, active: false, onset: false };
+      this.spinAngle = 0;
+      this.flash = 0;
+      this.wink = 0;
+      this._swap = -1;          // glyph-eye swap progress (0..1), -1 when idle
+      this._swapTargets = null; // eye weights to apply at the swap midpoint
       this._wasTalking = false;
       this._intro = -1;
       this._motionKind = null;
@@ -246,7 +328,21 @@
       this.expr = e;
       const p = this.p;
       for (const k in this.mouthW) this.mouthW[k].target = e.mouth[k] || 0;
-      for (const k in this.eyeW) this.eyeW[k].target = e.eye[k] || 0;
+      // Glyph eyes (hearts, stars, spirals...) can't morph cleanly into other
+      // shapes, so those swaps shrink the eyes away and pop the new ones in.
+      const eyeTargets = {};
+      for (const k in this.eyeW) eyeTargets[k] = e.eye[k] || 0;
+      const dominant = (get) => Object.keys(this.eyeW).reduce((a, k) => (get(k) > get(a) ? k : a));
+      const was = dominant((k) => this.eyeW[k].value), next = dominant((k) => eyeTargets[k]);
+      const glyph = (k) => !!this.shapes.eyes[k].glyph;
+      if (!instant && was !== next && (glyph(was) || glyph(next))) {
+        this._swapTargets = eyeTargets;
+        if (this._swap < 0 || this._swap >= 0.5) this._swap = 0;
+      } else {
+        this._swapTargets = null;
+        for (const k in this.eyeW) this.eyeW[k].target = eyeTargets[k];
+      }
+      for (const k in this.markVis) this.markVis[k].target = e.marks.includes(k) ? 1 : 0;
       p.smile.target = e.mouthMods.smile;
       p.jaw.target = e.mouthMods.jaw;
       p.width.target = e.mouthMods.width;
@@ -260,11 +356,17 @@
       p.lidY.target = e.lid.y;
       p.lidSlope.target = e.lid.slope;
       p.lidLine.target = e.lid.line;
+      p.lidLen.target = e.lid.len;
+      p.lid2Y.target = e.lid2.y;
+      p.lid2Slope.target = e.lid2.slope;
+      p.lid2Line.target = e.lid2.line;
+      p.lid2Len.target = e.lid2.len;
       p.blush.target = e.blush;
       p.tilt.target = (e.head.tilt * Math.PI) / 180;
       p.headDy.target = e.head.dy;
       p.motion.target = e.motion ? 1 : 0;
       p.breathe.target = e.breathe;
+      p.spinSpeed.target = e.eyeSpin;
       this.brows.forEach((b, i) => {
         const key = e.brows[i];
         if (!key) {
@@ -280,6 +382,18 @@
         b.ox.target = ox; b.oy.target = oy; b.ix.target = ix; b.iy.target = iy; b.w.target = w;
       });
       if (e.motion) this._motionKind = e.motion;
+      const c = this.critter;
+      if (e.critter) {
+        if (c.name !== e.critter || c.vis.value < 0.05) {
+          c.name = e.critter;
+          c.t = 0;
+          c.vis.snap(0);
+        }
+        c.vis.target = 1;
+      } else {
+        c.vis.target = 0;
+      }
+      if (e.flash) this.flash = 1;
       if (instant) {
         for (const s of this.springs) s.snap();
       } else if (e.enter) {
@@ -307,6 +421,18 @@
       const e = this.expr, p = this.p, sp = this.speech;
       const talking = !!sp.active;
 
+      // Critter: advance its path; BMO watches it and reacts when it's close.
+      const c = this.critter;
+      let near = 0, track = null;
+      if (c.name && (c.vis.target > 0 || c.vis.value > 0.01)) {
+        c.t += dt;
+        c.pose = critterPose(c.name, c.t);
+        if (e.critter === c.name) {
+          track = [clamp((c.pose.x - 640) * 0.045, -24, 24), clamp((c.pose.y - 300) * 0.06, -16, 18)];
+          if (e.react) near = smoothstep(e.react.radius, e.react.radius * 0.45, Math.hypot(c.pose.x - 640, c.pose.y - 400)) * c.vis.value;
+        }
+      }
+
       // Mouth pose: artist shapes when talking, expression rest mouth otherwise.
       for (const k in this.mouthW) {
         const s = this.mouthW[k];
@@ -315,10 +441,21 @@
           s.freq = 11;
           s.damping = 0.92;
         } else {
-          s.target = e.mouth[k] || 0;
+          const rest = e.mouth[k] || 0;
+          s.target = e.react ? lerp(rest, e.react.mouth[k] || 0, near) : rest;
           s.freq = 5;
           s.damping = 0.88;
         }
+      }
+      if (e.react) {
+        const k = 1 + (e.react.eyeScale - 1) * near;
+        p.esx.target = e.eyeScale[0] * k;
+        p.esy.target = e.eyeScale[1] * k;
+      }
+      // Marks on the mouth (tongue, dimples...) tuck away while talking.
+      for (const k in this.markVis) {
+        const on = e.marks.includes(k) && !(talking && this.shapes.marks[k].anchor === 'mouth');
+        this.markVis[k].target = on ? 1 : 0;
       }
       p.talkMix.target = talking ? 1 : 0;
       p.smile.target = talking ? e.talk.smile : e.mouthMods.smile;
@@ -354,10 +491,25 @@
         } else this._intro = -1;
       }
 
-      const blink = Math.max(this.blinker.update(dt, e.blink), introBlink);
-      this.blink = blink;
-      this.gaze.update(dt, talking ? 'talk' : e.gaze);
+      this.blink = Math.max(this.blinker.update(dt, e.blink), introBlink);
+      this.wink = e.blink === 'wink' ? this.winker.update(dt, WINK) : this.winker.update(dt, BLINK_MODES.none);
+      this.gaze.update(dt, talking ? 'talk' : e.gaze, track);
+      this.flash *= Math.exp(-dt / 0.14);
+      if (this._swap >= 0) {
+        const before = this._swap;
+        this._swap += dt / 0.26;
+        if (before < 0.5 && this._swap >= 0.5 && this._swapTargets) {
+          for (const k in this.eyeW) this.eyeW[k].snap(this._swapTargets[k]);
+          this.spinAngle = 0; // new glyphs appear upright
+          this._swapTargets = null;
+        }
+        if (this._swap >= 1) this._swap = -1;
+      }
       for (const s of this.springs) s.step(dt);
+
+      // Spinning eyes (dizzy); once the spin stops they settle back upright.
+      this.spinAngle += p.spinSpeed.value * dt;
+      if (Math.abs(p.spinSpeed.target) < 1e-3) this.spinAngle -= wrapPi(this.spinAngle) * (1 - Math.exp(-dt * 5));
     }
 
     // ------------------------------------------------------------ geometry
@@ -370,13 +522,33 @@
       hy += Math.sin((2 * Math.PI * t) / 4.2) * 2.2 * p.breathe.value;
       tilt += Math.sin((2 * Math.PI * t) / 7.3) * 0.006 * p.breathe.value;
       const m = p.motion.value;
+      let eyeMul = 1, eyeRot = 0;
       switch (this._motionKind) {
         case 'bounce': hy -= Math.abs(Math.sin(Math.PI * t * 1.5)) * 9 * m; break;
         case 'hop': hy -= Math.abs(Math.sin(Math.PI * t * 2.3)) * 15 * m; break;
-        case 'tremble': hx += Math.sin(2 * Math.PI * t * 13) * 2.2 * m; break;
+        case 'tremble': hx += Math.sin(TAU * t * 13) * 2.2 * m; break;
         case 'droop':
-          hy += (1 - Math.cos((2 * Math.PI * t) / 6)) * 5 * m;
-          tilt += Math.sin((2 * Math.PI * t) / 6) * 0.01 * m;
+          hy += (1 - Math.cos(TAU * t / 6)) * 5 * m;
+          tilt += Math.sin(TAU * t / 6) * 0.01 * m;
+          break;
+        case 'woozy':
+          hx += Math.cos(TAU * 0.55 * t) * 12 * m;
+          hy += Math.sin(TAU * 0.55 * t) * 8 * m;
+          tilt += Math.sin(TAU * 0.55 * t) * 0.025 * m;
+          break;
+        case 'pulse': eyeMul = 1 + 0.12 * heartbeat(t) * m; break;
+        case 'twinkle':
+          eyeRot = 0.16 * Math.sin(TAU * 0.45 * t) * m;
+          eyeMul = 1 + 0.05 * Math.sin(TAU * 1.3 * t) * m;
+          break;
+        case 'shake': {
+          const ph = t % 2.4, env = ph < 0.4 ? Math.sin((Math.PI * ph) / 0.4) : 0;
+          hx += Math.sin(TAU * 16 * t) * 9 * env * m;
+          break;
+        }
+        case 'groove':
+          hy -= Math.abs(Math.sin(TAU * t)) * 11 * m;
+          tilt += Math.sin(Math.PI * t) * 0.025 * m;
           break;
       }
       const cT = Math.cos(tilt), sT = Math.sin(tilt);
@@ -435,7 +607,7 @@
       // How open the mouth is (0..1): drives the eye "lift" below.
       const openness = clamp(((bottom - top) * jaw - 18) / 110);
 
-      // ---- eyes
+      // ---- eyes: blend poses (each pose mirrors for the right eye unless noMirror)
       const blinkPose = S.eyes.closed;
       const EN = blinkPose.pts.length;
       let esum = 0;
@@ -445,58 +617,162 @@
         if (w > 1e-4) { ews.push([k, w]); esum += w; }
       }
       if (esum < 1e-6) { ews.push(['open', 1]); esum = 1; }
-      const base = new Float64Array(EN * 2);
+      const base = [new Float64Array(EN * 2), new Float64Array(EN * 2)];
       let eStroke = 0, openLike = 0;
+      const fill = [0, 0, 0], sCol = [0, 0, 0];
       for (const [k, w0] of ews) {
         const w = w0 / esum, E = S.eyes[k];
-        for (let i = 0; i < EN; i++) { base[2 * i] += E.pts[i][0] * w; base[2 * i + 1] += E.pts[i][1] * w; }
+        for (let side = 0; side < 2; side++) {
+          const mir = side === 1 && !E.noMirror ? -1 : 1, b = base[side];
+          for (let i = 0; i < EN; i++) { b[2 * i] += E.pts[i][0] * mir * w; b[2 * i + 1] += E.pts[i][1] * w; }
+        }
         eStroke += E.stroke * w;
-        if (k === 'open' || k === 'wide') openLike += w;
+        const f = hexRgb(E.fill || '#000000'), sc = hexRgb(E.strokeColor || '#000000');
+        for (let j = 0; j < 3; j++) { fill[j] += f[j] * w; sCol[j] += sc[j] * w; }
+        if (E.blinks) openLike += w;
       }
-      const b = this.blink * openLike; // arcs (happy/relax) don't blink
       const sq = p.squash.value;
-      const sx = p.esx.value * (1 + 0.035 * sq);
-      const sy = p.esy.value * (1 - 0.07 * sq) * (1 + 0.04 * openness);
+      const swapK = this._swap >= 0 ? Math.max(0.03, Math.abs(Math.cos(Math.PI * this._swap))) : 1;
+      const sx = p.esx.value * (1 + 0.035 * sq) * eyeMul * swapK;
+      const sy = p.esy.value * (1 - 0.07 * sq) * (1 + 0.04 * openness) * eyeMul * swapK;
       const lift = 5 * openness * p.talkMix.value;
-      const eyes = [], brows = [];
+      const rot = this.spinAngle + eyeRot, cR = Math.cos(rot), sR = Math.sin(rot);
+      const gx = this.gaze.x.value, gy = this.gaze.y.value;
+      const eyes = [], brows = [], eyePos = [];
       for (let side = 0; side < 2; side++) {
         const mir = side === 0 ? 1 : -1;
+        const blinkAmt = Math.max(this.blink, side === 1 ? this.wink : 0) * openLike;
         const [cx0, cy0] = S.eyeCenters[side];
-        const cx = cx0 + this.gaze.x.value + p.eox.value * mir;
-        const cy = cy0 + this.gaze.y.value + p.eoy.value - lift;
-        const pts = [];
+        const sockX = cx0 + p.eox.value * mir, sockY = cy0 + p.eoy.value - lift;
+        const cx = sockX + gx, cy = sockY + gy;
+        eyePos.push([cx, cy]);
+        const place = (x, y) => {
+          x *= sx; y *= sy;
+          return head(cx + x * cR - y * sR, cy + x * sR + y * cR);
+        };
+        const b = base[side], pts = [];
         for (let i = 0; i < EN; i++) {
-          const x = lerp(base[2 * i], blinkPose.pts[i][0], b);
-          const y = lerp(base[2 * i + 1], blinkPose.pts[i][1], b);
-          pts.push(head(cx + x * sx * mir, cy + y * sy));
+          pts.push(place(lerp(b[2 * i], blinkPose.pts[i][0], blinkAmt), lerp(b[2 * i + 1], blinkPose.pts[i][1], blinkAmt)));
         }
-        const lidAt = (xi) => p.lidY.value + p.lidSlope.value * xi;
-        let clip = null, lidLine = null;
-        if (p.lidY.value > -70) {
-          clip = [[-140, lidAt(-140)], [140, lidAt(140)], [140, 220], [-140, 220]]
-            .map(([xi, y]) => head(cx + xi * mir, cy + y));
-          if (p.lidLine.value > 0.5) {
-            lidLine = { p0: head(cx - 46 * mir, cy + lidAt(-46)), p1: head(cx + 46 * mir, cy + lidAt(46)), w: p.lidLine.value };
+        const details = [];
+        for (const [k, w0] of ews) {
+          const E = S.eyes[k];
+          if (!E.details) continue;
+          const a = smoothstep(0.35, 0.9, w0 / esum) * (1 - blinkAmt);
+          if (a < 0.01) continue;
+          for (const d of E.details) {
+            const dm = side === 1 && !E.noMirror && !d.noMirror ? -1 : 1;
+            details.push({ pts: d.pts.map(([x, y]) => place(x * dm, y)), fill: d.fill, alpha: d.alpha * a });
           }
         }
-        eyes.push({ pts, stroke: lerp(eStroke, blinkPose.stroke, b), clip, lidLine });
-
+        // Lids sit on the socket and only partly follow the gaze.
+        const lcx = sockX + gx * 0.15, lcy = sockY + gy * 0.7;
+        const at = (xi) => p.lidY.value + p.lidSlope.value * xi;
+        const at2 = (xi) => p.lid2Y.value + p.lid2Slope.value * xi;
+        let clip = null;
+        const lidLines = [];
+        if (p.lidY.value > -70 || p.lid2Y.value < 70) {
+          clip = [[-300, at(-300)], [300, at(300)], [300, at2(300)], [-300, at2(-300)]]
+            .map(([xi, y]) => head(lcx + xi * mir, lcy + y));
+        }
+        if (p.lidLine.value > 0.5) {
+          const L = p.lidLen.value;
+          lidLines.push({ p0: head(lcx - L * mir, lcy + at(-L)), p1: head(lcx + L * mir, lcy + at(L)), w: p.lidLine.value });
+        }
+        if (p.lid2Line.value > 0.5) {
+          const L = p.lid2Len.value;
+          lidLines.push({ p0: head(lcx - L * mir, lcy + at2(-L)), p1: head(lcx + L * mir, lcy + at2(L)), w: p.lid2Line.value });
+        }
+        let brow = null;
         const br = this.brows[side];
         if (br.w.value > 0.4) {
-          const bx = cx0 + this.gaze.x.value * 0.3, by = cy0 + this.gaze.y.value * 0.25 - 7 * sq - lift * 1.4;
-          brows.push({
+          const bx = cx0 + gx * 0.3, by = cy0 + gy * 0.25 - 7 * sq - lift * 1.4;
+          brow = {
             p0: head(bx + br.ox.value * mir, by + br.oy.value),
             p1: head(bx + br.ix.value * mir, by + br.iy.value),
             w: br.w.value,
-          });
+          };
+          brows.push(brow);
         }
+        eyes.push({
+          pts, stroke: lerp(eStroke, blinkPose.stroke, blinkAmt),
+          fill: rgbHex(fill), strokeColor: rgbHex(sCol), details, clip, lidLines, brow,
+        });
+      }
+
+      // ---- marks: pop in/out (scale about their centre) with small animations
+      const marks = [];
+      for (const k in this.markVis) {
+        const vis = this.markVis[k].value;
+        if (vis < 0.01) continue;
+        const M = S.marks[k], an = M.anim || {};
+        let ox = 0, oy = 0;
+        if (M.anchor === 'eyeL' || M.anchor === 'eyeR') {
+          const side = M.anchor === 'eyeL' ? 0 : 1;
+          const [cx0, cy0] = S.eyeCenters[side];
+          const mir = side === 0 ? 1 : -1;
+          ox = cx0 + p.eox.value * mir + gx * 0.5 - M.ref[0];
+          oy = cy0 + p.eoy.value + gy * 0.5 - lift - M.ref[1];
+        }
+        let scale = vis, alpha = clamp(vis * 1.5), arot = 0, ax = 0, ay = 0, aroot = null;
+        if (an.type === 'wiggle') { arot = an.amp * Math.sin(TAU * an.freq * t); aroot = an.root; }
+        else if (an.type === 'blink') alpha *= Math.sin(TAU * an.freq * t) > -0.3 ? 1 : 0.15;
+        else if (an.type === 'twinkle') {
+          const k2 = 0.5 + 0.5 * Math.sin(TAU * (an.freq * t + an.phase));
+          scale *= 0.55 + 0.6 * k2; alpha *= 0.35 + 0.65 * k2; arot = 0.3 * Math.sin(TAU * (0.3 * t + an.phase));
+        } else if (an.type === 'float') {
+          const u = (t / an.period + an.phase) % 1;
+          ay = -an.rise * u; ax = 8 * Math.sin(TAU * u); alpha *= Math.sin(Math.PI * u);
+        }
+        // centroid of the whole mark (scale-in pivot)
+        let mx = 0, my = 0, n = 0;
+        for (const it of M.items) for (const [x, y] of it.pts) { mx += x; my += y; n++; }
+        mx /= n; my /= n;
+        const [rx, ry] = aroot || [mx, my];
+        const cA = Math.cos(arot), sA = Math.sin(arot);
+        M.items.forEach((it, idx) => {
+          const sh = an.type === 'shiver' ? an.amp * Math.sin(TAU * an.freq * t + idx * 1.7) : 0;
+          const pts = it.pts.map(([x0, y0]) => {
+            let x = x0 - rx, y = y0 - ry;
+            [x, y] = [x * cA - y * sA + rx, x * sA + y * cA + ry];
+            x = mx + (x - mx) * scale + ax + ox + sh;
+            y = my + (y - my) * scale + ay + oy;
+            return M.anchor === 'mouth' ? mouthXf(x, y) : head(x, y);
+          });
+          if (alpha > 0.01) marks.push({ key: k, kind: it.kind, closed: it.closed, pts, width: it.width * Math.max(0, scale), color: it.color, alpha: clamp(alpha) });
+        });
+      }
+
+      // ---- critter (in front of the face, not attached to BMO's head)
+      let critter = null;
+      const c = this.critter;
+      if (c.name && c.pose && c.vis.value > 0.01) {
+        const C = S.critters[c.name], q = c.pose;
+        const k = (C.width / C.size[0]) * c.vis.value;
+        const flip = q.facing * C.faces * q.sx;
+        const ang = q.angle + (C.tilt || 0) * Math.sign(q.facing);
+        const cA = Math.cos(ang), sA = Math.sin(ang);
+        const [wx, wy] = C.wingRoot || [0, 0];
+        const xf = (x, y, wing) => {
+          if (wing) { x = wx + (x - wx) * q.flap; y = wy + (y - wy) * q.flap; }
+          x = (x - C.size[0] / 2) * k * flip;
+          y = (y - C.size[1] / 2) * k * q.sy;
+          return [q.x + x * cA - y * sA, q.y + x * sA + y * cA];
+        };
+        critter = {
+          name: c.name, center: [q.x, q.y],
+          parts: C.parts.map((pt) => ({
+            pts: pt.pts.map(([x, y]) => xf(x, y, pt.group === 'wing')),
+            fill: pt.fill, stroke: pt.stroke, width: pt.width * k, alpha: pt.alpha, closed: pt.closed,
+          })),
+        };
       }
 
       const blush = p.blush.value > 0.01
-        ? { alpha: clamp(p.blush.value), centers: [head(233, 393), head(1047, 393)] }
+        ? { alpha: clamp(p.blush.value), centers: [head(233, 393), head(1047, 393)], color: e.blushColor || S.colors.blush }
         : null;
 
-      return { eyes, brows, mouth, blush, expression: e.name };
+      return { eyes, brows, mouth, marks, critter, blush, flash: this.flash > 0.01 ? this.flash : 0, expression: e.name };
     }
   }
 
@@ -519,6 +795,7 @@
     draw(f) {
       const c = this.ctx, W = this.canvas.width, H = this.canvas.height, C = this.C;
       c.setTransform(1, 0, 0, 1, 0, 0);
+      c.globalAlpha = 1;
       c.fillStyle = C.bg;
       c.fillRect(0, 0, W, H);
       let sxf = W / 1280, syf = H / 720;
@@ -529,16 +806,17 @@
       c.lineCap = 'round';
 
       if (f.blush) {
+        const [r, g, b] = hexRgb(f.blush.color);
         for (const [x, y] of f.blush.centers) {
           c.save();
           c.globalAlpha = 0.69 * f.blush.alpha;
           c.translate(x, y);
           c.scale(1, 42 / 63);
-          const g = c.createRadialGradient(0, 0, 0, 0, 0, 86);
-          g.addColorStop(0, C.blush);
-          g.addColorStop(0.5, C.blush);
-          g.addColorStop(1, 'rgba(84,139,81,0)');
-          c.fillStyle = g;
+          const grad = c.createRadialGradient(0, 0, 0, 0, 0, 86);
+          grad.addColorStop(0, f.blush.color);
+          grad.addColorStop(0.5, f.blush.color);
+          grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+          c.fillStyle = grad;
           c.beginPath();
           c.arc(0, 0, 86, 0, Math.PI * 2);
           c.fill();
@@ -546,8 +824,6 @@
         }
       }
 
-      c.fillStyle = C.line;
-      c.strokeStyle = C.line;
       for (const e of f.eyes) {
         c.save();
         if (e.clip) {
@@ -555,18 +831,28 @@
           c.clip();
         }
         this._path(e.pts);
+        c.fillStyle = e.fill;
         c.fill();
         if (e.stroke > 0.3) {
           c.lineWidth = e.stroke;
+          c.strokeStyle = e.strokeColor;
           c.stroke();
         }
+        for (const d of e.details) {
+          c.globalAlpha = d.alpha;
+          this._path(d.pts);
+          c.fillStyle = d.fill;
+          c.fill();
+        }
         c.restore();
-        if (e.lidLine) {
-          c.lineWidth = e.lidLine.w;
-          this._path([e.lidLine.p0, e.lidLine.p1], false);
+        c.strokeStyle = C.line;
+        for (const l of e.lidLines) {
+          c.lineWidth = l.w;
+          this._path([l.p0, l.p1], false);
           c.stroke();
         }
       }
+      c.strokeStyle = C.line;
       for (const b of f.brows) {
         c.lineWidth = b.w;
         this._path([b.p0, b.p1], false);
@@ -598,6 +884,32 @@
       c.lineWidth = m.stroke;
       c.strokeStyle = C.line;
       c.stroke();
+
+      for (const k of f.marks) {
+        c.globalAlpha = k.alpha;
+        this._path(k.pts, k.closed);
+        if (k.kind === 'fill') { c.fillStyle = k.color; c.fill(); }
+        else if (k.width > 0.3) { c.lineWidth = k.width; c.strokeStyle = k.color; c.stroke(); }
+      }
+      c.globalAlpha = 1;
+
+      if (f.critter) {
+        for (const pt of f.critter.parts) {
+          c.globalAlpha = pt.alpha;
+          this._path(pt.pts, pt.closed);
+          if (pt.fill && pt.closed) { c.fillStyle = pt.fill; c.fill(); }
+          if (pt.stroke && pt.width > 0.3) { c.lineWidth = pt.width; c.strokeStyle = pt.stroke; c.stroke(); }
+        }
+        c.globalAlpha = 1;
+      }
+
+      if (f.flash > 0) {
+        c.setTransform(1, 0, 0, 1, 0, 0);
+        c.globalAlpha = f.flash;
+        c.fillStyle = '#FFFFFF';
+        c.fillRect(0, 0, W, H);
+        c.globalAlpha = 1;
+      }
     }
   }
 
@@ -791,5 +1103,6 @@
 
   global.BMOFace = {
     Spring, FaceRig, CanvasRenderer, LipSyncAnalyser, VisemeSelector, AudioLipSync, BANDS,
+    critterPose, heartbeat,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

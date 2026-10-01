@@ -3,6 +3,7 @@
     python -m bmo_face.preview sheet  out/expressions.png
     python -m bmo_face.preview wav    sounds/greeting_sounds/greeting_01.wav out/greeting_01
     python -m bmo_face.preview bench  [--supersample 4]
+    python -m bmo_face.preview faces  [--supersample 4]   # ms per frame for every expression
 """
 
 from __future__ import annotations
@@ -79,6 +80,24 @@ def bench(supersample: int = 4, frames: int = 300) -> None:
     print(f"update+render: {ms:.1f} ms/frame at supersample={supersample} ({1000 / ms:.0f} fps max)")
 
 
+def faces(supersample: int = 4, frames: int = 30) -> None:
+    """Time update+render for every expression (the heavy ones are hearts, stars, rings)."""
+    rig = FaceRig()
+    renderer = PillowRenderer(rig.shapes, (800, 480), supersample=supersample)
+    rows = []
+    for name in rig.presets["expressions"]:
+        rig.set_expression(name, instant=True)
+        for _ in range(30):
+            rig.update(1 / 30)
+        t0 = time.perf_counter()
+        for _ in range(frames):
+            rig.update(1 / 30)
+            renderer.render(rig.frame())
+        rows.append((name, (time.perf_counter() - t0) * 1000 / frames))
+    for name, ms in sorted(rows, key=lambda r: -r[1]):
+        print(f"{name:12s} {ms:6.1f} ms  ({1000 / ms:.0f} fps max)")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -90,11 +109,15 @@ def main() -> None:
     w.add_argument("--fps", type=int, default=30)
     b = sub.add_parser("bench")
     b.add_argument("--supersample", type=int, default=4)
+    fc = sub.add_parser("faces")
+    fc.add_argument("--supersample", type=int, default=4)
     a = ap.parse_args()
     if a.cmd == "sheet":
         sheet(a.out)
     elif a.cmd == "wav":
         wav(a.path, a.out_dir, a.fps)
+    elif a.cmd == "faces":
+        faces(a.supersample)
     else:
         bench(a.supersample)
 

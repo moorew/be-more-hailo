@@ -105,36 +105,52 @@ class BotStates:
     LADYBUG = "ladybug"
     WORM = "worm"
 
-# States the rig draws live, mapped to a rig expression (bmo_face/expressions.json).
-# Anything not listed (bee, ladybug, hearts, dizzy...) keeps its PNG animation.
-# SPEAKING uses the current talk mood instead (see TALK_MOODS).
+# Every face is drawn live by the rig, mapped to a rig expression
+# (bmo_face/expressions.json). SPEAKING uses the current talk mood instead
+# (see TALK_MOODS). The PNG frames in faces/ are only loaded if the rig fails.
 RIG_EXPRESSIONS = {
     BotStates.IDLE: "idle",
     BotStates.LISTENING: "listening",
     BotStates.THINKING: "thinking",
     BotStates.SPEAKING: None,
     BotStates.WARMUP: "sleepy",
+    BotStates.ERROR: "error",
+    BotStates.CAPTURING: "capturing",
     BotStates.HAPPY: "happy",
     BotStates.SAD: "sad",
     BotStates.ANGRY: "angry",
     BotStates.SURPRISED: "surprised",
     BotStates.SLEEPY: "sleepy",
-    BotStates.CONFUSED: "thinking",
-    BotStates.CURIOUS: "surprised",
-    BotStates.DAYDREAM: "relaxed",
-    BotStates.LOW_BATTERY: "sleepy",
-    BotStates.JAMMING: "excited",
-    BotStates.FOOTBALL: "cheer",
+    BotStates.DIZZY: "dizzy",
+    BotStates.CHEEKY: "cheeky",
+    BotStates.HEART: "heart",
+    BotStates.STARRY_EYED: "starry",
+    BotStates.CONFUSED: "confused",
+    BotStates.SHHH: "shhh",
+    BotStates.JAMMING: "jamming",
+    BotStates.FOOTBALL: "football",
+    BotStates.DETECTIVE: "detective",
+    BotStates.SIR_MANO: "sir_mano",
+    BotStates.LOW_BATTERY: "low_battery",
+    BotStates.BEE: "bee",
+    BotStates.DAYDREAM: "daydream",
+    BotStates.BORED: "bored",
+    BotStates.CURIOUS: "curious",
+    BotStates.LADYBUG: "ladybug",
+    BotStates.WORM: "worm",
 }
 
-# When the LLM sets an expression and then speaks, BMO talks in that mood
-# (mouth shapes bend into a smile or frown, eyes/brows/blush stay).
+# When the LLM sets an expression and then speaks, BMO talks in that mood:
+# the mouth follows the voice while the eyes, brows and extras stay (heart
+# eyes, stars, spirals...). Curious talks as surprised so the ring eyes don't
+# stare through a whole sentence; daydream talks without its butterfly.
 TALK_MOODS = {
-    BotStates.HAPPY: "happy", BotStates.HEART: "happy", BotStates.CHEEKY: "happy",
-    BotStates.STARRY_EYED: "excited", BotStates.JAMMING: "excited", BotStates.FOOTBALL: "cheer",
-    BotStates.SAD: "sad", BotStates.ANGRY: "angry",
-    BotStates.SURPRISED: "surprised", BotStates.CURIOUS: "surprised",
-    BotStates.SLEEPY: "sleepy", BotStates.LOW_BATTERY: "sleepy", BotStates.DAYDREAM: "relaxed",
+    BotStates.HAPPY: "happy", BotStates.HEART: "heart", BotStates.CHEEKY: "cheeky",
+    BotStates.STARRY_EYED: "starry", BotStates.JAMMING: "jamming", BotStates.FOOTBALL: "football",
+    BotStates.SAD: "sad", BotStates.ANGRY: "angry", BotStates.DIZZY: "dizzy",
+    BotStates.SURPRISED: "surprised", BotStates.CURIOUS: "surprised", BotStates.CONFUSED: "confused",
+    BotStates.SLEEPY: "sleepy", BotStates.LOW_BATTERY: "low_battery", BotStates.DAYDREAM: "relaxed",
+    BotStates.BORED: "bored",
 }
 
 class BotGUI:
@@ -879,6 +895,11 @@ class BotGUI:
     def load_animations(self):
         """Load core PNG frames synchronously; defer expressions to background."""
         self.animations = {}
+        if self.face_view is not None:
+            # The rig draws every face; PNGs load later only if it fails.
+            self.tk_img = None
+            print("[FACE] Rig draws every face; PNG frames not preloaded")
+            return
         for state in self.CORE_ANIMATION_STATES:
             frames = self._load_state_frames(state)
             if frames:
@@ -955,6 +976,11 @@ class BotGUI:
                 self.face_view = None
                 self._rig_state = None
                 self._last_render_key = None
+                if not self.animations:
+                    try:
+                        self.load_animations()
+                    except Exception as load_err:
+                        print(f"[FACE] Could not load PNG faces either: {load_err}")
 
         # Animation Loop
         frames = self.animations.get(display_state, self.animations.get(BotStates.IDLE, []))

@@ -193,14 +193,22 @@ log.append(f"Piper stream: {n} chunks scheduled, talked {len(talk)} frames in mo
 
 gui.set_state(S.IDLE, "Tap to speak")
 assert run(0.5)[-1][0] == "idle"
-gui.animations[S.HEART] = [FakePhoto(), FakePhoto()]
-gui.current_state = S.HEART
-run(0.2)
-assert gui.background_label.image != str(gui.face_view.photo), "PNG state should take the label"
+# Every state is drawn by the rig; the PNG frames aren't preloaded.
+all_states = {v for k, v in vars(S).items() if not k.startswith("_")} - {S.DISPLAY_IMAGE, S.SCREENSAVER}
+missing = all_states - set(mod.RIG_EXPRESSIONS)
+assert not missing, f"states without a rig face: {missing}"
+for state, expr in mod.RIG_EXPRESSIONS.items():
+    if state == S.SPEAKING:
+        continue
+    gui.current_state = state
+    seen = run(0.2)
+    assert seen[-1][0] == expr, (state, seen[-1][0])
+    assert gui.background_label.image == str(gui.face_view.photo), state
+gui.load_animations()
+assert gui.animations == {}, "PNG frames should not be preloaded while the rig works"
 gui.current_state = S.IDLE
 run(0.1)
-assert gui.background_label.image == str(gui.face_view.photo), "rig should re-attach"
-log.append("hand-off: rig -> PNG (heart) -> rig")
+log.append(f"every face: {len(mod.RIG_EXPRESSIONS) - 1} states drawn by the rig, no PNGs preloaded")
 
 # The wake-word flow pre-warms Piper with nothing attached to its output.
 # speak() must still wire up the reader + aplay, or every reply is silent.

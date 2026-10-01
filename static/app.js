@@ -15,8 +15,11 @@ const bmoDisplayImage = document.getElementById('bmo-display-image');
 const RIG_EXPRESSIONS = {
     idle: 'idle', listening: 'listening', thinking: 'thinking', speaking: 'idle',
     happy: 'happy', sad: 'sad', angry: 'angry', surprised: 'surprised', sleepy: 'sleepy',
-    daydream: 'relaxed', football: 'cheer', heart: 'happy', starry_eyed: 'excited',
-    error: 'sad', detective: 'thinking', sir_mano: 'happy', bee: 'surprised',
+    daydream: 'daydream', football: 'football', heart: 'heart', starry_eyed: 'starry',
+    error: 'error', detective: 'detective', sir_mano: 'sir_mano', bee: 'bee',
+    dizzy: 'dizzy', cheeky: 'cheeky', confused: 'confused', shhh: 'shhh', jamming: 'jamming',
+    low_battery: 'low_battery', bored: 'bored', curious: 'curious', capturing: 'capturing',
+    ladybug: 'ladybug', worm: 'worm',
 };
 const SILENT = { viseme: 'X', intensity: 0, active: false, onset: false };
 

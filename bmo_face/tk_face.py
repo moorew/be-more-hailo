@@ -75,11 +75,12 @@ class SpeechSchedule:
 class FaceView:
     """Owns a rig + renderer and paints into a tk.Label via one reusable PhotoImage."""
 
-    def __init__(self, label, size=(800, 480), fit="stretch", supersample=4, shapes=None, presets=None):
+    def __init__(self, label, size=(800, 480), fit="stretch", supersample=4, shapes=None, presets=None,
+                 tile_budget=300_000):
         from PIL import ImageTk  # imported here so the rest of the package works headless
 
         self.rig = FaceRig(shapes, presets)
-        self.renderer = PillowRenderer(self.rig.shapes, size, fit, supersample)
+        self.renderer = PillowRenderer(self.rig.shapes, size, fit, supersample, tile_budget)
         self.photo = ImageTk.PhotoImage(self.renderer.base)
         self.label = label
         self._last = None

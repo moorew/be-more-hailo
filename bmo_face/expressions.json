@@ -1,9 +1,10 @@
 {
-  "_about": "Expression presets shared by web/bmo-face.js and python/bmo_face. Units are art pixels (1280x720). Brow points are relative to the eye centre with +x toward the nose. mouth/eye map pose names from shapes.json to weights. talk.* applies while speaking.",
+  "_about": "Expression presets shared by web/bmo-face.js and python/bmo_face. Units are art pixels (1280x720). Brow points are relative to the eye centre with +x toward the nose; eyeOffset x is toward the nose too. mouth/eye map pose names from shapes.json to weights; marks name extra strokes from shapes.json; critter names a critter that flies/walks around (gaze 'track' follows it). talk.* applies while speaking.",
   "brows": {
     "angry": [[-51.5, -130], [87.5, -29.5], 19],
     "worried": [[-58, -80], [46, -108], 14],
-    "raised": [[-48, -110], [44, -122], 13]
+    "raised": [[-48, -110], [44, -122], 13],
+    "flat": [[-127.5, -38], [133.5, -38], 19]
   },
   "default": {
     "mouth": { "smile": 1 },
@@ -12,14 +13,21 @@
     "eye": { "open": 1 },
     "eyeScale": [1, 1],
     "eyeOffset": [0, 0],
-    "lid": { "y": -95, "slope": 0, "line": 0 },
+    "eyeSpin": 0,
+    "lid": { "y": -95, "slope": 0, "line": 0, "len": 46 },
+    "lid2": { "y": 95, "slope": 0, "line": 0, "len": 46 },
     "brows": [null, null],
+    "marks": [],
     "blush": 0,
+    "blushColor": null,
     "gaze": "wander",
     "blink": "normal",
     "motion": null,
     "head": { "tilt": 0, "dy": 0 },
     "breathe": 1,
+    "flash": false,
+    "critter": null,
+    "react": null,
     "enter": null
   },
   "expressions": {
@@ -46,6 +54,7 @@
       "eye": { "happy": 1 },
       "mouthMods": { "smile": 0.25, "width": 1.05 },
       "talk": { "smile": 0.75, "width": 1.05 },
+      "marks": ["dimples"],
       "blush": 1,
       "motion": "bounce",
       "enter": { "headKick": -140 }
@@ -65,7 +74,7 @@
       "talk": { "smile": -0.55, "width": 0.9 },
       "eyeScale": [0.95, 0.92],
       "eyeOffset": [0, 10],
-      "lid": { "y": -36, "slope": -0.28, "line": 0 },
+      "lid": { "y": -36, "slope": -0.28 },
       "brows": ["worried", "worried"],
       "gaze": "down",
       "blink": "slow",
@@ -89,7 +98,7 @@
       "mouthMods": { "width": 1.12, "dy": 12 },
       "talk": { "smile": -0.5, "width": 1.1 },
       "eyeScale": [1, 0.92],
-      "lid": { "y": -20, "slope": 0.55, "line": 0 },
+      "lid": { "y": -20, "slope": 0.55 },
       "brows": ["angry", "angry"],
       "gaze": "fixed",
       "motion": "tremble",
@@ -123,6 +132,194 @@
       "gaze": "fixed",
       "motion": "droop",
       "breathe": 1.4
+    },
+    "daydream": {
+      "eye": { "relax": 1 },
+      "mouth": { "smile": 1 },
+      "mouthMods": { "width": 0.9 },
+      "blush": 0.5,
+      "gaze": "fixed",
+      "motion": "droop",
+      "breathe": 1.4,
+      "critter": "butterfly"
+    },
+    "error": {
+      "eye": { "glossy": 1 },
+      "eyeOffset": [30, 52],
+      "mouth": { "gasp": 1 },
+      "talk": { "smile": -0.3, "width": 0.95 },
+      "marks": ["exBrowL", "exBrowR", "stressCurl", "gaspCheeks"],
+      "gaze": "attentive",
+      "blink": "slow",
+      "motion": "shake",
+      "enter": { "eyePop": 0.85 }
+    },
+    "capturing": {
+      "eye": { "ring": 1 },
+      "eyeOffset": [-5, -4],
+      "mouth": { "oh": 1 },
+      "marks": ["shockLines"],
+      "flash": true,
+      "gaze": "fixed",
+      "blink": "none",
+      "motion": "bounce",
+      "enter": { "eyePop": 0.6, "headKick": -200 }
+    },
+    "curious": {
+      "eye": { "ring": 1 },
+      "eyeOffset": [-5, -4],
+      "eyeScale": [0.9, 0.9],
+      "mouth": { "oh": 1 },
+      "mouthMods": { "width": 0.8, "jaw": 0.8 },
+      "talk": { "smile": 0.1, "width": 0.95 },
+      "gaze": "fixed",
+      "blink": "none",
+      "motion": "bounce",
+      "head": { "tilt": -1 },
+      "enter": { "eyePop": 0.7 }
+    },
+    "dizzy": {
+      "eye": { "spiral": 1 },
+      "eyeOffset": [-36, 4],
+      "eyeSpin": 2.6,
+      "mouth": { "bean": 1 },
+      "talk": { "smile": -0.1 },
+      "gaze": "fixed",
+      "blink": "none",
+      "motion": "woozy"
+    },
+    "cheeky": {
+      "eyeOffset": [0, 4],
+      "mouth": { "smallSmile": 1 },
+      "marks": ["cheekyLidL", "cheekyLidR", "tongueOut"],
+      "talk": { "smile": 0.5 },
+      "blink": "wink"
+    },
+    "sir_mano": {
+      "eyeOffset": [0, 4],
+      "mouth": { "smallSmile": 1 },
+      "marks": ["cheekyLidL", "cheekyLidR", "tongueOut"],
+      "talk": { "smile": 0.5 },
+      "blink": "wink",
+      "motion": "bounce",
+      "enter": { "headKick": -120 }
+    },
+    "heart": {
+      "eye": { "heart": 1 },
+      "eyeOffset": [-55, -6],
+      "mouth": { "pixel": 1 },
+      "marks": ["pixelBlushL", "pixelBlushR"],
+      "talk": { "smile": 0.6 },
+      "gaze": "fixed",
+      "blink": "none",
+      "motion": "pulse",
+      "enter": { "eyePop": 0.5 }
+    },
+    "starry": {
+      "eye": { "star": 1 },
+      "eyeOffset": [5.5, 4],
+      "mouth": { "wow": 1 },
+      "marks": ["sparkle1", "sparkle2", "sparkle3"],
+      "talk": { "smile": 0.6 },
+      "gaze": "fixed",
+      "blink": "none",
+      "motion": "twinkle",
+      "enter": { "eyePop": 0.4 }
+    },
+    "shhh": {
+      "eye": { "chevron": 1 },
+      "mouth": { "three": 1 },
+      "gaze": "fixed",
+      "blink": "none",
+      "breathe": 1.2,
+      "enter": { "eyePop": 0.7 }
+    },
+    "detective": {
+      "eyeScale": [0.67, 0.66],
+      "eyeOffset": [0, -8],
+      "lid": { "y": -23, "slope": 0, "line": 12, "len": 102 },
+      "lid2": { "y": 23.5, "slope": 0, "line": 12, "len": 86 },
+      "mouth": { "frown": 1 },
+      "mouthMods": { "width": 0.95, "dx": -40, "dy": -12 },
+      "talk": { "smile": -0.3 },
+      "gaze": "shifty",
+      "blink": "slow"
+    },
+    "bored": {
+      "eyeScale": [0.67, 0.66],
+      "eyeOffset": [0, -8],
+      "lid": { "y": -12, "slope": 0, "line": 12, "len": 102 },
+      "lid2": { "y": 23.5, "slope": 0, "line": 12, "len": 86 },
+      "mouth": { "X": 1 },
+      "mouthMods": { "width": 0.85, "dy": 8, "tilt": 0.06 },
+      "talk": { "smile": 0 },
+      "gaze": "away",
+      "blink": "slow",
+      "motion": "droop",
+      "breathe": 1.4
+    },
+    "confused": {
+      "eyeScale": [1.52, 1.24],
+      "eyeOffset": [61.5, 11.5],
+      "brows": ["flat", "flat"],
+      "mouth": { "hmm": 1 },
+      "marks": ["hmmCurve"],
+      "talk": { "smile": -0.2 },
+      "gaze": "think",
+      "head": { "tilt": 1.2 },
+      "enter": { "eyePop": 0.85 }
+    },
+    "low_battery": {
+      "eyeScale": [1, 1.41],
+      "eyeOffset": [-22, 70.5],
+      "mouth": { "smile": 1 },
+      "mouthMods": { "dy": 53 },
+      "marks": ["tiredBagL", "tiredBagR", "tiredBrowL", "tiredBrowR", "battery", "batteryBar"],
+      "talk": { "smile": 0.1 },
+      "gaze": "attentive",
+      "blink": "sleepy",
+      "motion": "droop",
+      "breathe": 1.5
+    },
+    "football": {
+      "brows": ["angry", "angry"],
+      "mouth": { "shout": 1 },
+      "mouthMods": { "width": 0.9 },
+      "talk": { "smile": 0.2, "width": 1.05 },
+      "gaze": "fixed",
+      "motion": "hop",
+      "enter": { "headKick": -260 }
+    },
+    "jamming": {
+      "eye": { "happy": 1 },
+      "mouth": { "smile": 1 },
+      "mouthMods": { "smile": 0.2 },
+      "talk": { "smile": 0.7 },
+      "marks": ["note1", "note2"],
+      "blush": 0.8,
+      "blink": "none",
+      "motion": "groove"
+    },
+    "bee": {
+      "mouth": { "smallSmile": 1 },
+      "mouthMods": { "width": 0.8 },
+      "critter": "bee",
+      "gaze": "track",
+      "react": { "mouth": { "oh": 1 }, "radius": 260, "eyeScale": 1.12 }
+    },
+    "ladybug": {
+      "mouth": { "smallSmile": 1 },
+      "mouthMods": { "width": 0.75 },
+      "critter": "ladybug",
+      "gaze": "track",
+      "react": { "mouth": { "smile": 1 }, "radius": 230, "eyeScale": 1.06 }
+    },
+    "worm": {
+      "mouth": { "smile": 1 },
+      "critter": "worm",
+      "blush": 0.4,
+      "gaze": "track",
+      "react": { "mouth": { "oh": 1 }, "radius": 200, "eyeScale": 1.08 }
     }
   }
 }

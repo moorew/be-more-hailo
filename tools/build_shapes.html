@@ -3,22 +3,25 @@
 <title>BMO shape builder</title>
 <style>
   body { font: 13px/1.4 system-ui, sans-serif; margin: 16px; background: #1d241c; color: #dfe9dc; }
-  canvas { background: #C9E4C3; width: 640px; max-width: 100%; display: block; margin: 8px 0; }
+  canvas { background: #C9E4C3; width: 960px; max-width: 100%; display: block; margin: 8px 0; }
   pre { white-space: pre-wrap; }
 </style>
 <p>Samples the artwork paths below into morph-compatible contours (same point count,
-top edge then bottom edge) and builds <code>shapes.json</code>. To add or redraw a mouth, paste
-its SVG path into <code>MOUTHS</code> in this file, open it in a browser, and copy the
-downloaded file to <code>bmo_face/</code> and <code>static/face/</code>.</p>
-<canvas id="c" width="1280" height="720"></canvas>
+top edge then bottom edge) and builds <code>shapes.json</code>. To add or redraw a mouth or eye,
+paste its SVG path into <code>MOUTHS</code> / <code>EYES</code> in this file, open it in a browser,
+and copy the downloaded file to <code>bmo_face/</code> and <code>static/face/</code>.
+Critter art comes from <code>critters_src.js</code> (the SVGs in <code>svg_faces/</code>).</p>
+<canvas id="c" width="1920" height="1080"></canvas>
 <pre id="log"></pre>
 <svg id="svg" width="0" height="0" style="position:absolute"></svg>
+<script src="critters_src.js"></script>
 <script>
-// Every mouth becomes a closed contour of MOUTH_N points: the "top" chain runs
-// left anchor -> right anchor, the "bottom" chain runs back. Line-only mouths
-// (strokes like the smile) get a degenerate contour whose top and bottom chains
-// coincide, so they stroke as a line but can still morph into open shapes.
-const MOUTH_N = 128, TONGUE_N = 48, EYE_N = 64;
+// Mouths/eyes become closed contours with a fixed point count: the "top" chain
+// runs left anchor -> right anchor, the "bottom" chain runs back. Line-only
+// shapes (smile, blink, spiral, "3") get a degenerate contour whose two chains
+// coincide, so they stroke as a line but still morph into filled shapes.
+const MOUTH_N = 128, TONGUE_N = 48, EYE_N = 256;
+const SVGNS = 'http://www.w3.org/2000/svg';
 
 const MOUTHS = {
   // --- Rhubarb talking set (Talking.zip) ---
@@ -37,56 +40,143 @@ const MOUTHS = {
   F: { outline: 'M569.047 411.75C559.59 456.284 585.971 466.506 585.971 485.729C585.971 508.778 573.058 526.583 569.047 543.882C560.088 582.528 625.79 584 625.79 584C625.79 584 690 582.528 690 551.611C690 531.368 664.807 502.757 664.223 485.729C661.131 456.652 681.538 455.916 678.054 419.847C667.601 362.43 582.984 363.166 569.047 411.75Z',
        stroke: 12,
        tongue: 'M635 581.396C673 580.996 686.833 560.5 693 545.5C682.5 534.5 643 524 638.5 528C635.5 529.5 629.077 559.288 629 551.999C628.923 544.71 623.556 531.5 621 529.5C607.089 518.614 580.291 544.337 568.5 551.999C579 561.332 597 581.796 635 581.396Z' },
-  // --- Expression mouths (BMO Face Templates) ---
-  smile:      { line: 'M522 438.5C561 485.5 681 512.5 754.5 438.5', stroke: 15 },                  // Rosto-01
-  frown:      { line: 'M522 484.426C595.5 410.426 715.5 437.427 754.5 484.427', stroke: 15 },       // Rosto-03
-  smallSmile: { line: 'M563 442C591 524 690.5 527.5 716.5 442', stroke: 15 },                      // Rosto-14
-  hmm:        { line: 'M554.887 567.047C606.73 476.546 729.629 471.567 779.464 506.872', stroke: 15, dx: -27, dy: -62 }, // Rosto-16
-  oh:         { outline: 'M582 527A58 75 0 1 0 698 527A58 75 0 1 0 582 527Z', stroke: 15 },          // Rosto-22
-  wow:        { outline: 'M566 523A74.5 83 0 1 0 715 523A74.5 83 0 1 0 566 523Z', stroke: 12, teethTop: 496.5, dy: -20 }, // Rosto-13
+  // --- Expression mouths (BMO Face Templates / svg_faces) ---
+  smile:      { line: 'M522 438.5C561 485.5 681 512.5 754.5 438.5', stroke: 15 },                  // smile
+  frown:      { line: 'M522 484.426C595.5 410.426 715.5 437.427 754.5 484.427', stroke: 15 },       // frown
+  smallSmile: { line: 'M563 442C591 524 690.5 527.5 716.5 442', stroke: 15 },                      // cheeky
+  hmm:        { line: 'M554.887 567.047C606.73 476.546 729.629 471.567 779.464 506.872', stroke: 15, dx: -27, dy: -62 }, // hmmm
+  oh:         { outline: 'M582 527A58 75 0 1 0 698 527A58 75 0 1 0 582 527Z', stroke: 15 },          // ooooooh
+  wow:        { outline: 'M566 523A74.5 83 0 1 0 715 523A74.5 83 0 1 0 566 523Z', stroke: 12, teethTop: 496.5, dy: -20 }, // shocked and wonder
   shout:      { outline: 'M530.371 567.5C557.571 550.3 590.038 547 602.871 547.5C615.704 547 648.171 550.3 675.371 567.5C689.371 575.333 723.77 586.3 749.37 567.5C774.97 548.7 776.37 512.333 773.87 496.5C769.037 466.667 728.07 407 602.871 407C477.671 407 436.704 466.667 431.871 496.5C429.371 512.333 430.771 548.7 456.371 567.5C481.971 586.3 516.371 575.333 530.371 567.5Z',
                 stroke: 12, teethTop: 452, dx: 37,
-                tongue: 'M546.371 509.5C496.371 506.3 453.538 530.5 438.371 543C446.771 563.4 465.538 571.833 473.871 573.5C486.204 576.167 517.971 576.6 546.371 557C574.771 537.4 621.871 543.833 641.871 549.5C630.871 537.5 596.371 512.7 546.371 509.5Z' }, // Rosto-07
+                tongue: 'M546.371 509.5C496.371 506.3 453.538 530.5 438.371 543C446.771 563.4 465.538 571.833 473.871 573.5C486.204 576.167 517.971 576.6 546.371 557C574.771 537.4 621.871 543.833 641.871 549.5C630.871 537.5 596.371 512.7 546.371 509.5Z' }, // shouting
   wail:       { outline: 'M592.888 569.611C610.376 555.828 631.249 553.184 639.5 553.585C647.751 553.184 668.625 555.828 686.112 569.611C695.113 575.887 717.23 584.675 733.688 569.611C750.147 554.546 751.047 525.405 749.44 512.717C746.332 488.812 719.994 441 639.5 441C559.006 441 532.668 488.812 529.56 512.718C527.953 525.405 528.853 554.546 545.312 569.611C561.771 584.675 583.887 575.888 592.888 569.611Z',
                 stroke: 12, teethTop: 477, dy: -30,
-                tongue: 'M603.175 523.135C571.028 520.571 543.49 539.962 533.739 549.979C539.139 566.326 551.205 573.083 556.563 574.419C564.492 576.556 584.916 576.903 603.175 561.197C621.434 545.491 651.716 550.646 664.574 555.187C657.502 545.571 635.321 525.699 603.175 523.135Z' }, // Rosto-11
+                tongue: 'M603.175 523.135C571.028 520.571 543.49 539.962 533.739 549.979C539.139 566.326 551.205 573.083 556.563 574.419C564.492 576.556 584.916 576.903 603.175 561.197C621.434 545.491 651.716 550.646 664.574 555.187C657.502 545.571 635.321 525.699 603.175 523.135Z' }, // sigh
+  bean:       { outline: 'M596.263 546.654C612.484 537.797 631.847 536.097 639.5 536.355C647.154 536.097 666.516 537.797 682.738 546.654C691.087 550.688 711.602 556.336 726.869 546.654C742.137 536.973 742.971 518.244 741.48 510.091C738.598 494.727 714.167 464 639.5 464C564.834 464 540.402 494.727 537.52 510.091C536.029 518.245 536.864 536.973 552.131 546.654C567.398 556.336 587.914 550.688 596.263 546.654Z',
+                stroke: 8 },                                                                        // dizzy
+  pixel:      { outline: 'M591 519H689V634H591Z', stroke: 30 },                                     // heart eyes (pixel mouth)
+  three:      { line: 'M583.5 458C585 430 610 412.5 640.5 412.5C672 412.5 693 432 693 459C693 490 668 508 627 508C668 508 701 527 701 560C701 596 672 609 640 609C607 609 581 591 579.5 563', stroke: 28 }, // meep "3"
+  gasp:       { outline: 'M606.06 599.041C618.85 592.009 634.118 590.66 640.153 590.865C646.187 590.66 661.454 592.009 674.245 599.041C680.828 602.243 697.005 606.727 709.043 599.041C721.081 591.355 721.739 576.488 720.564 570.015C720.564 550.058 699.027 496 640.153 496C581.278 496 559.741 547.563 559.741 570.015C558.565 576.488 559.223 591.355 571.262 599.041C583.3 606.727 599.476 602.243 606.06 599.041Z',
+                stroke: 8,
+                tongue: 'M606.297 597.737C619.061 590.914 634.297 589.605 640.319 589.804C646.341 589.605 661.577 590.914 674.341 597.737C680.911 600.844 697.054 605.194 709.067 597.737C721.025 590.314 721.731 575.989 720.581 569.662C710.595 543.735 683.082 538.914 667.478 538.914C615.998 540.807 601.73 578.544 600.854 598.446C600.824 599.122 601.475 599.601 602.116 599.388C603.747 598.845 605.164 598.273 606.297 597.737Z' }, // exasperated
 };
 
-// Eyes are stored relative to the eye centre (left eye; the rig mirrors for the right).
+// Eyes are stored relative to their own centre (left eye; the rig mirrors for
+// the right unless noMirror). `center` = where that centre sits in the art.
+// fill/strokeColor blend between poses; details are drawn on top of the eye.
+const ELL = (rx, ry, cx = 0, cy = 0) => `M${cx - rx} ${cy}A${rx} ${ry} 0 1 0 ${cx + rx} ${cy}A${rx} ${ry} 0 1 0 ${cx - rx} ${cy}Z`;
 const EYES = {
-  open:   { outline: 'M-37.5 0A37.5 43 0 1 0 37.5 0A37.5 43 0 1 0 -37.5 0Z', stroke: 0 },
-  closed: { line: 'M-39 10Q0 30 39 10', stroke: 12 },                      // blink lid, a soft ‿
-  happy:  { line: 'M-46 20C-34 -30 34 -30 46 20', stroke: 15 },            // ∩ squint
-  relax:  { line: 'M-64.5 -41C-41 64.7 42.7 69.2 64.5 -41', stroke: 15 },  // Rosto-04 ◡
-  wide:   { outline: 'M-47 0A47 55 0 1 0 47 0A47 55 0 1 0 -47 0Z', stroke: 0 },
+  open:    { outline: ELL(37.5, 43), stroke: 0, blinks: true },
+  closed:  { line: 'M-39 10Q0 30 39 10', stroke: 12 },                       // blink lid, a soft ‿
+  happy:   { line: 'M-46 20C-34 -30 34 -30 46 20', stroke: 15 },             // ∩ squint
+  relax:   { line: 'M-64.5 -41C-41 64.7 42.7 69.2 64.5 -41', stroke: 15 },   // relax ◡
+  wide:    { outline: ELL(47, 55), stroke: 0, blinks: true },
+  glossy:  { outline: ELL(48.6358, 83.6821, 363.6358, 322.6821), stroke: 0, blinks: true, center: [363.6358, 322.6821],   // exasperated
+             details: [
+               { svg: '<ellipse cx="362.92" cy="405.649" rx="35.0464" ry="22.1722"/>', fill: '#53AF66', alpha: 0.85, noMirror: true },
+               { svg: '<ellipse cx="347.185" cy="397.066" rx="13.5894" ry="9.29801"/>', fill: '#FFFFFF', alpha: 0.8, noMirror: true },
+               { svg: '<ellipse cx="342.811" cy="277.893" rx="14.6963" ry="21.1865" transform="rotate(19.6343 342.811 277.893)"/>', fill: '#FFFFFF', alpha: 1, noMirror: true },
+               { svg: '<ellipse cx="365.84" cy="296.499" rx="6.1982" ry="8.93545" transform="rotate(19.6343 365.84 296.499)"/>', fill: '#FFFFFF', alpha: 1, noMirror: true },
+             ] },
+  ring:    { outline: ELL(129, 129), stroke: 40, fill: '#FFFFFF', glyph: true },                             // ooooooh
+  heart:   { outline: 'M229.993 102H164.997V134.589H132.498V167.178H100V264.945H132.498V297.534H164.997V330.123H197.495V362.712H229.993V395.301H262.491V427.89H294.99V395.301H327.488V362.712H359.986V330.123H392.485V297.534H424.983V264.945H457.481V167.178H424.983V134.589H392.485V102H327.488V134.589H294.99V167.178H262.491V134.589H229.993V102Z',
+             center: [278.74, 264.95], stroke: 0, glyph: true,
+             details: [{ path: 'M229.993 134.589V167.178H262.491V199.767H294.99V167.178H327.488V134.589H392.485V167.178H424.983V264.945H392.485V297.534H359.986V330.123H327.488V362.712H294.99V395.301H262.491V362.712H229.993V330.123H197.495V297.534H164.997V264.945H132.498V167.178H164.997V134.589H229.993Z',
+                         fill: '#E10000', alpha: 1, n: 480 }] },
+  star:    { outline: 'M334.186 113.147C335.552 108.282 342.448 108.282 343.814 113.147L377.478 233.059C377.95 234.738 379.262 236.05 380.941 236.522L500.853 270.186C505.718 271.552 505.718 278.448 500.853 279.814L380.941 313.478C379.262 313.95 377.95 315.262 377.478 316.941L343.814 436.853C342.448 441.718 335.552 441.718 334.186 436.853L300.522 316.941C300.05 315.262 298.738 313.95 297.059 313.478L177.147 279.814C172.282 278.448 172.282 271.552 177.147 270.186L297.059 236.522C298.738 236.05 300.05 234.738 300.522 233.059L334.186 113.147Z',
+             center: [339, 275], stroke: 0, fill: '#FFA800', glyph: true },                                 // star eyes 2
+  spiral:  { spiral: { r0: 8, r1: 145, pitch: 52 }, stroke: 30, noMirror: true, glyph: true },            // dizzy
+  chevron: { line: 'M285 168L398.5 281.5L285 395', center: [333.5, 271], stroke: 44, glyph: true },       // meep ">"
 };
 
+// Marks: extra strokes/fills that pop in with an expression. anchor: face
+// (head motion only), mouth (follows the mouth), eyeL/eyeR (follow that eye;
+// `ref` is where the eye centre sits in the source art).
+const MARKS = {
+  dimples:     { anchor: 'mouth', dx: -2, dy: -32.5, items: [                                  // happy
+                   { path: 'M504 522C524.467 504.89 536.225 452.245 504 420', width: 11 },
+                   { path: 'M777 420C756.533 437.11 744.775 489.755 777 522', width: 11 }] },
+  tongueOut:   { anchor: 'mouth', anim: { type: 'wiggle', root: [668, 503], amp: 0.13, freq: 2.2 }, items: [   // cheeky
+                   { path: 'M708.822 566.742C733.712 551.483 713.592 500.238 699.588 483.071L640.046 507.78L654.795 541.068C675.215 575.586 699.321 572.566 708.822 566.742Z', kind: 'fill', color: '#A2B26A' },
+                   { path: 'M672.333 501.576L697.167 548.924', width: 9, color: '#769840' }] },
+  cheekyLidL:  { anchor: 'eyeL', ref: [333.5, 275], items: [{ path: 'M370 326C357.587 310.649 319.394 301.831 296 326', width: 15 }] },
+  cheekyLidR:  { anchor: 'eyeR', ref: [945.5, 275], items: [{ path: 'M983 326C970.587 310.649 932.394 301.831 909 326', width: 15 }] },
+  exBrowL:     { anchor: 'eyeL', ref: [363.6, 322.7], items: [{ path: 'M325 157.502C365.333 165.336 451.9 161.203 475.5 82', width: 7 }] },
+  exBrowR:     { anchor: 'eyeR', ref: [915.6, 322.7], items: [{ path: 'M955 157.5C914.667 165.333 828.1 161.2 804.5 82', width: 7 }] },
+  stressCurl:  { anchor: 'face', anim: { type: 'shiver', amp: 2.5, freq: 9 }, items: [{ path: 'M796 123C786.5 117.167 768.2 97 771 63', width: 7 }] },
+  gaspCheeks:  { anchor: 'mouth', items: [
+                   { path: 'M699.516 628.307C706.387 631.645 722.211 634.347 735.836 628.307C756.998 618.925 755.986 592.867 754.759 586.119', width: 5 },
+                   { path: 'M580.788 628.307C573.917 631.645 558.093 634.347 544.468 628.307C523.306 618.925 524.319 592.867 525.546 586.119', width: 5 }] },
+  shockLines:  { anchor: 'face', anim: { type: 'shiver', amp: 3, freq: 7 }, items: [            // ooooooh
+                   { path: 'M24 53.5V295.5', width: 19, color: '#60229E' },
+                   { path: 'M93 54V296', width: 19, color: '#60229E' },
+                   { path: 'M162 54V296', width: 19, color: '#60229E' }] },
+  pixelBlushL: { anchor: 'face', items: [[17, 449], [47, 419], [74, 449], [104, 419], [131, 449]].map(([x, y]) => ({ rect: [x, y, 30, 30], kind: 'fill' })) },
+  pixelBlushR: { anchor: 'face', items: [[1119, 449], [1149, 419], [1176, 449], [1206, 419], [1233, 449]].map(([x, y]) => ({ rect: [x, y, 30, 30], kind: 'fill' })) },
+  hmmCurve:    { anchor: 'mouth', dx: -27, dy: -62, items: [{ path: 'M821.801 441C776.363 468.786 756.906 539.739 837.632 572.002', width: 15 }] },  // hmmm
+  tiredBagL:   { anchor: 'eyeL', ref: [311.5, 341.5], items: [{ path: 'M304.609 452.94C322.128 451.115 360.551 436.37 374.089 392', width: 5 }] },
+  tiredBagR:   { anchor: 'eyeR', ref: [968.27, 341.5], items: [{ path: 'M975.161 452.936C957.642 451.11 919.219 436.366 905.68 391.997', width: 5 }] },
+  tiredBrowL:  { anchor: 'eyeL', ref: [311.5, 341.5], items: [{ path: 'M220.05 244.789C244.05 250.172 301.471 247.763 339.146 195.063', width: 8 }] },
+  tiredBrowR:  { anchor: 'eyeR', ref: [968.27, 341.5], items: [{ path: 'M1059.72 244.788C1035.72 250.171 978.299 247.762 940.624 195.063', width: 8 }] },
+  battery:     { anchor: 'face', items: [                                                       // low battery
+                   { path: 'M1116 46H1194Q1202 46 1202 54V86Q1202 94 1194 94H1116Q1108 94 1108 86V54Q1108 46 1116 46Z', width: 8 },
+                   { rect: [1206, 60, 10, 20], kind: 'fill' }] },
+  batteryBar:  { anchor: 'face', anim: { type: 'blink', freq: 1.1 }, items: [{ rect: [1119, 57, 18, 26], kind: 'fill', color: '#D8434B' }] },
+  sparkle1:    { anchor: 'face', anim: { type: 'twinkle', freq: 0.9, phase: 0 },    items: [{ star: [520, 120, 34], kind: 'fill', color: '#FFC94A' }] },
+  sparkle2:    { anchor: 'face', anim: { type: 'twinkle', freq: 0.7, phase: 0.35 }, items: [{ star: [1150, 420, 26], kind: 'fill', color: '#FFC94A' }] },
+  sparkle3:    { anchor: 'face', anim: { type: 'twinkle', freq: 1.1, phase: 0.7 },  items: [{ star: [140, 470, 22], kind: 'fill', color: '#FFC94A' }] },
+  note1:       { anchor: 'face', anim: { type: 'float', period: 2.6, phase: 0, rise: 90 },   items: NOTE(170, 230) },
+  note2:       { anchor: 'face', anim: { type: 'float', period: 2.6, phase: 0.5, rise: 90 }, items: NOTE(1090, 250) },
+};
+function NOTE(x, y) { // a little eighth note: head, stem, flag
+  return [
+    { svg: `<ellipse cx="${x}" cy="${y}" rx="17" ry="12" transform="rotate(-22 ${x} ${y})"/>`, kind: 'fill' },
+    { path: `M${x + 14} ${y - 4}V${y - 74}`, width: 7 },
+    { path: `M${x + 14} ${y - 74}C${x + 22} ${y - 56} ${x + 46} ${y - 52} ${x + 38} ${y - 26}`, width: 7 },
+  ];
+}
+
+// Critters: flattened to polygons in their own viewBox units. `group` lets the
+// rig flap wings separately; `head` marks which way the critter faces.
+const CRITTERS = {
+  bee:       { width: 170, groups: { 4: 'wing', 5: 'wing' }, wingRoot: [269.3, 186.0], faces: -1 },
+  ladybug:   { width: 125, faces: 1, tilt: 0.75 },   // drawn heading up-right; tilt so it walks head-first
+  worm:      { width: 200, faces: -1 },
+  butterfly: { width: 120, faces: 1 },
+};
+
+// ------------------------------------------------------------------ sampling
 const svg = document.getElementById('svg');
 const logEl = document.getElementById('log');
 const log = (s) => (logEl.textContent += s + '\n');
 
-function densePoints(d, n = 3000) {
-  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  p.setAttribute('d', d);
-  svg.appendChild(p);
-  const L = p.getTotalLength();
+function sampleElement(el, n, viewBox) {
+  // Points along any SVG geometry element, with its transform applied.
+  const host = document.createElementNS(SVGNS, 'svg');
+  if (viewBox) host.setAttribute('viewBox', viewBox);
+  host.appendChild(el);
+  svg.appendChild(host);
+  const L = el.getTotalLength();
+  const m = el.transform && el.transform.baseVal.length ? el.transform.baseVal.consolidate().matrix : null;
   const pts = [];
   for (let i = 0; i <= n; i++) {
-    const q = p.getPointAtLength((L * i) / n);
+    let q = el.getPointAtLength((L * i) / n);
+    if (m) q = q.matrixTransform(m);
     pts.push([q.x, q.y]);
   }
-  svg.removeChild(p);
-  return pts;
+  svg.removeChild(host);
+  return { pts, length: L };
 }
+const pathEl = (d) => { const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', d); return p; };
+const snippetEl = (s) => { const g = document.createElementNS(SVGNS, 'g'); g.innerHTML = s; return g.firstElementChild; };
+const densePoints = (d, n = 3000) => sampleElement(pathEl(d), n).pts;
 
 function resample(chain, count) {
   // Uniform arc-length resample of a polyline to `count` points (endpoints kept).
   const cum = [0];
-  for (let i = 1; i < chain.length; i++) {
-    cum.push(cum[i - 1] + Math.hypot(chain[i][0] - chain[i - 1][0], chain[i][1] - chain[i - 1][1]));
-  }
-  const total = cum[cum.length - 1];
-  const out = [];
+  for (let i = 1; i < chain.length; i++) cum.push(cum[i - 1] + Math.hypot(chain[i][0] - chain[i - 1][0], chain[i][1] - chain[i - 1][1]));
+  const total = cum[cum.length - 1], out = [];
   let j = 0;
   for (let k = 0; k < count; k++) {
     const s = count === 1 ? 0 : (total * k) / (count - 1);
@@ -98,16 +188,15 @@ function resample(chain, count) {
   return out;
 }
 
-function contourFromLine(d, N) {
-  let chain = densePoints(d);
-  if (chain[0][0] > chain[chain.length - 1][0]) chain = chain.reverse();
+function contourFromChain(chain, N) {
+  if (chain[0][0] > chain[chain.length - 1][0]) chain = chain.slice().reverse();
   const top = resample(chain, N / 2 + 1);
-  const bottom = top.slice(1, -1).reverse();
-  return top.concat(bottom);
+  return top.concat(top.slice(1, -1).reverse());
 }
+const contourFromLine = (d, N) => contourFromChain(densePoints(d), N);
 
-function contourFromOutline(d, N) {
-  let loop = densePoints(d);
+function contourFromLoop(loop, N) {
+  loop = loop.slice();
   loop.pop(); // closing duplicate
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const [x, y] of loop) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
@@ -122,41 +211,128 @@ function contourFromOutline(d, N) {
   const arc1 = walk(iL, iR), arc2 = walk(iR, iL);
   const meanY = (c) => c.reduce((s, p) => s + p[1], 0) / c.length;
   let top, bottom;
-  if (meanY(arc1) < meanY(arc2)) { top = arc1; bottom = arc2; }        // arc1 runs L->R already
+  if (meanY(arc1) < meanY(arc2)) { top = arc1; bottom = arc2; }
   else { top = arc2.slice().reverse(); bottom = arc1.slice().reverse(); }
-  const topS = resample(top, N / 2 + 1);
-  const botS = resample(bottom, N / 2 + 1).slice(1, -1);
-  return topS.concat(botS);
+  return resample(top, N / 2 + 1).concat(resample(bottom, N / 2 + 1).slice(1, -1));
+}
+const contourFromOutline = (d, N) => contourFromLoop(densePoints(d), N);
+
+function spiralChain({ r0, r1, pitch }) {
+  const tmax = ((r1 - r0) / pitch) * 2 * Math.PI, pts = [];
+  for (let i = 0; i <= 2000; i++) {
+    const t = (tmax * i) / 2000, r = r0 + (pitch * t) / (2 * Math.PI);
+    pts.push([r * Math.cos(t - tmax), r * Math.sin(t - tmax)]); // outer end points right
+  }
+  return pts;
 }
 
-const round2 = (pts, dx = 0, dy = 0) => pts.map(([x, y]) => [+(x + dx).toFixed(2), +(y + dy).toFixed(2)]);
+const R2 = (pts, dx = 0, dy = 0) => pts.map(([x, y]) => [+(x + dx).toFixed(2), +(y + dy).toFixed(2)]);
 
 function buildMouth(def) {
   const dx = def.dx || 0, dy = def.dy || 0;
-  const outer = round2(def.line ? contourFromLine(def.line, MOUTH_N) : contourFromOutline(def.outline, MOUTH_N), dx, dy);
+  const outer = R2(def.line ? contourFromLine(def.line, MOUTH_N) : contourFromOutline(def.outline, MOUTH_N), dx, dy);
   const ys = outer.map((p) => p[1]);
   const top = Math.min(...ys), bottom = Math.max(...ys);
-  const bottomMid = outer[MOUTH_N / 2 + (MOUTH_N / 2) / 2]; // middle of the bottom chain
+  const bottomMid = outer[MOUTH_N / 2 + MOUTH_N / 4];
   const tongue = def.tongue
-    ? round2(contourFromOutline(def.tongue, TONGUE_N), dx, dy)
+    ? R2(contourFromOutline(def.tongue, TONGUE_N), dx, dy)
     : Array.from({ length: TONGUE_N }, () => [bottomMid[0], +(bottomMid[1] + 4).toFixed(2)]);
   return {
-    outer,
-    stroke: def.stroke,
-    // No upper teeth -> line sits above the mouth, so its band is empty.
+    outer, stroke: def.stroke,
     teethTop: def.teethTop != null ? def.teethTop + dy : +(top - 4).toFixed(2),
     teethBot: def.teethBot != null ? def.teethBot + dy : +(bottom + 4).toFixed(2),
-    tongue,
-    hasTongue: !!def.tongue,
+    tongue, hasTongue: !!def.tongue,
   };
 }
 
 function buildEye(def) {
-  return { pts: round2(def.line ? contourFromLine(def.line, EYE_N) : contourFromOutline(def.outline, EYE_N)), stroke: def.stroke };
+  const [cx, cy] = def.center || [0, 0];
+  let pts;
+  if (def.spiral) pts = contourFromChain(spiralChain(def.spiral), EYE_N);
+  else if (def.line) pts = contourFromLine(def.line, EYE_N);
+  else pts = contourFromOutline(def.outline, EYE_N);
+  const eye = { pts: R2(pts, -cx, -cy), stroke: def.stroke, fill: def.fill || '#000000', strokeColor: def.strokeColor || '#000000' };
+  if (def.blinks) eye.blinks = true;
+  if (def.noMirror) eye.noMirror = true;
+  if (def.glyph) eye.glyph = true;
+  if (def.details) {
+    eye.details = def.details.map((d) => {
+      const el = d.svg ? snippetEl(d.svg) : pathEl(d.path);
+      const { pts: dp } = sampleElement(el, d.n || 96);
+      dp.pop();
+      return { pts: R2(dp, -cx, -cy), fill: d.fill, alpha: d.alpha ?? 1, ...(d.noMirror ? { noMirror: true } : {}) };
+    });
+  }
+  return eye;
+}
+
+function starPath(x, y, r) { // 4-point sparkle, same profile as the star eyes
+  const k = r * 0.22, pts = [];
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 2;
+    pts.push([x + r * Math.cos(a), y + r * Math.sin(a)]);
+    const b = a + Math.PI / 4;
+    pts.push([x + k * Math.cos(b), y + k * Math.sin(b)]);
+  }
+  return 'M' + pts.map((p) => p.join(' ')).join('L') + 'Z';
+}
+
+function buildMark(def) {
+  const dx = def.dx || 0, dy = def.dy || 0;
+  const items = def.items.map((it) => {
+    const kind = it.kind || 'stroke';
+    let el;
+    if (it.rect) { const [x, y, w, h] = it.rect; el = pathEl(`M${x} ${y}H${x + w}V${y + h}H${x}Z`); }
+    else if (it.star) el = pathEl(starPath(...it.star));
+    else if (it.svg) el = snippetEl(it.svg);
+    else el = pathEl(it.path);
+    const { pts, length } = sampleElement(el, Math.max(8, Math.min(240, Math.round(it.rect ? 40 : (sampleElement(el.cloneNode(), 4).length / 3)))));
+    const closed = kind === 'fill';
+    if (closed) pts.pop();
+    return { kind, closed, pts: R2(pts, dx, dy), width: it.width || 0, color: it.color || '#000000' };
+  });
+  const m = { anchor: def.anchor, items };
+  if (def.ref) m.ref = def.ref;
+  if (def.anim) m.anim = def.anim;
+  return m;
+}
+
+function buildCritter(name, cfg) {
+  const doc = new DOMParser().parseFromString(CRITTER_SVGS[name], 'image/svg+xml').documentElement;
+  const viewBox = doc.getAttribute('viewBox');
+  const [, , vw, vh] = viewBox.split(/[ ,]+/).map(Number);
+  const parts = [];
+  [...doc.children].filter((e) => ['path', 'ellipse', 'circle', 'rect'].includes(e.tagName)).forEach((el, idx) => {
+    const fill = el.getAttribute('fill');
+    const stroke = el.getAttribute('stroke');
+    const style = {
+      fill: fill && fill !== 'none' ? fill : null,
+      stroke: stroke && stroke !== 'none' ? stroke : null,
+      width: +(el.getAttribute('stroke-width') || (stroke ? 1 : 0)),
+      alpha: +(el.getAttribute('opacity') || 1),
+      group: (cfg.groups && cfg.groups[idx]) || 'body',
+    };
+    // Split multi-subpath paths so each piece samples on its own.
+    const pieces = el.tagName === 'path'
+      ? el.getAttribute('d').split(/(?=M)/).filter((s) => s.trim()).map((d) => { const p = el.cloneNode(); p.setAttribute('d', d); return p; })
+      : [el.cloneNode()];
+    for (const piece of pieces) {
+      const len = sampleElement(piece.cloneNode(), 4, viewBox).length;
+      const n = Math.max(10, Math.min(260, Math.round(len / 3)));
+      const { pts } = sampleElement(piece, n, viewBox);
+      const d = piece.getAttribute('d') || '';
+      const closed = el.tagName !== 'path' || /z\s*$/i.test(d.trim());
+      if (closed) pts.pop();
+      parts.push({ ...style, closed, pts: R2(pts) });
+    }
+  });
+  const out = { size: [vw, vh], width: cfg.width, faces: cfg.faces, tilt: cfg.tilt || 0, parts };
+  if (cfg.wingRoot) out.wingRoot = cfg.wingRoot;
+  return out;
 }
 
 const shapes = {
-  version: 1,
+  version: 2,
   art: { width: 1280, height: 720 },
   colors: { bg: '#C9E4C3', line: '#000000', cavity: '#396337', tongue: '#A2B36A', teeth: '#FFFFFF', blush: '#548B51' },
   eyeCenters: [[333.5, 271], [945.5, 271]],
@@ -164,28 +340,60 @@ const shapes = {
   mouths: Object.fromEntries(Object.entries(MOUTHS).map(([k, v]) => [k, buildMouth(v)])),
   eyeOrder: Object.keys(EYES),
   eyes: Object.fromEntries(Object.entries(EYES).map(([k, v]) => [k, buildEye(v)])),
+  marks: Object.fromEntries(Object.entries(MARKS).map(([k, v]) => [k, buildMark(v)])),
+  critters: Object.fromEntries(Object.entries(CRITTERS).map(([k, v]) => [k, buildCritter(k, v)])),
 };
 
-// Preview every contour so we can eyeball anchor placement.
+// ------------------------------------------------------------------ preview
 const ctx = document.getElementById('c').getContext('2d');
-const names = shapes.mouthOrder;
-names.forEach((name, i) => {
-  const m = shapes.mouths[name];
-  const col = i % 5, row = Math.floor(i / 5);
+ctx.lineJoin = ctx.lineCap = 'round';
+const poly = (pts, close) => { ctx.beginPath(); pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); if (close) ctx.closePath(); };
+let cell = 0;
+const COLS = 8, CW = 1920 / COLS, CH = 180;
+function inCell(label, scale, cx, cy, draw) {
+  const col = cell % COLS, row = Math.floor(cell++ / COLS);
   ctx.save();
-  ctx.translate(col * 256 + 128, row * 240 + 120);
-  ctx.scale(0.6, 0.6);
-  ctx.translate(-640, -480);
-  ctx.beginPath();
-  m.outer.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-  ctx.closePath();
-  ctx.fillStyle = '#396337'; ctx.fill();
-  ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.stroke();
-  ctx.fillStyle = 'red'; ctx.beginPath(); ctx.arc(m.outer[0][0], m.outer[0][1], 6, 0, 7); ctx.fill();
-  ctx.fillStyle = 'blue'; ctx.beginPath(); ctx.arc(m.outer[MOUTH_N / 2][0], m.outer[MOUTH_N / 2][1], 6, 0, 7); ctx.fill();
-  ctx.fillStyle = '#000'; ctx.font = '22px sans-serif'; ctx.fillText(name, 560, 380);
+  ctx.translate(col * CW + CW / 2, row * CH + CH / 2 + 8);
+  ctx.scale(scale, scale);
+  ctx.translate(-cx, -cy);
+  draw();
   ctx.restore();
+  ctx.fillStyle = '#000'; ctx.font = '15px sans-serif';
+  ctx.fillText(label, col * CW + 6, row * CH + 18);
+}
+for (const name of shapes.mouthOrder) {
+  const m = shapes.mouths[name];
+  inCell('mouth ' + name, 0.55, 640, 500, () => {
+    poly(m.outer, true); ctx.fillStyle = '#396337'; ctx.fill();
+    ctx.lineWidth = m.stroke; ctx.strokeStyle = '#000'; ctx.stroke();
+    ctx.fillStyle = 'red'; ctx.beginPath(); ctx.arc(m.outer[0][0], m.outer[0][1], 8, 0, 7); ctx.fill();
+  });
+}
+for (const name of shapes.eyeOrder) {
+  const e = shapes.eyes[name];
+  inCell('eye ' + name, 0.42, 0, 0, () => {
+    poly(e.pts, true); ctx.fillStyle = e.fill; ctx.fill();
+    if (e.stroke) { ctx.lineWidth = e.stroke; ctx.strokeStyle = e.strokeColor; ctx.stroke(); }
+    for (const d of e.details || []) { ctx.globalAlpha = d.alpha; poly(d.pts, true); ctx.fillStyle = d.fill; ctx.fill(); ctx.globalAlpha = 1; }
+  });
+}
+inCell('all marks', 0.13, 640, 360, () => {
+  for (const m of Object.values(shapes.marks)) for (const it of m.items) {
+    poly(it.pts, it.closed);
+    if (it.kind === 'fill') { ctx.fillStyle = it.color; ctx.fill(); } else { ctx.lineWidth = it.width; ctx.strokeStyle = it.color; ctx.stroke(); }
+  }
 });
+for (const [name, c] of Object.entries(shapes.critters)) {
+  inCell('critter ' + name, 140 / Math.max(...c.size), c.size[0] / 2, c.size[1] / 2, () => {
+    for (const p of c.parts) {
+      ctx.globalAlpha = p.alpha;
+      poly(p.pts, p.closed);
+      if (p.fill && p.closed) { ctx.fillStyle = p.fill; ctx.fill(); }
+      if (p.stroke) { ctx.lineWidth = p.width; ctx.strokeStyle = p.stroke; ctx.stroke(); }
+      ctx.globalAlpha = 1;
+    }
+  });
+}
 
 const json = JSON.stringify(shapes);
 // Save: a download link always works; the PUTs only succeed on the dev server.
@@ -200,5 +408,7 @@ Promise.all([
   fetch('/python/bmo_face/shapes.json', { method: 'PUT', body: json }),
 ]).then((rs) => log('dev server save: ' + rs.map((r) => r.status).join(', ')))
   .catch(() => {});
-log(names.map((n) => `${n}: top=${shapes.mouths[n].teethTop} bot=${shapes.mouths[n].teethBot} stroke=${shapes.mouths[n].stroke}`).join('\n'));
+log(`mouths ${shapes.mouthOrder.length}, eyes ${shapes.eyeOrder.length}, marks ${Object.keys(shapes.marks).length}, critters ${Object.keys(shapes.critters).length}, ${json.length} bytes`);
+log(Object.entries(shapes.critters).map(([k, c]) => `${k}: ${c.parts.length} parts, ${c.parts.reduce((s, p) => s + p.pts.length, 0)} pts`).join('\n'));
+window.__shapes = shapes;
 </script>

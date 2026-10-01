@@ -87,3 +87,71 @@ def test_wav_lipsync_handles_stereo(tmp_path):
     items, duration = analyse_wav(str(path))
     assert abs(duration - 1.0) < 0.01
     assert any(s["active"] for _, _, s in items)
+
+
+# ---- every face (rig v2: glyph eyes, marks, critters)
+
+def _run(rig, seconds, speech=None):
+    for _ in range(int(seconds * 30)):
+        if speech is not None:
+            rig.set_speech(speech)
+        rig.update(1 / 30)
+
+
+def test_every_preset_draws_its_extras():
+    rig = FaceRig()
+    renderer = PillowRenderer(rig.shapes, (800, 480), supersample=2)
+    for name, e in rig.presets["expressions"].items():
+        rig.set_expression(name, instant=True)
+        _run(rig, 0.8)
+        f = rig.frame()
+        missing = set(e.get("marks", [])) - {m["key"] for m in f["marks"]}
+        # floating/twinkling marks can be momentarily see-through
+        missing = {k for k in missing if rig.shapes["marks"][k].get("anim", {}).get("type") not in ("float", "twinkle", "blink")}
+        assert not missing, (name, missing)
+        if e.get("critter"):
+            assert f["critter"] and f["critter"]["name"] == e["critter"], name
+        renderer.render(f)
+
+
+def test_glyph_eyes_swap_with_a_pop_not_a_morph():
+    rig = FaceRig()
+    rig.set_expression("dizzy", instant=True)
+    rig.set_expression("heart")
+    widths = []
+    for _ in range(12):
+        rig.update(1 / 30)
+        pts = rig.frame()["eyes"][0]["pts"]
+        widths.append(float(pts[:, 0].max() - pts[:, 0].min()))
+    assert min(widths) < 40  # the spirals shrink right down before the hearts pop in
+    assert rig.eye_w["heart"].value == 1.0 and rig.eye_w["spiral"].value == 0.0
+
+
+def test_eyes_follow_the_bee():
+    rig = FaceRig()
+    rig.set_expression("bee", instant=True)
+    agree = 0
+    for _ in range(240):
+        rig.update(1 / 30)
+        dx = rig.critter["pose"]["x"] - 640
+        if abs(dx) > 200 and np.sign(rig.gaze.x.value) == np.sign(dx):
+            agree += 1
+    assert agree > 60
+
+
+def test_mouth_extras_tuck_away_while_talking():
+    rig = FaceRig()
+    rig.set_expression("cheeky", instant=True)
+    assert rig.mark_vis["tongueOut"].value > 0.9
+    _run(rig, 1.0, {"viseme": "C", "intensity": 0.7, "active": True, "onset": False})
+    assert rig.mark_vis["tongueOut"].value < 0.05
+    assert rig.mark_vis["cheekyLidL"].value > 0.9  # eye extras stay
+
+
+def test_camera_flash_fades():
+    rig = FaceRig()
+    rig.set_expression("capturing")
+    rig.update(1 / 30)
+    assert rig.frame()["flash"] > 0.5
+    _run(rig, 1.0)
+    assert rig.frame()["flash"] == 0.0

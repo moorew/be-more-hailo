@@ -3,7 +3,8 @@
     python -m bmo_face.demo                 # 800x480 window
     python -m bmo_face.demo --fullscreen
 
-Keys: 1-9, 0, - pick an expression · space (or tap) says a random line with
+Keys: Left/Right step through every expression (1-9, 0, - jump to the first
+few) · space (or tap) says a random line with
 lip-sync · w wakes BMO up · Esc quits. Run from the repo root so ./sounds is found.
 """
 
@@ -67,7 +68,7 @@ def main() -> None:
         clips += sorted(glob.glob(os.path.join(args.sounds, sub, "*.wav")))
     caption = tk.Label(root, font=("Courier New", 12, "bold"), fg="#1a5c2a", bg="#C9E4C3")
     caption.place(relx=0.5, rely=0.98, anchor="s")
-    status = {"text": "1-9 faces · space talk · w wake · Esc quit", "until": time.time() + 6}
+    status = {"text": "←/→ faces · space talk · w wake · Esc quit", "until": time.time() + 6}
 
     def say(_event=None):
         if not clips:
@@ -78,13 +79,23 @@ def main() -> None:
         play(path, args.device)
         status.update(text=os.path.basename(path), until=time.time() + 2)
 
+    current = {"i": 0}
+
+    def show(i):
+        current["i"] = i % len(names)
+        name = names[current["i"]]
+        view.rig.set_expression(name)
+        status.update(text=f"{name} ({current['i'] + 1}/{len(names)})", until=time.time() + 2)
+
     def on_key(event):
         if event.keysym == "Escape":
             root.destroy()
+        elif event.keysym in ("Right", "Down"):
+            show(current["i"] + 1)
+        elif event.keysym in ("Left", "Up"):
+            show(current["i"] - 1)
         elif event.char and event.char in KEYS and KEYS.index(event.char) < len(names):
-            name = names[KEYS.index(event.char)]
-            view.rig.set_expression(name)
-            status.update(text=name, until=time.time() + 2)
+            show(KEYS.index(event.char))
         elif event.char == " ":
             say()
         elif event.char == "w":
