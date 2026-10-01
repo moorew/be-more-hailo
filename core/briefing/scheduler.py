@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 
 from core.briefing import audio
 
@@ -72,6 +73,9 @@ class BriefingScheduler:
         self._synced = False
         self._last_attempt = None
         self._day = None
+        # One prepare at a time: the 30 s tick and an on-demand "show me my
+        # briefing" both write today's cache folder.
+        self._prepare_lock = threading.Lock()
 
     # --- per-day state (survives restarts) ---
     def _state_path(self, day):
@@ -99,6 +103,18 @@ class BriefingScheduler:
     def briefing_for_today(self, now: datetime.datetime = None):
         """Today's cached briefing (for playback or a replay), or None."""
         return audio.load_briefing((now or self.now_fn()).date(), self.cache_root)
+
+    def prepare_now(self, now: datetime.datetime = None):
+        """Fetch and render today's briefing right away (asked for by voice
+        outside the morning, or the cached one is stale).  Waits for a
+        prepare already in progress, then returns the fresh briefing or None."""
+        now = now or self.now_fn()
+        with self._prepare_lock:
+            try:
+                return self.prepare_fn(now, self.settings_fn())
+            except Exception as e:
+                logger.warning(f"Briefing: on-demand prepare failed: {e}")
+                return None
 
     def is_ready_unplayed(self) -> bool:
         """For "good morning": a briefing is waiting and hasn't been played."""
@@ -149,11 +165,14 @@ class BriefingScheduler:
         if wants_retry and (self._last_attempt is None
                             or (now - self._last_attempt).total_seconds() >= RETRY_S):
             self._last_attempt = now
-            try:
-                fresh = self.prepare_fn(now, s)
-            except Exception as e:
-                logger.warning(f"Briefing: prepare failed: {e}")
-                fresh = None
+            fresh = None
+            if self._prepare_lock.acquire(blocking=False):   # else an on-demand one is running
+                try:
+                    fresh = self.prepare_fn(now, s)
+                except Exception as e:
+                    logger.warning(f"Briefing: prepare failed: {e}")
+                finally:
+                    self._prepare_lock.release()
             if fresh is not None:
                 briefing = fresh
                 # A retry may have taken a while; re-read the clock.
@@ -180,13 +199,21 @@ class BriefingScheduler:
 
 
 def prepare_briefing(now: datetime.datetime, settings: dict, registry=None,
-                     cache_root: str = audio.CACHE_ROOT, gather=None, build=None, render=None):
-    """Fetch, script and render today's briefing.  None when there's nothing to say."""
+                     cache_root: str = audio.CACHE_ROOT, gather=None, build=None, render=None,
+                     fun_fact=None):
+    """Fetch, script and render today's briefing.  None when there's nothing to say.
+
+    `fun_fact` () -> str or None is only called when extras.fun_fact is on."""
     from core.briefing import script, sources
     gather = gather or sources.gather
     build = build or script.build_script
     render = render or audio.render_briefing
     data = gather(settings, now, registry)
+    if fun_fact is not None and settings.get("extras", {}).get("fun_fact"):
+        try:
+            data["fun_fact"] = script.clean_fun_fact(fun_fact())
+        except Exception as e:
+            logger.warning(f"Briefing: fun fact failed: {e}")
     parts = build(data, now)
     if not parts:
         logger.info("Briefing: nothing to say yet (offline?)")

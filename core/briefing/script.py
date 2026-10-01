@@ -8,6 +8,7 @@ clean_text_for_speech like live speech.
 """
 import datetime
 import random
+import re
 
 from core.briefing.speech import ordinal_words, speakable, time_digits
 
@@ -104,18 +105,52 @@ def _headlines_part(items: list):
             "segments": segments}
 
 
+_SOLEMN = ("Remembrance Day", "Good Friday", "the National Day for Truth and Reconciliation")
+UV_HIGH = 6
+
+
+def _cap(s: str) -> str:
+    return s[:1].upper() + s[1:]
+
+
+def _holiday_line(h: dict, now: datetime.datetime) -> str:
+    name, days = h["name"], h["days"]
+    solemn = name in _SOLEMN
+    if days == 0:
+        return f"Today is {name}." if solemn or name.startswith("the ") else f"Happy {name}!"
+    when = "tomorrow" if days == 1 else f"on {(now + datetime.timedelta(days=days)):%A}"
+    return f"{_cap(name)} is {when}{'.' if solemn else '!'}"
+
+
 def _your_day_part(extras: dict, now: datetime.datetime):
     lines, rows = [], []
+    # Sun first (the spec's order), so "Your day: the sun rose at ..." reads on.
     sun = extras.get("sun")
     if sun:
         rise, sets = _hhmm_to_display(sun["sunrise"]), _hhmm_to_display(sun["sunset"])
-        risen = now.strftime("%H:%M") >= sun["sunrise"]
-        lines.append(_sentence(f"the sun {'rose' if risen else 'rises'} at {rise} and sets at {sets}"))
+        hhmm = now.strftime("%H:%M")
+        risen, set_ = hhmm >= sun["sunrise"], hhmm >= sun["sunset"]
+        lines.append(_sentence(f"the sun {'rose' if risen else 'rises'} at {rise} "
+                               f"and {'set' if set_ else 'sets'} at {sets}"))
         rows.append({"kind": "sun", "text": f"Sunrise {rise} · Sunset {sets}"})
+    dl = extras.get("daylight")
+    if dl and dl.get("change"):
+        n = abs(dl["change"])
+        lines.append(f"Days are getting {'longer' if dl['change'] > 0 else 'shorter'}: "
+                     f"about {n} minute{'s' if n != 1 else ''} {'more' if dl['change'] > 0 else 'less'} "
+                     f"daylight each day.")
+        rows.append({"kind": "daylight", "minutes": dl["minutes"], "change": dl["change"]})
     for r in extras.get("reminders", []):
         t = _hhmm_to_display(r["time"])
         lines.append(f"You have a reminder at {t}: {_sentence(r['message'])}")
         rows.append({"kind": "reminder", "time": t, "text": r["message"].rstrip("!.")})
+    for r in extras.get("recurring", []):
+        t = r.get("time") and _hhmm_to_display(r["time"])
+        if r["when"] == "today":
+            lines.append(f"{r['name']} at {t}." if t else f"{r['name']} today.")
+        else:
+            lines.append(f"{r['name']} tomorrow{f' at {t}' if t else ''}.")
+        rows.append({"kind": "recurring", "when": r["when"], "time": t, "text": r["name"]})
     for c in extras.get("countdowns", []):
         if c["days"] == 0:
             said = f"{c['name']} is today!"
@@ -125,6 +160,18 @@ def _your_day_part(extras: dict, now: datetime.datetime):
             said = f"{c['days']} days until {c['name']}!"
         lines.append(said)
         rows.append({"kind": "countdown", "days": c["days"], "text": c["name"]})
+    for h in extras.get("holidays", []):
+        lines.append(_holiday_line(h, now))
+        rows.append({"kind": "holiday", "days": h["days"], "text": _cap(h["name"]),
+                     "weekday": f"{(now + datetime.timedelta(days=h['days'])):%A}"})
+    uv = extras.get("uv")
+    if uv is not None and uv >= UV_HIGH:
+        level = "very high" if uv >= 8 else "high"
+        lines.append(f"The UV index is {level} today, {uv}. Wear sunscreen!")
+        rows.append({"kind": "uv", "uv": uv, "text": level})
+    if extras.get("full_moon"):
+        lines.append("There's a full moon tonight!")
+        rows.append({"kind": "moon", "text": "Full moon tonight"})
     if not lines:
         return None
     text = "Your day: " + " ".join(lines)
@@ -133,12 +180,33 @@ def _your_day_part(extras: dict, now: datetime.datetime):
 
 
 def intro_line(now: datetime.datetime) -> str:
-    return (f"Good morning! It's {now:%A}, the {ordinal_words(now.day)} of {now:%B}. "
-            f"BMO has your morning briefing!")
+    """Greets by the time of day: the briefing can be asked for any time."""
+    if now.hour < 12:
+        hello, what = "Good morning!", "your morning briefing"
+    elif now.hour < 18:
+        hello, what = "Good afternoon!", "your briefing"
+    else:
+        hello, what = "Good evening!", "your briefing"
+    return f"{hello} It's {now:%A}, the {ordinal_words(now.day)} of {now:%B}. BMO has {what}!"
 
 
 def signoff_line(day: datetime.date) -> str:
     return random.Random(day.toordinal()).choice(SIGNOFFS)
+
+
+def clean_fun_fact(fact):
+    """The LLM's fun fact if it's usable, else None (the plain sign-off is used).
+
+    Same spirit as pondering's checks: one or two plain sentences, no
+    questions, no JSON, no markup, nothing long enough to ramble."""
+    if not fact:
+        return None
+    fact = re.sub(r"\{.*?\}", "", fact, flags=re.S)          # stray actions
+    fact = re.sub(r"[\[\]<>*_#`]", "", fact)
+    fact = re.sub(r"\s+", " ", fact).strip()
+    if not 20 <= len(fact) <= 240 or "?" in fact or "http" in fact.lower():
+        return None
+    return _sentence(fact)
 
 
 def to_speech(text: str) -> str:
@@ -170,7 +238,12 @@ def build_script(data: dict, now: datetime.datetime) -> list:
     if parts[0].get("segments"):
         first = parts[0]["segments"][0]
         first["text"] = f"{lead} {first['text']}"
-    parts.append({"key": "signoff", "card": None, "text": signoff_line(now.date())})
+    signoff = signoff_line(now.date())
+    if now.hour >= 12:
+        signoff = signoff.replace("That's your morning!", "That's your briefing!")
+    if data.get("fun_fact"):
+        signoff = f"Here's a fun fact: {data['fun_fact']} {signoff}"
+    parts.append({"key": "signoff", "card": None, "text": signoff})
     for p in parts:
         if p.get("segments"):
             for sg in p["segments"]:

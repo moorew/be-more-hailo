@@ -13,6 +13,7 @@ import time
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 
+from core.briefing import holidays as holiday_calendar
 from core.search import _day_stats, fetch_j1
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,11 @@ def _parse_j1(data: dict, location: str, fetched_at: float) -> dict:
         astro = (day.get("astronomy") or [{}])[0]
         stats["sunrise"] = _sun_time(astro.get("sunrise", ""))
         stats["sunset"] = _sun_time(astro.get("sunset", ""))
+        stats["moon"] = astro.get("moon_phase")
+        try:
+            stats["uv"] = int(day.get("uvIndex"))
+        except (TypeError, ValueError):
+            stats["uv"] = None
         days.append(stats)
     return {
         "location": location,
@@ -62,7 +68,28 @@ def _select_days(fc: dict, today: datetime.date):
     out["today"] = t
     out["tomorrow"] = by_date.get((today + datetime.timedelta(days=1)).isoformat())
     out["sunrise"], out["sunset"] = t.get("sunrise"), t.get("sunset")
+    out["daylight"] = _daylight(t, out["tomorrow"])
     return out
+
+
+def _minutes(hhmm):
+    h, m = (int(x) for x in hhmm.split(":"))
+    return h * 60 + m
+
+
+def _daylight(today: dict, tomorrow):
+    """{"minutes": today's daylight, "change": minutes gained (+) or lost (-)
+    per day}, from wttr.in's own sun times for today and tomorrow."""
+    try:
+        length = _minutes(today["sunset"]) - _minutes(today["sunrise"])
+    except Exception:
+        return None
+    change = None
+    try:
+        change = (_minutes(tomorrow["sunset"]) - _minutes(tomorrow["sunrise"])) - length
+    except Exception:
+        pass
+    return {"minutes": length, "change": change}
 
 
 def get_forecast(location: str, today: datetime.date = None, clock=time.time,
@@ -333,8 +360,49 @@ def get_countdowns(specs: list, today: datetime.date, horizon_days: int = 14) ->
     return sorted(out, key=lambda c: c["days"])
 
 
+_DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def recurs_on(spec: dict, day: datetime.date) -> bool:
+    """Does a repeating item fall on `day`?
+
+    {"days": ["tue"], "every_weeks": 2, "start": "2026-10-06"}  every other Tuesday
+    {"day_of_month": 1}                                        the 1st (or last day)"""
+    try:
+        if spec.get("day_of_month"):
+            n = int(spec["day_of_month"])
+            nxt = (day.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+            last = (nxt - datetime.timedelta(days=1)).day
+            return day.day == min(n, last)
+        days = [str(d).lower()[:3] for d in spec.get("days", [])]
+        if _DAY_NAMES[day.weekday()] not in days:
+            return False
+        every = max(1, int(spec.get("every_weeks", 1)))
+        if every == 1:
+            return True
+        start = datetime.date.fromisoformat(spec["start"])
+        weeks = ((day - datetime.timedelta(days=day.weekday()))
+                 - (start - datetime.timedelta(days=start.weekday()))).days // 7
+        return weeks % every == 0
+    except Exception:
+        logger.warning(f"Briefing: bad repeating item {spec!r}")
+        return False
+
+
+def get_recurring(specs: list, today: datetime.date) -> list:
+    """[{name, time, when}]: items due today, plus tomorrow's when heads_up is set."""
+    out = []
+    for spec in specs or []:
+        if recurs_on(spec, today):
+            out.append({"name": str(spec.get("name", "something")), "time": spec.get("time"), "when": "today"})
+        elif spec.get("heads_up") and recurs_on(spec, today + datetime.timedelta(days=1)):
+            out.append({"name": str(spec.get("name", "something")), "time": spec.get("time"), "when": "tomorrow"})
+    return sorted(out, key=lambda r: (r["when"] != "today", r["time"] or ""))
+
+
 def get_extras(settings: dict, now: datetime.datetime, registry=None, forecast=None) -> dict:
-    """Reminders due later today, countdowns and sun times."""
+    """Reminders due later today, repeating items, countdowns, holidays, and
+    from the forecast: sun times, daylight, UV and the full moon."""
     extras = settings.get("extras", {})
     today = now.date()
     reminders = []
@@ -346,9 +414,16 @@ def get_extras(settings: dict, now: datetime.datetime, registry=None, forecast=N
     sun = None
     if extras.get("sun", True) and forecast and forecast.get("sunrise") and forecast.get("sunset"):
         sun = {"sunrise": forecast["sunrise"], "sunset": forecast["sunset"]}
+    day = (forecast or {}).get("today") or {}
+    daylight = forecast.get("daylight") if forecast and extras.get("daylight", True) else None
+    uv = day.get("uv") if extras.get("uv", True) else None
+    full_moon = extras.get("moon", True) and (day.get("moon") or "").lower() == "full moon"
     return {"reminders": reminders,
+            "recurring": get_recurring(extras.get("recurring"), today),
             "countdowns": get_countdowns(extras.get("countdowns"), today),
-            "sun": sun}
+            "holidays": holiday_calendar.upcoming(today, extras.get("province", "ON"))
+            if extras.get("holidays", True) else [],
+            "sun": sun, "daylight": daylight, "uv": uv, "full_moon": bool(full_moon)}
 
 
 def gather(settings: dict, now: datetime.datetime, registry=None, **fetchers) -> dict:

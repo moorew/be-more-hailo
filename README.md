@@ -311,7 +311,7 @@ export ALSA_DEVICE="plughw:2,0"
 
 ### Morning briefing
 
-The morning briefing reads the weather, a few headlines and your day (reminders, countdowns, sunrise and sunset). `install.sh` asks for your weather location, up to three news feeds (pick from a list or paste any RSS URL; each is checked before it's saved) and the morning window. Change them any time with:
+The morning briefing reads the weather, a few headlines and your day: reminders, repeating things like bin day, countdowns, holidays, sunrise and sunset, how fast the days are changing, a high UV warning and the full moon. No calendar account is needed. `install.sh` asks for your weather location, up to three news feeds (pick from a list or paste any RSS URL; each is checked before it's saved), the morning window and any repeating items. Change them any time with:
 
 ```bash
 source venv/bin/activate && python -m core.briefing --setup
@@ -341,8 +341,14 @@ Everything lives under a `briefing` key in `settings.json`, next to the `volume`
     },
     "extras": {
       "reminders": true,
-      "sun": true,
+      "recurring": [],
       "countdowns": [],
+      "holidays": true,
+      "province": "ON",
+      "sun": true,
+      "daylight": true,
+      "uv": true,
+      "moon": true,
       "fun_fact": false
     },
     "talk_mood": "happy"
@@ -362,12 +368,21 @@ Everything lives under a `briefing` key in `settings.json`, next to the `volume`
 | `news.count` | Headlines read aloud (3–5) |
 | `news.region`, `news.query` | DuckDuckGo news search used when the feeds give fewer than three headlines |
 | `extras.reminders` | Read timers and reminders due later today |
+| `extras.recurring` | Repeating items, read on the day: `{"name": "Garbage day", "days": ["tue"], "every_weeks": 2, "start": "2026-10-06", "heads_up": true}` (every other Tuesday, also mentioned the day before), `{"name": "Piano", "days": ["wed", "sat"], "time": "16:00"}`, `{"name": "Rent", "day_of_month": 1}` |
+| `extras.holidays`, `extras.province` | Canadian holidays and a few favourites (Halloween, Mother's Day...), worked out offline; mentioned on the day and up to 3 days before. The province names the February and August long weekends |
 | `extras.sun` | Read sunrise and sunset |
+| `extras.daylight` | "Days are getting shorter: about 3 minutes less daylight each day" |
+| `extras.uv` | Warn when the day's UV index is 6 or more |
+| `extras.moon` | Mention a full moon |
 | `extras.countdowns` | e.g. `{"name": "Mum's birthday", "date": "11-14", "yearly": true}` or `{"name": "Trip", "date": "2026-11-20"}`; read when 14 days or fewer away |
 | `extras.fun_fact` | Let the LLM add a fun fact to the sign-off |
 | `talk_mood` | BMO's face while reading |
 
-Each morning a sun icon appears in the top-right corner (with a short chime) once the briefing is ready. Tap it and BMO moves to the left of the screen while cards for each part appear beside it. Tap the card to skip ahead, tap BMO's face to stop.
+Each morning a sun icon appears in the top-right corner (with a short chime) once the briefing is ready. Tap it, or say "good morning", and BMO moves to the left of the screen while cards for each part appear beside it. Tap the card to skip ahead, tap BMO's face to stop.
+
+Ask for it any time of day: "morning briefing", "show me my briefing", "brief me", "what's my day look like?". If the cached one is more than 3 hours old (or there isn't one yet) BMO fetches a fresh one first, which takes about 20 seconds. "Good morning" on its own only plays a briefing that's waiting; otherwise BMO just says good morning back.
+
+Reminders for a time or a day go straight into "Your day": "remind me tomorrow at 9 to put the bins out", "remind me on Friday to call the dentist", "set an alarm for 6:30am". They're kept in `reminders.json`, so they survive a restart.
 
 To try the screen without waiting for the morning, start BMO with `python3 agent_hailo.py --briefing-now`: it renders a fresh briefing straight away and shows the icon about 20 seconds later.
 

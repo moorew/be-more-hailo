@@ -299,7 +299,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert saved["due"] == clock["t"] + 600 and saved["message"] == "Stir the soup!"
         gui.reminders.add(clock["t"] - 5, "missed while off")
         rearmed = []
-        gui.start_timer_thread = lambda m, msg, reminder_id=None: rearmed.append((round(m, 3), msg, reminder_id))
+        gui.start_timer_thread = lambda m, msg, reminder_id=None, kind="timer": rearmed.append((round(m, 3), msg, reminder_id))
         gui._rearm_reminders()
         del gui.start_timer_thread
         assert rearmed == [(10.0, "Stir the soup!", saved["id"])], rearmed
@@ -556,6 +556,67 @@ gui.current_state = S.IDLE
 log.append("briefing muted: no aplay, cards advance every 6 s with captions")
 
 assert gui._briefing_frame_ms, "briefing frames weren't timed"
+
+# Voice: "morning briefing" / "show me my briefing" -> play_briefing action.
+played_req, prepared = [], []
+
+
+class ReqScheduler(FakeScheduler):
+    def __init__(self, created):
+        super().__init__()
+        self.created = created
+
+    def briefing_for_today(self, now=None):
+        return None if self.created is None else {**BRIEFING, "created": self.created}
+
+    def prepare_now(self, now=None):
+        prepared.append(gui.current_state)
+        self.created = clock["t"]
+        return {"parts": []}
+
+
+def _fake_play(b, tag=None):
+    played_req.append(tag or b["created"])
+    gui.current_state = S.IDLE        # the real one ends in HAPPY -> IDLE
+    gui._release_busy()
+
+
+gui._play_briefing = _fake_play
+gui._thinking_sound_start = gui._thinking_sound_stop = lambda: None
+gui.current_state = S.IDLE
+gui.briefing_scheduler = ReqScheduler(created=clock["t"] - 600)        # fresh: plays as is
+gui._briefing_on_request()
+assert played_req == [clock["t"] - 600] and prepared == [] and not gui.is_busy
+gui.briefing_scheduler = ReqScheduler(created=clock["t"] - 4 * 3600)   # stale: re-fetched first
+gui._briefing_on_request()
+assert prepared == [S.THINKING] and played_req[-1] == clock["t"], (prepared, played_req)
+gui.briefing_scheduler = ReqScheduler(created=None)                    # none yet today
+gui._briefing_on_request()
+assert len(prepared) == 2 and len(played_req) == 3
+assert gui._try_claim_busy()                                           # busy: gives up (after 5 s)
+gui._briefing_on_request()
+assert len(played_req) == 3
+gui._release_busy()
+gui._play_briefing = lambda b: _fake_play(b, "action")
+gui.briefing_scheduler = ReqScheduler(created=clock["t"])
+gui._handle_response_chunk('{"action": "play_briefing"}', is_last=False)
+for _ in range(100):
+    if played_req[-1] == "action":
+        break
+    threading.Event().wait(0.01)
+assert played_req[-1] == "action"
+del gui._play_briefing, gui._thinking_sound_start, gui._thinking_sound_stop
+log.append("briefing by voice: plays a fresh one, re-fetches a stale one, gives up when busy")
+
+# "Remind me tomorrow at 9 ..." -> set_reminder: saved as a reminder, no 12 h clamp.
+gui.reminders = ReminderRegistry(os.path.join(BRIEF_DIR, "reminders2.json"), clock=lambda: clock["t"])
+gui.stop_event = threading.Event()
+due = clock["t"] + 20 * 3600
+gui._handle_response_chunk('{"action": "set_reminder", "due": %r, "message": "Bins!"}' % due, is_last=False)
+[saved] = gui.reminders.pending()
+assert saved["kind"] == "reminder" and saved["message"] == "Bins!" and abs(saved["due"] - due) < 1
+gui.stop_event.set()
+log.append("reminders by voice: a dated reminder is saved, 20 h ahead")
 
 # --briefing-now opens a window from start-up on any day, with no lead time.
 assert gui._briefing_settings()["window"] != ["12:00", "13:00"]

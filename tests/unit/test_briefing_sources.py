@@ -153,7 +153,8 @@ def test_nothing_online_gives_empty_parts(tmp_path):
     data = sources.gather(settings, NOW, registry=None, fetch=lambda loc: None, cache_dir=str(tmp_path),
                           clock=lambda: NOW_TS, fetch_feed=broken, ddgs_news=broken)
     assert data["weather"] is None and data["headlines"] == []
-    assert data["extras"] == {"reminders": [], "countdowns": [], "sun": None}
+    assert data["extras"] == {"reminders": [], "recurring": [], "countdowns": [], "holidays": [],
+                              "sun": None, "daylight": None, "uv": None, "full_moon": False}
 
 
 # --- your day -----------------------------------------------------------------

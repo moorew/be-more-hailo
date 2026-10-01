@@ -43,6 +43,7 @@ def test_choose_location_and_three_feeds(tmp_path):
         "1", "https://paper.example/rss", "The Local Paper",   # preset, URL + spoken name
         "7",                                   # third feed: Techmeme preset
         "06:30", "",                           # window start, keep end
+        "",                                    # no repeating items
     ], existing={"volume": 0.4, "briefing": {"chime": False, "news": {"count": 5}}})
     assert saved["volume"] == 0.4                                   # other settings kept
     assert saved["briefing"]["chime"] is False and saved["briefing"]["news"]["count"] == 5
@@ -58,7 +59,7 @@ def test_choose_location_and_three_feeds(tmp_path):
 
 
 def test_enter_everywhere_keeps_the_defaults(tmp_path):
-    _, saved, _ = run(tmp_path, ["", "", "", "", ""])
+    _, saved, _ = run(tmp_path, ["", "", "", "", "", ""])
     assert saved["briefing"]["location"] == "Brantford"
     assert [f["name"] for f in saved["briefing"]["news"]["feeds"]] == [
         "CBC News", "the Brantford Expositor", "Techmeme"]
@@ -75,6 +76,7 @@ def test_bad_answers_are_asked_again(tmp_path):
         "2", "2",                               # duplicate
         "",                                     # finish with one feed
         "7am", "07:00", "06:00", "12:00",       # bad time; end before start
+        "",                                     # no repeating items
     ])
     assert saved["briefing"]["location"] == "Paris"
     assert [f["url"] for f in saved["briefing"]["news"]["feeds"]] == [PRESETS[1][1]]
@@ -86,3 +88,26 @@ def test_bad_answers_are_asked_again(tmp_path):
 def test_turning_it_off_only_saves_enabled(tmp_path):
     _, saved, _ = run(tmp_path, ["n"], existing={"volume": 0.4})
     assert saved == {"volume": 0.4, "briefing": {"enabled": False}}
+
+
+def test_repeating_items(tmp_path):
+    # NOW_TS is Thursday 1 October 2026.
+    _, saved, said = run(tmp_path, [
+        "", "", "", "", "",                    # enabled, location, feeds, window
+        "Garbage day", "tue", "2", "n", "", "y",   # every other Tue, not the 6th: from the 13th
+        "Rent", "1", "",  "",                  # day of month, no time, no heads-up
+        "Piano", "wed,sat", "1", "4pm", "16:00", "",
+        "",                                    # finish
+    ], existing={"briefing": {"extras": {"sun": False}}})
+    extras = saved["briefing"]["extras"]
+    assert extras["sun"] is False                                        # other extras kept
+    assert extras["recurring"] == [
+        {"name": "Garbage day", "days": ["tue"], "every_weeks": 2, "start": "2026-10-13", "heads_up": True},
+        {"name": "Rent", "day_of_month": 1},
+        {"name": "Piano", "days": ["wed", "sat"], "time": "16:00"}]
+    assert "ok: Garbage day (every other Tue)" in said and "ok: Rent (the 1st of each month)" in said
+    assert "Please use 24-hour HH:MM" in said
+    # Running it again offers to keep them.
+    _, saved2, said2 = run(tmp_path, ["", "", "", "", "", ""], existing=saved)
+    assert saved2["briefing"]["extras"]["recurring"] == extras["recurring"]
+    assert "Repeating items: Garbage day (every other Tue)" in said2

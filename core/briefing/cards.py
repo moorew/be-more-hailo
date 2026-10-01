@@ -262,6 +262,26 @@ def row_icon(pen, kind, x, y, s=30):
         pen.line([(x + s * .5, y + s * .29), (x + s * .5, y + s * .84)], C["ink"], lw)
         pen.ellipse(x + s * .30, y + s * .12, x + s * .50, y + s * .30, outline=C["ink"], width=lw)
         pen.ellipse(x + s * .50, y + s * .12, x + s * .70, y + s * .30, outline=C["ink"], width=lw)
+    elif kind == "recurring":                               # calendar page
+        pen.rect(x + s * .12, y + s * .2, x + s * .88, y + s * .88, r=3, fill=C["white"], outline=C["ink"], width=lw)
+        pen.rect(x + s * .12, y + s * .2, x + s * .88, y + s * .4, r=3, fill=C["blue"], outline=C["ink"], width=lw)
+        for cx in (.32, .68):
+            pen.line([(x + s * cx, y + s * .1), (x + s * cx, y + s * .28)], C["ink"], lw)
+        for cx, cy in ((.32, .56), (.5, .56), (.68, .56), (.32, .73), (.5, .73)):
+            pen.ellipse(x + s * cx - 1.6, y + s * cy - 1.6, x + s * cx + 1.6, y + s * cy + 1.6, fill=C["ink"])
+    elif kind == "holiday":                                 # star
+        pts = []
+        for k in range(10):
+            a = -math.pi / 2 + k * math.pi / 5
+            r = s * (.44 if k % 2 == 0 else .19)
+            pts.append((x + s / 2 + r * math.cos(a), y + s * .54 + r * math.sin(a)))
+        pen.polygon(pts, fill=C["yellow"], outline=C["ink"], width=lw)
+    elif kind == "moon":                                    # full moon
+        pen.ellipse(x + s * .14, y + s * .14, x + s * .86, y + s * .86, fill="#FFF3C9", outline=C["ink"], width=lw)
+        for cx, cy, r in ((.38, .40, .08), (.60, .58, .10), (.62, .32, .05)):
+            pen.ellipse(x + s * (cx - r), y + s * (cy - r), x + s * (cx + r), y + s * (cy + r), fill=C["rule"])
+    elif kind in ("uv", "daylight"):                        # sun with rays
+        _sun(pen, x + s / 2, y + s / 2, s * 0.2)
     else:                                                   # sun on the horizon
         pen.pieslice(x + s * .2, y + s * .42, x + s * .8, y + s * 1.0, 180, 360, fill=C["yellow"],
                      outline=C["ink"], width=lw)
@@ -402,7 +422,30 @@ def headlines_card(card, keys, index, size, highlight=None, now_ts=None):
     return _down(img)
 
 
+def _duration_text(minutes):
+    h, m = divmod(int(minutes), 60)
+    return f"{h} h {m:02d} min"
+
+
 def _day_row_text(row):
+    kind = row["kind"]
+    if kind == "recurring":
+        when = row.get("time") or ("Today" if row["when"] == "today" else "")
+        if row["when"] == "tomorrow":
+            when = "Tomorrow" + (f" {row['time']}" if row.get("time") else "")
+        return "recurring", f"**{when}** {row['text']}"
+    if kind == "holiday":
+        d = row["days"]
+        when = "today!" if d == 0 else "tomorrow" if d == 1 else row.get("weekday", f"in {d} days")
+        return "holiday", f"{row['text']} **{when}**"
+    if kind == "daylight":
+        change = row["change"]
+        return "daylight", (f"**{_duration_text(row['minutes'])}** of daylight · "
+                            f"{abs(change)} min {'more' if change > 0 else 'less'} each day")
+    if kind == "uv":
+        return "uv", f"UV index **{row['uv']}** ({row['text']}) · wear sunscreen"
+    if kind == "moon":
+        return "moon", "**Full moon** tonight"
     if row["kind"] == "sun":
         rise, sets = row["text"].replace("Sunrise ", "").split(" · Sunset ")
         return "sun", f"Sunrise **{rise}** · sunset **{sets}**"
@@ -420,17 +463,21 @@ def your_day_card(card, keys, index, size):
     img, pen = _frame(w, h)
     _title(pen, w, "Your day", card.get("date"))
     # Reminders first, then countdowns, then the sun (the mockup's order).
-    order = {"reminder": 0, "timer": 0, "countdown": 1, "sun": 2}
+    order = {"reminder": 0, "timer": 0, "recurring": 1, "countdown": 2, "holiday": 3,
+             "sun": 4, "daylight": 5, "uv": 6, "moon": 7}
     rows = sorted((_day_row_text(r) for r in card["rows"]), key=lambda kr: order[kr[0]])
     y, bottom = 64, h - 18 - 30 - 8
-    row_h = 50
+    # Rows shrink (50 -> 39 px) so a busy day still fits; past that, "…and N more".
+    row_h = max(39, min(50, (bottom - y) / max(1, len(rows))))
+    fs = 20 if row_h >= 46 else 17
+    ic = 30 if row_h >= 46 else 26
     max_rows = int((bottom - y) // row_h)
     if len(rows) > max_rows:
         rows = rows[:max_rows - 1] + [("reminder", f"…and {len(rows) - max_rows + 1} more")]
     for i, (kind, text) in enumerate(rows):
-        row_icon(pen, kind, 24, y + 10, 30)
-        lines = wrap(text, 20, w - 48 - 44, max_lines=1)
-        draw_lines(pen, 24 + 44, y + 12, lines, 20, C["text"], 24)
+        row_icon(pen, kind, 24 + (30 - ic) / 2, y + (row_h - ic) / 2, ic)
+        lines = wrap(text, fs, w - 48 - 44, max_lines=1)
+        draw_lines(pen, 24 + 44, y + (row_h - fs * 1.2) / 2, lines, fs, C["text"], 24)
         if i < len(rows) - 1:
             pen.line([(24, y + row_h - 1), (w - 24, y + row_h - 1)], C["rule"], 2)
         y += row_h

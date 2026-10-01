@@ -35,8 +35,16 @@ DEFAULTS = {
     },
     "extras": {
         "reminders": True,
-        "sun": True,
+        # e.g. {"name": "Garbage day", "days": ["tue"], "every_weeks": 2,
+        #       "start": "2026-10-06", "heads_up": true}  or  {"name": "Rent", "day_of_month": 1}
+        "recurring": [],
         "countdowns": [],
+        "holidays": True,
+        "province": "ON",
+        "sun": True,
+        "daylight": True,
+        "uv": True,
+        "moon": True,
         "fun_fact": False,
     },
     "talk_mood": "happy",

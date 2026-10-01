@@ -32,5 +32,7 @@ if [ -z "${DISPLAY:-}" ]; then
 fi
 
 # Run the agent using python3 (Use new Hailo optimized agent)
+# Unbuffered, so print() lines reach the journal as they happen (systemd-run).
+export PYTHONUNBUFFERED=1
 exec python3 agent_hailo.py "$@"
 

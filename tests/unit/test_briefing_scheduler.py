@@ -231,3 +231,15 @@ def test_prepare_briefing_marks_incomplete_when_news_missing(tmp_path):
     assert seen["complete"] is False
     assert sch.prepare_briefing(at("06:30"), {}, gather=lambda s, n, r: {}, build=lambda d, n: [],
                                 render=render) is None
+
+
+def test_prepare_now_renders_on_request_and_shares_the_lock(tmp_path):
+    w = World(tmp_path)
+    w.now = at("19:30")                                  # long after the window
+    b = w.s.prepare_now()
+    assert b is not None and w.prepares == ["19:30"]
+    assert w.s.briefing_for_today(w.now) is not None
+    with w.s._prepare_lock:                              # an on-demand one is running...
+        w.now = at("06:45", DAY + datetime.timedelta(days=1))
+        w.s.tick()                                       # ...so the tick doesn't start another
+    assert w.prepares == ["19:30"]

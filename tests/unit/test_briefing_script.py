@@ -161,3 +161,31 @@ def test_speakable(text, said):
 
 def test_day_stats_shared_with_chat_weather():
     assert _day_stats(J1["weather"][1])["rain"] == 76
+
+
+@pytest.mark.parametrize("raw,clean", [
+    ("Octopuses have three hearts and blue blood!", "Octopuses have three hearts and blue blood!"),
+    ("Honey never spoils, even after 3000 years {\"action\": \"display_image\", \"subject\": \"honey\"}",
+     "Honey never spoils, even after 3000 years."),
+    ("Did you know bees dance?", None),            # a question
+    ("Hi", None),                                  # too short
+    ("word " * 60, None),                          # rambling
+    (None, None),
+])
+def test_fun_fact_checks(raw, clean):
+    assert script.clean_fun_fact(raw) == clean
+
+
+def test_fun_fact_goes_before_the_sign_off():
+    parts = script.build_script({"weather": weather(), "fun_fact": "Octopuses have three hearts."}, NOW)
+    assert parts[-1]["text"] == "Here's a fun fact: Octopuses have three hearts. That's your morning! Have a great day!"
+
+
+def test_fun_fact_only_when_switched_on():
+    from core.briefing.scheduler import prepare_briefing
+    seen = []
+    for on in (False, True):
+        prepare_briefing(NOW, {"extras": {"fun_fact": on}}, gather=lambda s, n, r: {"weather": weather()},
+                         build=lambda d, n: seen.append(d.get("fun_fact")) or [],
+                         fun_fact=lambda: "Octopuses have three hearts.")
+    assert seen == [None, "Octopuses have three hearts."]

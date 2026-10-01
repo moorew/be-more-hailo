@@ -7,6 +7,7 @@ fetching and parsing it) before it's saved, and only the keys asked about
 are written: anything else hand-edited in the `briefing` block is kept.
 Press Enter at any prompt to keep the value shown in [brackets].
 """
+import datetime
 import re
 import time
 
@@ -132,6 +133,78 @@ def _ask_time(prompt, current, ask, say):
         say("  Please use 24-hour HH:MM, e.g. 07:00.")
 
 
+MAX_RECURRING = 6
+_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+_DAY_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def describe_recurring(spec: dict) -> str:
+    """'Garbage day (every other Tue)', 'Rent (the 1st of each month)'."""
+    if spec.get("day_of_month"):
+        from core.briefing.speech import ordinal_suffix
+        when = f"the {ordinal_suffix(int(spec['day_of_month']))} of each month"
+    else:
+        days = "/".join(d.title() for d in spec.get("days", []))
+        when = f"every other {days}" if int(spec.get("every_weeks", 1)) == 2 else f"every {days}"
+    if spec.get("time"):
+        when += f" at {spec['time']}"
+    return f"{spec.get('name', '?')} ({when})"
+
+
+def _ask_one_recurring(n, ask, say, today):
+    name = ask(f"Repeating item {n}: what is it? (e.g. Garbage day; Enter to finish): ").strip()
+    if not name:
+        return None
+    while True:
+        raw = ask("  Which day? e.g. tue, or tue,fri, or a date like 1 for the 1st of each month: ")
+        raw = raw.strip().lower()
+        if raw.isdigit() and 1 <= int(raw) <= 31:
+            spec = {"name": name, "day_of_month": int(raw)}
+            break
+        days = [d.strip()[:3] for d in re.split(r"[,\s/]+", raw) if d.strip()]
+        if days and all(d in _DAYS for d in days):
+            spec = {"name": name, "days": days}
+            every = ask("  Every week, or every other week? [1/2]: ").strip()
+            if every == "2":
+                first = min(days, key=lambda d: (_DAYS.index(d) - today.weekday()) % 7)
+                nxt = today + datetime.timedelta(days=(_DAYS.index(first) - today.weekday()) % 7)
+                if _yes(ask(f"  Is the next one {_DAY_FULL[nxt.weekday()]} {nxt:%B} {nxt.day}? [Y/n]: ")):
+                    start = nxt
+                else:
+                    start = nxt + datetime.timedelta(days=7)
+                spec.update(every_weeks=2, start=start.isoformat())
+            break
+        say("  Please give day names (mon, tue, ...) or a day of the month (1-31).")
+    while True:
+        t = ask("  At a time? (HH:MM, Enter for none): ").strip()
+        if not t:
+            break
+        if _TIME_RE.match(t):
+            h, m = t.split(":")
+            spec["time"] = f"{int(h):02d}:{m}"
+            break
+        say("  Please use 24-hour HH:MM, e.g. 16:30.")
+    if _yes(ask("  Mention it the day before too? [y/N]: "), default=False):
+        spec["heads_up"] = True
+    say(f"  ok: {describe_recurring(spec)}")
+    return spec
+
+
+def _ask_recurring(current, ask, say, today):
+    if current:
+        say("Repeating items: " + "; ".join(describe_recurring(r) for r in current))
+        if _yes(ask("Keep these? [Y/n]: ")):
+            return current
+    say("Anything that repeats, like bin day or a weekly lesson? BMO mentions it on the day.")
+    items = []
+    while len(items) < MAX_RECURRING:
+        item = _ask_one_recurring(len(items) + 1, ask, say, today)
+        if item is None:
+            break
+        items.append(item)
+    return items
+
+
 def run_setup(path: str = SETTINGS_PATH, ask=input, say=print, fetch=fetch_j1,
               fetch_feed=sources._fetch_feed, clock=time.time) -> dict:
     """Ask, check, and save.  Returns the briefing block as written."""
@@ -151,6 +224,9 @@ def run_setup(path: str = SETTINGS_PATH, ask=input, say=print, fetch=fetch_j1,
             say("  The end has to be later than the start.")
             end = _ask_time("until", current["window"][1], ask, say)
         answers["window"] = [start, end]
+        say("")
+        today = datetime.date.fromtimestamp(clock())
+        recurring = _ask_recurring(current["extras"].get("recurring") or [], ask, say, today)
 
     # Merge into the saved block, not the defaults, so only these keys change.
     block = read_settings(path).get("briefing")
@@ -158,6 +234,8 @@ def run_setup(path: str = SETTINGS_PATH, ask=input, say=print, fetch=fetch_j1,
     block.update(answers)
     if answers["enabled"]:
         block["news"] = {**(block.get("news") if isinstance(block.get("news"), dict) else {}), "feeds": feeds}
+        block["extras"] = {**(block.get("extras") if isinstance(block.get("extras"), dict) else {}),
+                           "recurring": recurring}
     update_settings({"briefing": block}, path=path)
     say(f"\nSaved to {path}. Change it any time with: python -m core.briefing --setup")
     return block

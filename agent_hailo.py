@@ -366,10 +366,13 @@ class BotGUI:
         self._briefing_frame_ms = []     # draw + paste cost per frame, logged after each play
         self.briefing_scheduler = BriefingScheduler(
             settings_fn=self._briefing_settings,
-            prepare_fn=lambda now, s: prepare_briefing(now, s, self.reminders),
+            prepare_fn=lambda now, s: prepare_briefing(now, s, self.reminders,
+                                                       fun_fact=self._briefing_fun_fact),
             is_idle=self._briefing_can_show,
             chime_fn=lambda: self.play_sound("briefing_sounds"),
             on_icon=self._on_briefing_icon)
+        # "Good morning" only plays a briefing that's waiting; Brain asks here.
+        self.brain.briefing_ready = self.briefing_scheduler.is_ready_unplayed
 
         self.load_animations()
         self.load_sounds()
@@ -1393,12 +1396,12 @@ class BotGUI:
         scipy.io.wavfile.write(filename, 16000, data_16k)
         return filename
     # --- TIMERS & REMINDERS ---
-    def start_timer_thread(self, minutes, message, reminder_id=None):
+    def start_timer_thread(self, minutes, message, reminder_id=None, kind="timer"):
         """Fire `message` in `minutes`.  The timer is saved in self.reminders
         (so the morning briefing can list it and a reboot re-arms it) and
         removed when it fires.  Pass `reminder_id` to re-arm a saved one."""
         if reminder_id is None:
-            reminder_id = self.reminders.add(time.time() + minutes * 60, message)
+            reminder_id = self.reminders.add(time.time() + minutes * 60, message, kind=kind)
 
         def timer_worker():
             print(f"[TIMER SET] for {minutes} minutes. Message: {message}")
@@ -1496,6 +1499,49 @@ class BotGUI:
         self.icon_overlay.press()
         threading.Thread(target=self._play_briefing, args=(briefing,), daemon=True).start()
 
+    def _briefing_fun_fact(self):
+        """extras.fun_fact: one fact for the sign-off, made the way pondering
+        makes its thoughts (web search + the LLM, which only phrases it)."""
+        from core.search import search_web
+        found = search_web("interesting fun fact of the day")
+        if not found or found in ("SEARCH_EMPTY", "SEARCH_ERROR"):
+            return None
+        return self.generate_thought_internal(found)
+
+    BRIEFING_STALE_S = 3 * 3600   # asked for later in the day: re-fetch past this age
+
+    def _briefing_on_request(self):
+        """Voice: "morning briefing", "show me my briefing", "good morning"...
+        Like play_music: wait for this turn to finish, then take the busy lock
+        (giving up quietly if something else has it).  Outside the morning, or
+        if today's briefing is stale, a fresh one is fetched and rendered first."""
+        if not self._wait_until_idle({BotStates.SPEAKING, BotStates.THINKING}):
+            return
+        if not self._busy_lock.acquire(timeout=5.0):
+            print("[BRIEFING] Busy; not starting the briefing")
+            return
+        self.is_busy = True
+        self.last_user_interaction = time.time()
+        briefing = self.briefing_scheduler.briefing_for_today()
+        if briefing is None or time.time() - briefing.get("created", 0) > self.BRIEFING_STALE_S:
+            print("[BRIEFING] Preparing a fresh briefing on request")
+            self.set_state(BotStates.THINKING, "Getting your briefing...")
+            self._thinking_sound_start()
+            try:
+                briefing = self.briefing_scheduler.prepare_now()
+            finally:
+                self._thinking_sound_stop()
+            if briefing is not None:
+                briefing = self.briefing_scheduler.briefing_for_today()   # with WAV paths
+        if briefing is None:
+            try:
+                self.speak("Sorry friend, BMO couldn't get your briefing right now.", msg="Oops!")
+            finally:
+                self.set_state(BotStates.IDLE, "Tap to speak")
+                self._release_busy()
+            return
+        self._play_briefing(briefing)
+
     def _play_briefing(self, briefing):
         """Play a cached briefing part by part.  The caller has claimed busy;
         it's released here, whatever happens."""
@@ -1587,7 +1633,8 @@ class BotGUI:
             print(f"[TIMER DROPPED] missed while BMO was off: {r['message']!r}")
         now = time.time()
         for r in self.reminders.pending():
-            self.start_timer_thread((r["due"] - now) / 60, r["message"], reminder_id=r["id"])
+            self.start_timer_thread((r["due"] - now) / 60, r["message"], reminder_id=r["id"],
+                                    kind=r.get("kind", "timer"))
 
     # --- STT & TTS ---
     def transcribe(self, filename):
@@ -2164,6 +2211,21 @@ class BotGUI:
                         if self.current_state == BotStates.JAMMING:
                             self.set_state(BotStates.IDLE, "Tap to speak")
                 threading.Thread(target=music_worker, daemon=True).start()
+                chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
+            elif action_data.get("action") == "play_briefing":
+                threading.Thread(target=self._briefing_on_request, daemon=True).start()
+                chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
+            elif action_data.get("action") == "set_reminder":
+                # From core/timers.parse_reminder_request: an absolute time,
+                # so no 12-hour clamp (it can be days away).
+                try:
+                    minutes = (float(action_data["due"]) - time.time()) / 60
+                    msg_text = str(action_data.get("message") or "Reminder!")
+                    if minutes > 0:
+                        self.start_timer_thread(minutes, msg_text, kind="reminder")
+                        print(f"[TIMER] Reminder in {minutes:.0f} min — {msg_text!r}")
+                except (KeyError, TypeError, ValueError) as e:
+                    print(f"[TIMER] Bad set_reminder payload {action_data!r}: {e}")
                 chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
             elif action_data.get("action") == "set_timer":
                 # Real handler — was advertised in the system prompt but

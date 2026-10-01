@@ -155,6 +155,7 @@ class BriefingView:
     # --- state, set from the playback thread ---
     def reset(self):
         with self._lock:
+            # New objects (not .clear()): background draws keep the old ones.
             self.parts, self.keys = [], []
             self.index, self.highlight = None, None
             self.caption = None
@@ -174,30 +175,38 @@ class BriefingView:
             self._pending, self._shown = set(), None
             self._started = time.time() if now is None else now
         # Cards are drawn ahead in the background; tick() draws any missing one.
-        threading.Thread(target=self._prerender, daemon=True).start()
+        threading.Thread(target=self._prerender, args=(self._job(),), daemon=True).start()
 
     def _card_size(self):
         x0, y0, x1, y1 = self.card_box
         return x1 - x0, y1 - y0
 
-    def _card(self, index, highlight):
+    def _card(self, index, highlight, job=None):
+        """Draw (or fetch) a card.  `job` is (parts, keys, cache) captured when a
+        background draw started, so a draw that outlives its briefing can only
+        fill that briefing's (discarded) cache, never the next one's."""
+        parts, keys, cache = job or (self.parts, self.keys, self._cache)
         key = (index, highlight)
-        img = self._cache.get(key)
+        img = cache.get(key)
         if img is None:
-            part = self.parts[index]
-            card_index = self.keys.index(part["key"]) if part["key"] in self.keys else 0
-            img = cards.draw_card(part, self.keys, card_index, self._card_size(), highlight)
-            self._cache[key] = img
+            part = parts[index]
+            card_index = keys.index(part["key"]) if part["key"] in keys else 0
+            img = cards.draw_card(part, keys, card_index, self._card_size(), highlight)
+            cache[key] = img
         return img
 
-    def _prerender(self):
+    def _job(self):
+        return self.parts, self.keys, self._cache
+
+    def _prerender(self, job):
+        parts = job[0]
         try:
-            for i, p in enumerate(list(self.parts)):
+            for i, p in enumerate(parts):
                 if not p.get("card"):
                     continue
-                self._card(i, None)
+                self._card(i, None, job)
                 for m in p.get("marks") or []:
-                    self._card(i, m["mark"])
+                    self._card(i, m["mark"], job)
         except Exception as e:  # drawing errors surface again in tick()
             print(f"[BRIEFING] Card pre-render failed: {e}")
 
@@ -245,7 +254,7 @@ class BriefingView:
         key = (self.index, self.highlight)
         if key not in self._pending:
             self._pending.add(key)
-            threading.Thread(target=self._card, args=key, daemon=True).start()
+            threading.Thread(target=self._card, args=(*key, self._job()), daemon=True).start()
         return self._shown
 
     # --- per frame, on the Tk thread ---

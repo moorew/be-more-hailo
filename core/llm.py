@@ -9,7 +9,8 @@ import numpy as np
 from .config import LLM_URL, LLM_KEEP_ALIVE, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt, get_current_context
 from .tts import add_pronunciation
 from .search import get_weather, search_web, search_images
-from .timers import describe_duration, parse_timer_request
+from .timers import describe_duration, describe_when, parse_reminder_request, parse_timer_request
+from .briefing import intents as briefing_intents
 
 logger = logging.getLogger(__name__)
 
@@ -488,6 +489,9 @@ class Brain:
         memory.json, clobbering the long-lived desktop agent's memory — two
         processes racing last-writer-wins over one file."""
         self.persist = persist
+        # Set by the agent: () -> True while a morning briefing is ready and
+        # unplayed.  None (web_app, cli) skips briefing routing entirely.
+        self.briefing_ready = None
         self.history = []
         if persist:
             self.load_history()
@@ -579,6 +583,39 @@ class Brain:
             self.history = _fit_context(self.history, budget=TRIM_TARGET_CHARS)
         self.save_history()
 
+    def _briefing_action(self, user_text: str):
+        """'{"action": "play_briefing"}' if this asks for the briefing, else None.
+
+        "Good morning" only plays a briefing that's ready and unplayed (else
+        BMO chats as usual); "morning briefing" and friends play any time.
+        No lead-in: the briefing opens with its own greeting."""
+        if self.briefing_ready is None:
+            return None
+        intent = briefing_intents.match(user_text)
+        if intent == briefing_intents.BRIEFING or (
+                intent == briefing_intents.GOOD_MORNING and self.briefing_ready()):
+            print(f"[LLM] Briefing MATCHED ({intent}): '{user_text[:60]}'")
+            return '{"action": "play_briefing"}'
+        return None
+
+    @staticmethod
+    def _reminder_reply(user_text: str):
+        """(spoken, action) for "remind me tomorrow at 9 to ..." or None."""
+        r = parse_reminder_request(user_text)
+        if r is None:
+            return None
+        when = describe_when(r["due"])
+        if r["message"] == "Alarm!":
+            spoken = f"Okay friend! I set an alarm for {when}"
+        elif r["message"] == "Reminder!":
+            spoken = f"Okay friend! I'll remind you {when}"
+        else:
+            spoken = f"Okay friend! I'll remind you {when} to {r['message'].rstrip('!.')[:1].lower()}" \
+                     f"{r['message'].rstrip('!.')[1:]}"
+        if not spoken.endswith("."):
+            spoken += "."
+        return spoken, json.dumps({"action": "set_reminder", **r})
+
     def think(self, user_text: str) -> str:
         """
         Send text to local LLM (Hailo/Ollama) and get response.
@@ -589,6 +626,13 @@ class Brain:
 
 
         lower_text = user_text.lower()
+
+        # Pre-LLM briefing check first: it only matches whole-utterance
+        # requests, and "show me my briefing" mustn't reach the image check.
+        briefing = self._briefing_action(user_text)
+        if briefing:
+            self.history.append({"role": "assistant", "content": briefing})
+            return briefing
 
         # Pre-LLM camera check — same logic as stream_think
         camera_keywords = [
@@ -639,6 +683,14 @@ class Brain:
             spoken = f"Okay friend! I set a timer for {describe_duration(timer['minutes'])}."
             print(f"[LLM] Timer MATCHED: {timer}")
             combined = (spoken + " " + action).strip()
+            self.history.append({"role": "assistant", "content": combined})
+            return combined
+
+        # Reminders for a clock time or a day ("tomorrow at 9", "on Friday").
+        reminder = self._reminder_reply(user_text)
+        if reminder is not None:
+            print(f"[LLM] Reminder MATCHED: {reminder[1]}")
+            combined = " ".join(reminder)
             self.history.append({"role": "assistant", "content": combined})
             return combined
 
@@ -819,6 +871,13 @@ class Brain:
 
         lower_text = user_text.lower()
 
+        # Pre-LLM briefing check first (see think()).
+        briefing = self._briefing_action(user_text)
+        if briefing:
+            self.history.append({"role": "assistant", "content": briefing})
+            yield briefing
+            return
+
         # Pre-LLM camera check: if user asks to take a photo / look at something,
         # emit the action JSON directly without calling the LLM.
         # This is more reliable than hoping the small model emits the right JSON.
@@ -875,6 +934,15 @@ class Brain:
             yield spoken
             self.history.append({"role": "assistant", "content": (spoken + " " + action).strip()})
             yield action
+            return
+
+        # Reminders for a clock time or a day ("tomorrow at 9", "on Friday").
+        reminder = self._reminder_reply(user_text)
+        if reminder is not None:
+            print(f"[LLM-STREAM] Reminder MATCHED: {reminder[1]}")
+            yield reminder[0]
+            self.history.append({"role": "assistant", "content": " ".join(reminder)})
+            yield reminder[1]
             return
 
         print(f"[LLM-STREAM] No pre-LLM action matched for: '{lower_text[:60]}'")

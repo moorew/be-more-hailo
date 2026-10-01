@@ -161,3 +161,14 @@ def test_a_reset_view_still_draws():
     v.show_part(0, now=0)
     v.reset()
     assert v.tick(now=1).size == (800, 480)
+
+
+def test_a_late_background_draw_never_lands_in_the_next_briefing():
+    v = ui.BriefingView(None)
+    first = {"parts": briefing_parts()}
+    v.start(first, now=0)
+    old_job = v._job()
+    v.reset()
+    v.start({"parts": briefing_parts()[1:]}, now=1)       # different parts, same indexes
+    v._card(0, None, old_job)                             # the old briefing's draw finishing late
+    assert (0, None) not in v._cache or v._cache[(0, None)] is not old_job[2].get((0, None))
