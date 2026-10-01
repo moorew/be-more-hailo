@@ -75,6 +75,7 @@
       lid2: { ...d.lid2, ...(e.lid2 || {}) },
       brows: pick('brows'),
       marks: pick('marks'),
+      markOffset: e.markOffset || {},
       blush: pick('blush'),
       blushColor: pick('blushColor'),
       gaze: pick('gaze'),
@@ -290,6 +291,9 @@
       for (const k of shapes.eyeOrder) if (k !== 'closed') this.eyeW[k] = S(k === 'open' ? 1 : 0, 4.5, 0.85);
       this.markVis = {};
       for (const k of Object.keys(shapes.marks || {})) this.markVis[k] = S(0, 4.5, 0.55);
+      // Per-expression nudge for marks (art units); kept while a mark fades out.
+      this.markOff = {};
+      for (const k of Object.keys(shapes.marks || {})) this.markOff[k] = [0, 0];
 
       this.p = {
         smile: S(0, 5, 0.85), jaw: S(1, 9, 0.55), width: S(1, 5, 0.8),
@@ -342,7 +346,10 @@
         this._swapTargets = null;
         for (const k in this.eyeW) this.eyeW[k].target = eyeTargets[k];
       }
-      for (const k in this.markVis) this.markVis[k].target = e.marks.includes(k) ? 1 : 0;
+      for (const k in this.markVis) {
+        this.markVis[k].target = e.marks.includes(k) ? 1 : 0;
+        if (e.marks.includes(k)) this.markOff[k] = e.markOffset[k] || [0, 0];
+      }
       p.smile.target = e.mouthMods.smile;
       p.jaw.target = e.mouthMods.jaw;
       p.width.target = e.mouthMods.width;
@@ -714,6 +721,7 @@
           ox = cx0 + p.eox.value * mir + gx * 0.5 - M.ref[0];
           oy = cy0 + p.eoy.value + gy * 0.5 - lift - M.ref[1];
         }
+        ox += this.markOff[k][0]; oy += this.markOff[k][1];
         let scale = vis, alpha = clamp(vis * 1.5), arot = 0, ax = 0, ay = 0, aroot = null;
         if (an.type === 'wiggle') { arot = an.amp * Math.sin(TAU * an.freq * t); aroot = an.root; }
         else if (an.type === 'blink') alpha *= Math.sin(TAU * an.freq * t) > -0.3 ? 1 : 0.15;

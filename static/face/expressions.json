@@ -4,7 +4,7 @@
     "angry": [[-51.5, -130], [87.5, -29.5], 19],
     "worried": [[-58, -80], [46, -108], 14],
     "raised": [[-48, -110], [44, -122], 13],
-    "flat": [[-127.5, -38], [133.5, -38], 19]
+    "flat": [[-127.5, -62], [133.5, -62], 19]
   },
   "default": {
     "mouth": { "smile": 1 },
@@ -149,6 +149,7 @@
       "mouth": { "gasp": 1 },
       "talk": { "smile": -0.3, "width": 0.95 },
       "marks": ["exBrowL", "exBrowR", "stressCurl", "gaspCheeks"],
+      "mouthMods": { "dy": -14 },
       "gaze": "attentive",
       "blink": "slow",
       "motion": "shake",
@@ -156,9 +157,10 @@
     },
     "capturing": {
       "eye": { "ring": 1 },
-      "eyeOffset": [-5, -4],
+      "eyeOffset": [70, -4],
       "mouth": { "oh": 1 },
       "marks": ["shockLines"],
+      "markOffset": { "shockLines": [58, 40] },
       "flash": true,
       "gaze": "fixed",
       "blink": "none",
@@ -206,9 +208,12 @@
     },
     "heart": {
       "eye": { "heart": 1 },
-      "eyeOffset": [-55, -6],
+      "eyeOffset": [-30, -6],
       "mouth": { "pixel": 1 },
       "marks": ["pixelBlushL", "pixelBlushR"],
+      "mouthMods": { "dy": -22 },
+      "eyeScale": [0.85, 0.85],
+      "markOffset": { "pixelBlushL": [50, -10], "pixelBlushR": [-50, -10] },
       "talk": { "smile": 0.6 },
       "gaze": "fixed",
       "blink": "none",
@@ -275,6 +280,7 @@
       "mouth": { "smile": 1 },
       "mouthMods": { "dy": 53 },
       "marks": ["tiredBagL", "tiredBagR", "tiredBrowL", "tiredBrowR", "battery", "batteryBar"],
+      "markOffset": { "battery": [-40, 24], "batteryBar": [-40, 24] },
       "talk": { "smile": 0.1 },
       "gaze": "attentive",
       "blink": "sleepy",

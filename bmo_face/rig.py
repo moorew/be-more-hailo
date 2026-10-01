@@ -142,6 +142,7 @@ def resolve_expression(presets: dict, name: str) -> dict:
         "lid2": {**d["lid2"], **e.get("lid2", {})},
         "brows": pick("brows"),
         "marks": pick("marks"),
+        "markOffset": e.get("markOffset", {}),
         "blush": pick("blush"),
         "blushColor": pick("blushColor"),
         "gaze": pick("gaze"),
@@ -356,6 +357,8 @@ class FaceRig:
         self.mouth_w = {k: S(1.0 if k == "smile" else 0.0, 5, 0.9) for k in sh["mouthOrder"]}
         self.eye_w = {k: S(1.0 if k == "open" else 0.0, 4.5, 0.85) for k in sh["eyeOrder"] if k != "closed"}
         self.mark_vis = {k: S(0, 4.5, 0.55) for k in sh.get("marks", {})}
+        # Per-expression nudge for marks (art units); kept while a mark fades out.
+        self.mark_off = {k: (0.0, 0.0) for k in sh.get("marks", {})}
         self.p = {
             "smile": S(0, 5, 0.85), "jaw": S(1, 9, 0.55), "width": S(1, 5, 0.8),
             "mdx": S(0, 4, 0.85), "mdy": S(0, 4, 0.85), "mtilt": S(0, 4, 0.85),
@@ -420,6 +423,8 @@ class FaceRig:
                 s.target = eye_targets[k]
         for k, s in self.mark_vis.items():
             s.target = 1.0 if k in e["marks"] else 0.0
+            if k in e["marks"]:
+                self.mark_off[k] = tuple(e["markOffset"].get(k, (0.0, 0.0)))
         mm = e["mouthMods"]
         p["smile"].target, p["jaw"].target, p["width"].target = mm["smile"], mm["jaw"], mm["width"]
         p["mdx"].target, p["mdy"].target, p["mtilt"].target = mm["dx"], mm["dy"], mm["tilt"]
@@ -767,6 +772,7 @@ class FaceRig:
                 mir = 1 if side == 0 else -1
                 ox = cx0 + p["eox"].value * mir + gx * 0.5 - M["ref"][0]
                 oy = cy0 + p["eoy"].value + gy * 0.5 - lift - M["ref"][1]
+            ox, oy = ox + self.mark_off[k][0], oy + self.mark_off[k][1]
             scale, alpha, arot, ax, ay, aroot = vis, clamp(vis * 1.5), 0.0, 0.0, 0.0, None
             typ = an.get("type")
             if typ == "wiggle":

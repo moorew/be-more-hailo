@@ -58,6 +58,9 @@ WAV_LIPSYNC_DELAY = 0.05  # aplay start-up latency for pre-recorded clips
 # Mic buffer.  PortAudio's default (160 ms here) overflowed whenever the Tk
 # thread held the GIL a little too long, restarting the capture stream.
 MIC_LATENCY_S = 0.5
+# Footer caption's bottom edge (fraction of screen height).  At 0.92 the 32 px
+# label sat in y 410-442 and clipped open mouths (heart, shhh, error).
+STATUS_RELY = 0.97
 
 # =========================================================================
 # 1. HARDWARE CONFIGURATION
@@ -249,7 +252,7 @@ class BotGUI:
             relief='flat',
             highlightthickness=0
         )
-        self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
+        self.status_label.place(relx=0.5, rely=STATUS_RELY, anchor=tk.S)
 
         self.is_muted = False
         self.mute_label = tk.Label(
@@ -962,7 +965,7 @@ class BotGUI:
             if self.status_label.winfo_ismapped(): self.status_label.place_forget()
         else:
             if not self.status_label.winfo_ismapped():
-                self.status_label.place(relx=0.5, rely=0.92, anchor=tk.S)
+                self.status_label.place(relx=0.5, rely=STATUS_RELY, anchor=tk.S)
 
         # Live face rig for the states it covers; everything else stays on PNGs.
         if self.face_view is not None and display_state in RIG_EXPRESSIONS:
