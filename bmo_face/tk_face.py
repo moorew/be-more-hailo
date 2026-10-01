@@ -85,6 +85,9 @@ class FaceView:
         self.label = label
         self._last = None
         self.render_ms = 0.0  # smoothed cost of update+render+paste
+        # Optional (image, now) -> image hook between render and paste, e.g.
+        # the morning-briefing sun icon drawn over the face.
+        self.overlay = None
 
     def attach(self) -> None:
         """Point the label at the rig's image (call when switching back from PNG frames)."""
@@ -98,6 +101,9 @@ class FaceView:
         if speech is not None:
             self.rig.set_speech(speech)
         self.rig.update(dt)
-        self.photo.paste(self.renderer.render(self.rig.frame()))
+        img = self.renderer.render(self.rig.frame())
+        if self.overlay is not None:
+            img = self.overlay(img, now)
+        self.photo.paste(img)
         ms = (time.perf_counter() - t0) * 1000
         self.render_ms = ms if self.render_ms == 0 else self.render_ms * 0.9 + ms * 0.1

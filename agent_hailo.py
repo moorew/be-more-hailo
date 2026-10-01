@@ -42,7 +42,9 @@ from core.stt import transcribe_audio
 from core.endpoint import EndpointDetector
 from core.reminders import ReminderRegistry
 from core.volume import HardwareVolume, scaled_wav
-from core.briefing.settings import update_settings
+from core.briefing.settings import load_briefing_settings, update_settings
+from core.briefing.scheduler import BriefingScheduler, prepare_briefing
+from core.briefing import ui as briefing_ui
 from core.config import LLM_KEEP_ALIVE, MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE, VOLUME
 
 # Live face rig (bmo_face/): morphs the artwork instead of flipping PNG frames.
@@ -110,6 +112,10 @@ class BotStates:
     CURIOUS = "curious"
     LADYBUG = "ladybug"
     WORM = "worm"
+    BRIEFING = "briefing"  # morning briefing playing: small face + cards
+
+# --briefing-now: (start, end) "HH:MM" window opened at start-up for testing.
+BRIEFING_NOW_WINDOW = None
 
 # Every face is drawn live by the rig, mapped to a rig expression
 # (bmo_face/expressions.json). SPEAKING uses the current talk mood instead
@@ -144,6 +150,7 @@ RIG_EXPRESSIONS = {
     BotStates.CURIOUS: "curious",
     BotStates.LADYBUG: "ladybug",
     BotStates.WORM: "worm",
+    BotStates.BRIEFING: "happy",  # drawn in the briefing's talk mood (settings talk_mood)
 }
 
 # When the LLM sets an expression and then speaks, BMO talks in that mood:
@@ -345,6 +352,25 @@ class BotGUI:
             except Exception as e:
                 print(f"[FACE] Rig failed to start, using PNG faces: {e}")
                 self.face_view = None
+        # Morning briefing: the sun icon is drawn over the rig's frames while
+        # one is ready; BriefingView takes over the screen while it plays.
+        self.icon_overlay = briefing_ui.IconOverlay()
+        self._icon_label = None          # PNG-face fallback for the icon
+        if self.face_view is not None:
+            self.face_view.overlay = self._draw_overlays
+        self.briefing_view = None
+        self._briefing_photo = None
+        self._briefing_skip = threading.Event()
+        self._briefing_stop = threading.Event()
+        self._briefing_mood = "happy"
+        self._briefing_frame_ms = []     # draw + paste cost per frame, logged after each play
+        self.briefing_scheduler = BriefingScheduler(
+            settings_fn=self._briefing_settings,
+            prepare_fn=lambda now, s: prepare_briefing(now, s, self.reminders),
+            is_idle=self._briefing_can_show,
+            chime_fn=lambda: self.play_sound("briefing_sounds"),
+            on_icon=self._on_briefing_icon)
+
         self.load_animations()
         self.load_sounds()
         self.update_animation()
@@ -352,6 +378,7 @@ class BotGUI:
         # Start Main Thread
         threading.Thread(target=self.main_loop, daemon=True).start()
         self._rearm_reminders()
+        threading.Thread(target=self._briefing_loop, daemon=True).start()
 
         # Start Screensaver Audio Thread
         self.last_screensaver_audio_time = time.time()
@@ -494,6 +521,27 @@ class BotGUI:
         win_h = self.master.winfo_height()
         corner_w = win_w // 4
         corner_h = win_h // 4
+
+        # Morning briefing playing: these come before every other zone, or the
+        # mouth-tap mute zone would catch taps on the card.
+        if self.current_state == BotStates.BRIEFING:
+            if int(win_w * 0.30) <= x <= int(win_w * 0.70) and y < int(win_h * 0.15):
+                print(f"[CLICK] Top-Centre: Volume overlay ({x},{y})")
+                self.master.after(0, self._show_volume_overlay)
+            elif self.face_view is not None and x < win_w / 3:
+                print(f"[CLICK] Briefing: stop ({x},{y})")
+                self._briefing_stop.set()
+            else:
+                print(f"[CLICK] Briefing: skip ({x},{y})")
+                self._briefing_skip.set()
+            return
+
+        # The sun icon: checked before the top-right pondering corner and
+        # before a screensaver tap wakes BMO to listen.
+        if self.icon_overlay.visible and briefing_ui.icon_hit(x, y, win_w, win_h):
+            print(f"[CLICK] Briefing icon ({x},{y})")
+            self.start_briefing_from_tap()
+            return
 
         # Mouth zone: centre-lower portion of the face (where BMO's mouth lives)
         mouth_x0 = int(win_w * 0.27)
@@ -916,7 +964,12 @@ class BotGUI:
     def _update_face_rig(self, display_state, now):
         """Advance and draw the live rig. Returns the delay (ms) until the next tick."""
         fv = self.face_view
-        want = self._talk_mood if display_state == BotStates.SPEAKING else RIG_EXPRESSIONS[display_state]
+        if display_state == BotStates.SPEAKING:
+            want = self._talk_mood
+        elif display_state == BotStates.BRIEFING:
+            want = self._briefing_mood
+        else:
+            want = RIG_EXPRESSIONS[display_state]
         if display_state != self._rig_state:
             if self._rig_state == BotStates.WARMUP:
                 fv.rig.play_intro()  # eyes shut, then open with a stretch
@@ -925,7 +978,12 @@ class BotGUI:
         elif fv.rig.expr["name"] != want:
             fv.rig.set_expression(want)  # talk mood changed mid-sentence
         speech = self._lip_speech(now)
-        fv.tick(speech, now)
+        if display_state == BotStates.BRIEFING and self.briefing_view is not None:
+            t0 = time.perf_counter()
+            fv.photo.paste(self.briefing_view.tick(speech, now))
+            self._briefing_frame_ms.append((time.perf_counter() - t0) * 1000)
+        else:
+            fv.tick(speech, now)
         # Re-point the label if a PNG frame or photo was shown in between.
         if self.background_label.cget("image") != str(fv.photo):
             fv.attach()
@@ -933,7 +991,7 @@ class BotGUI:
         self._rig_frames += 1
         if self._rig_frames == 300:
             print(f"[FACE] Rig costs ~{fv.render_ms:.1f} ms/frame")
-        busy = speech["active"] or display_state in (BotStates.SPEAKING, BotStates.LISTENING)
+        busy = speech["active"] or display_state in (BotStates.SPEAKING, BotStates.LISTENING, BotStates.BRIEFING)
         return int(1000 / (FACE_FPS_ACTIVE if busy else FACE_FPS_CALM))
 
     # States needed before the GUI can be useful — loaded synchronously.
@@ -1024,8 +1082,8 @@ class BotGUI:
                 self.screensaver_expr_until = now + self.screensaver_expr_dur
             display_state = self.screensaver_expr
 
-        # Hide text status label during screensaver
-        if self.current_state == BotStates.SCREENSAVER:
+        # Hide text status label during screensaver and the briefing (cards say it all)
+        if self.current_state in (BotStates.SCREENSAVER, BotStates.BRIEFING):
             if self.status_label.winfo_ismapped(): self.status_label.place_forget()
         else:
             if not self.status_label.winfo_ismapped():
@@ -1048,6 +1106,19 @@ class BotGUI:
                         self.load_animations()
                     except Exception as load_err:
                         print(f"[FACE] Could not load PNG faces either: {load_err}")
+
+        # PNG faces: the briefing draws its cards full width, without a face.
+        if display_state == BotStates.BRIEFING and self.briefing_view is not None:
+            img = self.briefing_view.compose(None, now)
+            if self._briefing_photo is None:
+                self._briefing_photo = ImageTk.PhotoImage(img)
+            else:
+                self._briefing_photo.paste(img)
+            self.background_label.config(image=self._briefing_photo)
+            self._last_render_key = None
+            self.master.after(40, self.update_animation)
+            return
+        self._sync_icon_label()
 
         # Animation Loop
         frames = self.animations.get(display_state, self.animations.get(BotStates.IDLE, []))
@@ -1339,8 +1410,10 @@ class BotGUI:
             print(f"[TIMER DONE] {message}")
             self.reminders.remove(reminder_id)
 
-            # Wait for BMO to finish speaking/listening to avoid ALSA conflicts
-            self._wait_until_idle({BotStates.SPEAKING, BotStates.LISTENING}, poll_s=1.0, timeout_s=120)
+            # Wait for BMO to finish speaking/listening (and any morning
+            # briefing) so the reminder doesn't fight it for the speaker.
+            self._wait_until_idle({BotStates.SPEAKING, BotStates.LISTENING, BotStates.BRIEFING},
+                                  poll_s=1.0, timeout_s=300)
                 
             # Interject the alarm
             old_state = self.current_state
@@ -1358,6 +1431,155 @@ class BotGUI:
                 self.set_state(old_state if old_state != BotStates.HAPPY else BotStates.IDLE, "Ready")
                 
         threading.Thread(target=timer_worker, daemon=True).start()
+
+    # --- MORNING BRIEFING ---
+    def _briefing_settings(self):
+        s = load_briefing_settings()
+        if BRIEFING_NOW_WINDOW:
+            # --briefing-now: a window open from start-up, every day, no lead time.
+            s.update(enabled=True, window=list(BRIEFING_NOW_WINDOW), prepare_minutes_before=0,
+                     days=["mon", "tue", "wed", "thu", "fri", "sat", "sun"])
+        return s
+
+    def _briefing_can_show(self):
+        """Icon and chime wait for BMO to be idle (they share the speaker)."""
+        return self.current_state in (BotStates.IDLE, BotStates.SCREENSAVER) and not self.is_busy
+
+    def _on_briefing_icon(self, visible):
+        if visible:
+            self.icon_overlay.show()
+        else:
+            self.icon_overlay.hide(fade=True)
+
+    def _draw_overlays(self, img, now):
+        """FaceView hook: the sun icon over BMO's face (and over the screensaver)."""
+        return self.icon_overlay.apply(img, now)
+
+    def _sync_icon_label(self):
+        """PNG faces can't be drawn on, so the icon is a plain label there."""
+        want = self.icon_overlay.visible and self.current_state != BotStates.DISPLAY_IMAGE
+        if want and self._icon_label is None:
+            from core.briefing import cards
+            self._icon_photo = ImageTk.PhotoImage(cards.icon_sprite("ready"))
+            self._icon_label = tk.Label(self.master, image=self._icon_photo, bg='#C9E4C3',
+                                        borderwidth=0, highlightthickness=0)
+            # The label swallows its own taps (its event.x is label-relative).
+            self._icon_label.bind('<Button-1>', lambda e: (self.start_briefing_from_tap(), "break")[1])
+        if self._icon_label is not None:
+            if want and not self._icon_label.winfo_ismapped():
+                self._icon_label.place(relx=740 / 800, rely=60 / 480, anchor=tk.CENTER)
+            elif not want and self._icon_label.winfo_ismapped():
+                self._icon_label.place_forget()
+
+    def _briefing_loop(self):
+        """Tick the briefing's day every 30 s (prepare, icon + chime, fade)."""
+        while not self.stop_event.is_set():
+            try:
+                self.briefing_scheduler.tick()
+            except Exception as e:
+                print(f"[BRIEFING] Scheduler error: {e}")
+                traceback.print_exc()
+            if self.stop_event.wait(timeout=30):
+                break
+
+    def start_briefing_from_tap(self):
+        """Tap on the sun icon: play, or wiggle if BMO is busy."""
+        if self.current_state in (BotStates.LISTENING, BotStates.THINKING, BotStates.SPEAKING) \
+                or not self._try_claim_busy():
+            self.icon_overlay.wiggle()
+            return
+        briefing = self.briefing_scheduler.briefing_for_today()
+        if briefing is None:
+            self._release_busy()
+            self.icon_overlay.wiggle()
+            return
+        self.icon_overlay.press()
+        threading.Thread(target=self._play_briefing, args=(briefing,), daemon=True).start()
+
+    def _play_briefing(self, briefing):
+        """Play a cached briefing part by part.  The caller has claimed busy;
+        it's released here, whatever happens."""
+        from core.briefing.ui import ENTER_S, EXIT_S
+        valid_moods = set(TALK_MOODS.values()) | {"idle"}
+        aplay = None
+        try:
+            self.briefing_scheduler.mark_played()
+            mood = self._briefing_settings().get("talk_mood", "happy")
+            self._briefing_mood = mood if mood in valid_moods else "happy"
+            self._briefing_skip.clear()
+            self._briefing_stop.clear()
+            if self.briefing_view is None:
+                self.briefing_view = briefing_ui.BriefingView(self.face_view, (self.BG_WIDTH, self.BG_HEIGHT))
+            view = self.briefing_view
+            view.start(briefing)
+            self._briefing_frame_ms = []
+            self.set_state(BotStates.BRIEFING, "Good morning!")
+            print(f"[BRIEFING] Playing {len(briefing['parts'])} parts")
+            self._briefing_stop.wait(ENTER_S)    # BMO moves aside before the first card
+            for i, part in enumerate(briefing["parts"]):
+                if self._briefing_stop.is_set() or self.stop_event.is_set():
+                    break
+                self._briefing_skip.clear()
+                # Keep the 120 s busy watchdog from clearing the lock mid-briefing.
+                self.last_user_interaction = time.time()
+                if part["key"] == "signoff":
+                    self._briefing_mood = "happy"
+                if self.is_muted:
+                    # No voice: show the words and move on every 6 s.
+                    view.show_part(i, caption=part["text"])
+                    end = time.time() + 6.0
+                    while time.time() < end and not (self._briefing_skip.is_set() or self._briefing_stop.is_set()):
+                        time.sleep(0.05)
+                    continue
+                play_path = scaled_wav(part["path"], self._software_gain())
+                view.show_part(i)
+                aplay = subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', '--buffer-time=500000', play_path])
+                if self.face_view is not None:
+                    self._schedule_wav_lipsync(part["path"])
+                started, marks = time.time(), part.get("marks") or []
+                while aplay.poll() is None:
+                    if self._briefing_skip.is_set() or self._briefing_stop.is_set() or self.stop_event.is_set():
+                        aplay.terminate()
+                        with self._lip_lock:                  # close the mouth now
+                            self._lip_sched, self._lip_start = [], None
+                        break
+                    elapsed = time.time() - started
+                    passed = [m["mark"] for m in marks if m["at"] <= elapsed]
+                    if passed:
+                        view.set_highlight(passed[-1])
+                    time.sleep(0.04)
+                try:
+                    aplay.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    aplay.kill()
+                if aplay.returncode not in (0, None, -15) and not self._briefing_skip.is_set():
+                    print(f"[BRIEFING] aplay exited with {aplay.returncode} on part {i}")
+                aplay = None
+                if play_path != part["path"]:
+                    try: os.remove(play_path)
+                    except OSError: pass
+            view.finish()
+            time.sleep(EXIT_S)
+        except Exception as e:
+            print(f"[BRIEFING] Playback failed: {e}")
+            traceback.print_exc()
+        finally:
+            if aplay is not None and aplay.poll() is None:
+                aplay.kill()
+            # Leave BRIEFING before resetting the view, so no frame draws a reset view.
+            self.set_state(BotStates.HAPPY, "Have a great day!")
+            if self.briefing_view is not None:
+                self.briefing_view.reset()
+            ms = sorted(self._briefing_frame_ms)
+            if ms:
+                print(f"[BRIEFING] {len(ms)} frames: median {ms[len(ms) // 2]:.1f} ms, "
+                      f"p95 {ms[int(len(ms) * 0.95)]:.1f} ms, max {ms[-1]:.1f} ms")
+            self._release_busy()
+
+            def _back_to_idle():
+                if self.current_state == BotStates.HAPPY:
+                    self.set_state(BotStates.IDLE, "Tap to speak")
+            self.master.after(2000, _back_to_idle)
 
     def _rearm_reminders(self):
         """Restart saved timers still in the future; drop ones missed while off."""
@@ -2752,8 +2974,24 @@ def _claim_single_instance():
     return lock
 
 
+def _enable_briefing_now():
+    """--briefing-now: open a morning-briefing window from now for an hour,
+    with a fresh render, icon and chime, so the screen can be tried any time."""
+    global BRIEFING_NOW_WINDOW
+    import shutil
+    from core.briefing import audio as _audio
+    now = datetime.datetime.now()
+    end = min(now + datetime.timedelta(hours=1), now.replace(hour=23, minute=59))
+    BRIEFING_NOW_WINDOW = (now.strftime("%H:%M"), end.strftime("%H:%M"))
+    shutil.rmtree(_audio.day_dir(now.date()), ignore_errors=True)  # re-render, re-chime
+    print(f"[BRIEFING] --briefing-now: window {BRIEFING_NOW_WINDOW[0]}-{BRIEFING_NOW_WINDOW[1]}; "
+          "the icon appears once it's rendered (~20 s)")
+
+
 if __name__ == "__main__":
     _instance_lock = _claim_single_instance()
+    if "--briefing-now" in sys.argv[1:]:
+        _enable_briefing_now()
     root = tk.Tk()
     app = BotGUI(root)
     # Window-manager close (X button, system kill) routes through the same

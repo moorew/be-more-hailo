@@ -47,6 +47,37 @@ def piper_to_wav(text: str, out_path: str, run=subprocess.run, piper=None) -> No
             os.remove(tmp)
 
 
+def _render_segments(segments: list, out_path: str, to_wav) -> list:
+    """Render each segment, join them into one WAV, and return
+    [{"at": seconds, "mark": m}] for the segments that carry a mark."""
+    tmp_paths, marks, offset, params, frames = [], [], 0.0, None, []
+    try:
+        for i, sg in enumerate(segments):
+            seg_path = f"{out_path}.seg{i}.wav"
+            tmp_paths.append(seg_path)
+            to_wav(sg["speech"], seg_path)
+            with wave.open(seg_path) as w:
+                if params is None:
+                    params = w.getparams()
+                elif (w.getframerate(), w.getsampwidth(), w.getnchannels()) != \
+                        (params.framerate, params.sampwidth, params.nchannels):
+                    raise RuntimeError("Piper segments came back in different formats")
+                if sg.get("mark") is not None:
+                    marks.append({"at": round(offset, 3), "mark": sg["mark"]})
+                frames.append(w.readframes(w.getnframes()))
+                offset += w.getnframes() / float(w.getframerate())
+        tmp = out_path + ".tmp.wav"
+        with wave.open(tmp, "wb") as w:
+            w.setparams(params)
+            w.writeframes(b"".join(frames))
+        os.replace(tmp, out_path)
+    finally:
+        for p in tmp_paths:
+            if os.path.exists(p):
+                os.remove(p)
+    return marks
+
+
 def wav_duration(path: str) -> float:
     with wave.open(path) as w:
         return w.getnframes() / float(w.getframerate())
@@ -65,8 +96,13 @@ def render_briefing(parts: list, day: datetime.date, cache_root: str = CACHE_ROO
     for i, part in enumerate(parts):
         wav = f"{i}.wav"
         t0 = clock()
-        to_wav(part["speech"], os.path.join(d, wav))
-        saved.append({**part, "wav": wav, "duration": round(wav_duration(os.path.join(d, wav)), 2)})
+        if part.get("segments"):
+            marks = _render_segments(part["segments"], os.path.join(d, wav), to_wav)
+        else:
+            to_wav(part["speech"], os.path.join(d, wav))
+            marks = []
+        saved.append({**part, "wav": wav, "marks": marks,
+                      "duration": round(wav_duration(os.path.join(d, wav)), 2)})
         logger.info(f"Briefing: rendered {part['key']} in {clock() - t0:.1f} s")
     briefing = {"date": day.isoformat(), "created": clock(), "complete": complete,
                 "render_s": round(clock() - started, 1), "parts": saved}

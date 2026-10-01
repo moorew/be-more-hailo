@@ -103,6 +103,12 @@ class FakeMaster:
     def after(self, ms, fn):
         self.calls.append(ms)
 
+    def winfo_width(self):
+        return 800
+
+    def winfo_height(self):
+        return 480
+
 
 clock = {"t": 1000.0}
 mod.time.time = lambda: clock["t"]  # deterministic lip-sync replay
@@ -133,6 +139,19 @@ gui._rig_state = None
 gui._rig_speech = mod.FACE_SILENT
 gui._rig_frames = 0
 gui._talk_mood = "idle"
+# Morning briefing state (normally set up in __init__).
+from core.briefing import ui as briefing_ui  # noqa: E402
+
+gui.icon_overlay = briefing_ui.IconOverlay()
+gui._icon_label = None
+gui.face_view.overlay = gui._draw_overlays
+gui.briefing_view, gui._briefing_photo = None, None
+gui._briefing_skip, gui._briefing_stop = threading.Event(), threading.Event()
+gui._briefing_mood = "happy"
+gui._briefing_frame_ms = []
+gui._busy_lock, gui.is_busy = threading.Lock(), False
+gui._triple_tap_times = []
+gui.last_user_interaction = clock["t"]
 
 
 def run(seconds, fps=30):
@@ -323,6 +342,232 @@ assert gui.volume == 0.35
 del gui._update_volume_visual, gui._reset_volume_hide
 gui.hw_volume = None
 log.append("volume: the slider drives the speaker's mixer; no double scaling")
+
+# --- Morning briefing --------------------------------------------------------
+import datetime as _dt  # noqa: E402
+
+import numpy as np  # noqa: E402
+
+from core.briefing import script as briefing_script  # noqa: E402
+from core.briefing import sources as briefing_sources  # noqa: E402
+from core.reminders import ReminderRegistry  # noqa: E402
+from tests.unit.test_weather import J1  # noqa: E402
+
+gui.volume = 1.0
+gui.stop_event = threading.Event()
+BRIEF_DIR = tempfile.mkdtemp(prefix="bmo-briefing-harness-")
+
+
+def fixture_wav(path, seconds):
+    """A 'spoken' clip: a tone that swells and dips like syllables."""
+    t = np.arange(int(22050 * seconds)) / 22050
+    env = np.abs(np.sin(2 * np.pi * 3 * t))
+    pcm = (np.sin(2 * np.pi * 220 * t) * env * 12000).astype(np.int16)
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        w.writeframes(pcm.tobytes())
+
+
+_now = _dt.datetime(2026, 9, 30, 7, 0)
+_parts = briefing_script.build_script({
+    "weather": briefing_sources._select_days(briefing_sources._parse_j1(J1, "Brantford", 0), _now.date()),
+    "headlines": [{"title": "Bridge reopens", "source": "Expositor", "published": None},
+                  {"title": "Rates cut", "source": "CBC News", "published": None}],
+    "extras": {"sun": {"sunrise": "07:19", "sunset": "19:02"}, "reminders": [], "countdowns": []}}, _now)
+assert [p["key"] for p in _parts] == ["weather", "headlines", "your_day", "signoff"]
+for i, part in enumerate(_parts):
+    part["path"] = os.path.join(BRIEF_DIR, f"{i}.wav")
+    part["duration"] = 0.9
+    fixture_wav(part["path"], 0.9)
+_parts[1]["marks"] = [{"at": 0.3, "mark": 0}, {"at": 0.6, "mark": 1}]
+BRIEFING = {"date": "2026-09-30", "parts": _parts}
+
+
+class FakeScheduler:
+    def __init__(self):
+        self.played = 0
+
+    def briefing_for_today(self, now=None):
+        return BRIEFING
+
+    def mark_played(self, now=None):
+        self.played += 1
+        gui.icon_overlay.hide(fade=False)
+
+
+class FakeAplay:
+    """aplay that 'plays' for the WAV's length on the fake clock."""
+    started = []
+
+    def __init__(self, cmd, **kw):
+        path = cmd[-1]
+        with wave.open(path) as w:
+            self.end = clock["t"] + w.getnframes() / w.getframerate()
+        self.returncode = None
+        FakeAplay.started.append((os.path.basename(path), gui.briefing_view.index, clock["t"]))
+
+    def poll(self):
+        if self.returncode is None and clock["t"] >= self.end:
+            self.returncode = 0
+        return self.returncode
+
+    def wait(self, timeout=None):
+        return self.poll()
+
+    def terminate(self):
+        self.returncode = -15
+
+    kill = terminate
+
+
+class _Click:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+
+def tap(x, y):
+    """One tap that never counts toward the triple-tap exit (the fake clock stands still)."""
+    gui._triple_tap_times = []
+    gui.handle_click(_Click(x, y))
+
+
+real_popen = mod.subprocess.Popen
+mod.subprocess.Popen = FakeAplay
+gui.briefing_scheduler = FakeScheduler()
+
+
+def drive(until, max_s=40.0):
+    """Run frames on the fake clock (a little real time each, so the playback
+    thread keeps up) until `until()` or the time limit."""
+    frames = []
+    end = clock["t"] + max_s
+    while clock["t"] < end and not until():
+        clock["t"] += 1 / 30
+        gui.update_animation()
+        r = gui.face_view.rig
+        v = gui.briefing_view
+        frames.append((gui.current_state, r.expr["name"], r.speech["active"],
+                       v.index if v else None, v.highlight if v else None))
+        threading.Event().wait(0.008)
+    return frames
+
+
+def wait_thread(t):
+    t.join(timeout=10)
+    assert not t.is_alive(), "briefing thread did not finish"
+
+
+def play_in_thread():
+    assert gui._try_claim_busy()
+    t = threading.Thread(target=gui._play_briefing, args=(BRIEFING,), daemon=True)
+    t.start()
+    return t
+
+
+# A tap elsewhere in the top-right corner still ponders; the icon box plays.
+pondered, started = [], []
+gui.trigger_random_thought = lambda: pondered.append(True)
+gui.icon_overlay.show(now=clock["t"])
+gui.current_state = S.IDLE
+tap(650, 100)          # corner, outside the 96 px icon box
+assert pondered and not gui.is_busy
+gui._play_briefing = lambda b: started.append(b)
+tap(740, 60)
+for _ in range(50):
+    if started:
+        break
+    threading.Event().wait(0.01)
+assert started == [BRIEFING] and gui.is_busy, (started, gui.is_busy)
+gui._release_busy()
+del gui._play_briefing, gui.trigger_random_thought
+assert gui._try_claim_busy()                 # busy: the icon wiggles instead
+tap(740, 60)
+assert gui.icon_overlay._wiggle_at is not None
+gui._release_busy()
+log.append("briefing taps: icon box starts it, rest of the corner ponders, busy wiggles")
+
+# Full playback: each card appears as its WAV starts, the face talks, the
+# headline highlight follows the marks.
+FakeAplay.started = []
+t = play_in_thread()
+frames = drive(lambda: not t.is_alive())
+wait_thread(t)
+assert [(f, idx) for f, idx, _ in FakeAplay.started] == [("0.wav", 0), ("1.wav", 1), ("2.wav", 2), ("3.wav", 2)], \
+    FakeAplay.started
+bf = [f for f in frames if f[0] == S.BRIEFING]
+assert bf and any(f[2] for f in bf), "the small face never lip-synced"
+assert {f[1] for f in bf[1:]} == {"happy"}, {f[1] for f in bf}  # [0]: state set after that frame drew
+assert [h for h in dict.fromkeys(f[4] for f in bf if f[3] == 1) if h is not None] == [0, 1]
+assert gui.current_state == S.HAPPY and not gui.is_busy
+assert gui.briefing_scheduler.played == 1
+gui.current_state = S.IDLE
+drive(lambda: False, max_s=0.1)
+assert gui.background_label.image == str(gui.face_view.photo)
+log.append(f"briefing playback: cards 0,1,2 shown as each WAV started, "
+           f"{sum(f[2] for f in bf)} talking frames, highlight 0->1")
+
+# Skip (tap the card) and stop (tap the face).
+FakeAplay.started = []
+t = play_in_thread()
+drive(lambda: len(FakeAplay.started) >= 1)
+tap(600, 300)           # card: skip
+drive(lambda: len(FakeAplay.started) >= 2, max_s=1.0)
+assert len(FakeAplay.started) == 2 and FakeAplay.started[1][2] - FakeAplay.started[0][2] < 0.6, FakeAplay.started
+tap(100, 300)           # face: stop
+drive(lambda: not t.is_alive(), max_s=3)
+wait_thread(t)
+assert len(FakeAplay.started) == 2 and gui.current_state == S.HAPPY and not gui.is_busy
+gui.current_state = S.IDLE
+log.append("briefing controls: card tap skips, face tap stops and releases busy")
+
+# A reminder due mid-briefing waits until it's over.
+spoken = []
+gui.speak = lambda text, msg=None, end_of_turn=True: spoken.append(text)
+gui.play_sound = lambda cat: None
+gui.current_state = S.BRIEFING
+gui.reminders = ReminderRegistry(os.path.join(BRIEF_DIR, "reminders.json"), clock=lambda: clock["t"])
+gui.start_timer_thread(0.001, "Stir the soup!")
+threading.Event().wait(0.5)
+assert spoken == [], "reminder spoke over the briefing"
+gui.current_state = S.IDLE
+for _ in range(30):
+    if spoken:
+        break
+    threading.Event().wait(0.1)
+assert spoken == ["Stir the soup!"], spoken
+del gui.speak, gui.play_sound
+gui.current_state = S.IDLE
+log.append("briefing + timers: a reminder due mid-briefing waits for it to end")
+
+# Muted: no audio, cards advance every 6 s with the part's words as a caption.
+FakeAplay.started = []
+gui.is_muted = True
+t = play_in_thread()
+frames = drive(lambda: not t.is_alive(), max_s=40)
+wait_thread(t)
+seq = [i for i in dict.fromkeys(f[3] for f in frames if f[0] == S.BRIEFING) if i is not None]
+assert FakeAplay.started == [] and seq == [0, 1, 2], (FakeAplay.started, seq)
+secs = len([f for f in frames if f[0] == S.BRIEFING]) / 30
+assert 23 < secs < 27, f"expected ~4 x 6 s, got {secs:.1f}"
+gui.is_muted = False
+gui.current_state = S.IDLE
+log.append("briefing muted: no aplay, cards advance every 6 s with captions")
+
+assert gui._briefing_frame_ms, "briefing frames weren't timed"
+
+# --briefing-now opens a window from start-up on any day, with no lead time.
+assert gui._briefing_settings()["window"] != ["12:00", "13:00"]
+mod.BRIEFING_NOW_WINDOW = ("12:00", "13:00")
+_s = gui._briefing_settings()
+assert _s["window"] == ["12:00", "13:00"] and _s["prepare_minutes_before"] == 0 and len(_s["days"]) == 7
+mod.BRIEFING_NOW_WINDOW = None
+log.append("briefing --now: settings open a window from start-up")
+
+mod.subprocess.Popen = real_popen
+del gui.briefing_scheduler
+gui.icon_overlay.hide(fade=False)
 
 gui.face_view.rig.frame = lambda: 1 / 0
 gui.animations[S.IDLE] = [FakePhoto()]

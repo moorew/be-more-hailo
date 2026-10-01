@@ -160,7 +160,9 @@ be-more-agent/
 │   ├── tts.py              # Text-to-speech via Piper
 │   ├── stt.py              # Speech-to-text via whisper.cpp
 │   ├── reminders.py        # Pending timers/reminders (reminders.json), re-armed after a reboot
-│   └── briefing/           # Morning briefing: settings, sources, script (no Tk)
+│   ├── volume.py           # One volume control: the slider drives the speaker's mixer
+│   └── briefing/           # Morning briefing: settings, sources, script, audio, schedule, cards
+├── fonts/                  # Card fonts (Baloo 2, Atkinson Hyperlegible; OFL)
 ├── templates/              # Jinja2 HTML templates for the web UI
 ├── static/                 # CSS, JS, favicon
 ├── install.sh              # Automated installation script
@@ -365,6 +367,10 @@ Everything lives under a `briefing` key in `settings.json`, next to the `volume`
 | `extras.fun_fact` | Let the LLM add a fun fact to the sign-off |
 | `talk_mood` | BMO's face while reading |
 
+Each morning a sun icon appears in the top-right corner (with a short chime) once the briefing is ready. Tap it and BMO moves to the left of the screen while cards for each part appear beside it. Tap the card to skip ahead, tap BMO's face to stop.
+
+To try the screen without waiting for the morning, start BMO with `python3 agent_hailo.py --briefing-now`: it renders a fresh briefing straight away and shows the icon about 20 seconds later.
+
 Preview today's script from live data with `python -m core.briefing --dry-run` (add `--speech` to see the words handed to Piper, `--json` for the card data).
 
 ---
@@ -545,6 +551,8 @@ If it fails, ensure system site-packages are enabled: `grep include-system venv/
 The original project is entirely the work of [@brenpoly](https://github.com/brenpoly/be-more-agent) — the concept, the character, and the original implementation. This fork adds Hailo NPU support, the web interface, dual-interface `core/` modules, and various fixes and improvements.
 
 BMO's face artwork is by **Cherry Honey**, shared freely with the community via the [Figma Community](https://www.figma.com/community/file/1379945530999597632). The SVGs are rendered and animated programmatically by `generate_faces.py`.
+
+The morning briefing cards use [Baloo 2](https://github.com/google/fonts/tree/main/ofl/baloo2) and [Atkinson Hyperlegible](https://github.com/google/fonts/tree/main/ofl/atkinsonhyperlegible), both under the SIL Open Font License (`fonts/*/OFL.txt`).
 
 **"BMO"** and **"Adventure Time"** are trademarks of Cartoon Network (Warner Bros. Discovery). This is a fan project for personal and educational use only, not affiliated with or endorsed by Cartoon Network.
 

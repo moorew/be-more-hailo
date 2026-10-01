@@ -92,12 +92,16 @@ def _weather_part(w: dict, umbrella_min: int = UMBRELLA_RAIN):
 
 
 def _headlines_part(items: list):
-    lines = ["Here are today's headlines."]
-    lines += [f"From {h['source']}: {_sentence(h['title'])}" for h in items]
+    # One segment per headline: audio.py renders them separately and records
+    # where each starts, so the card highlights exactly the one being read.
+    segments = [{"text": "Here are today's headlines.", "mark": None}]
+    segments += [{"text": f"From {h['source']}: {_sentence(h['title'])}", "mark": i}
+                 for i, h in enumerate(items)]
     card = {"type": "headlines",
             "items": [{"title": h["title"] + ("…" if h.get("truncated") else ""),
                        "source": h["source"], "published": h.get("published")} for h in items]}
-    return {"key": "headlines", "card": card, "text": " ".join(lines)}
+    return {"key": "headlines", "card": card, "text": " ".join(sg["text"] for sg in segments),
+            "segments": segments}
 
 
 def _your_day_part(extras: dict, now: datetime.datetime):
@@ -161,8 +165,17 @@ def build_script(data: dict, now: datetime.datetime) -> list:
         parts.append(your_day)
     if not parts:
         return []
-    parts[0]["text"] = " ".join([intro_line(now)] + missing + [parts[0]["text"]])
+    lead = " ".join([intro_line(now)] + missing)
+    parts[0]["text"] = f"{lead} {parts[0]['text']}"
+    if parts[0].get("segments"):
+        first = parts[0]["segments"][0]
+        first["text"] = f"{lead} {first['text']}"
     parts.append({"key": "signoff", "card": None, "text": signoff_line(now.date())})
     for p in parts:
-        p["speech"] = to_speech(p["text"])
+        if p.get("segments"):
+            for sg in p["segments"]:
+                sg["speech"] = to_speech(sg["text"])
+            p["speech"] = " ".join(sg["speech"] for sg in p["segments"])
+        else:
+            p["speech"] = to_speech(p["text"])
     return parts
