@@ -22,13 +22,33 @@ def _weather_location(query_lower: str) -> str:
     return place
 
 
-def _day_summary(day: dict) -> str:
-    """One day from wttr.in j1 JSON: daytime condition, high/low, rain chance."""
+def _day_stats(day: dict) -> dict:
+    """One day from wttr.in j1 JSON: daytime condition, high/low (int °C), rain chance."""
     daytime = [h for h in day["hourly"] if 900 <= int(h["time"]) <= 1800] or day["hourly"]
     descs = [h["weatherDesc"][0]["value"].strip() for h in daytime]
+    codes = {h["weatherDesc"][0]["value"].strip(): h.get("weatherCode") for h in daytime}
     desc = max(set(descs), key=descs.count)
-    rain = max(int(h.get("chanceofrain", 0)) for h in daytime)
-    return f"{desc}, high {day['maxtempC']}°C, low {day['mintempC']}°C, {rain}% chance of rain"
+    return {"date": day["date"], "desc": desc, "code": codes.get(desc),
+            "high": int(day["maxtempC"]), "low": int(day["mintempC"]),
+            "rain": max(int(h.get("chanceofrain", 0)) for h in daytime)}
+
+
+def _day_summary(day: dict) -> str:
+    d = _day_stats(day)
+    return f"{d['desc']}, high {d['high']}°C, low {d['low']}°C, {d['rain']}% chance of rain"
+
+
+def fetch_j1(location: str, timeout: float = 5):
+    """Raw wttr.in j1 JSON (metric) for `location`, or None on any failure."""
+    import requests
+    try:
+        resp = requests.get(f"https://wttr.in/{location.replace(' ', '+')}?format=j1&m", timeout=timeout)
+        if resp.status_code != 200:
+            return None
+        return resp.json()
+    except Exception as e:
+        logger.warning(f"wttr.in Weather Error: {e}")
+        return None
 
 
 def get_weather(query: str):
@@ -39,13 +59,11 @@ def get_weather(query: str):
     ~2k-token context (the request is silently dropped).  Includes tomorrow so
     "what's it doing tomorrow?" gets real data instead of an invented answer."""
     import datetime
-    import requests
     location = _weather_location(query.lower())
+    data = fetch_j1(location)
+    if data is None:
+        return None
     try:
-        resp = requests.get(f"https://wttr.in/{location.replace(' ', '+')}?format=j1&m", timeout=5)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
         now = data["current_condition"][0]
         days = data["weather"]
         parts = [f"Weather in {location.title()}: now {now['weatherDesc'][0]['value'].strip()}, "

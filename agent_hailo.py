@@ -40,6 +40,8 @@ from core.llm import Brain, extract_json_object, strip_prompt_leakage, sanitize_
 from core.tts import play_audio_on_hardware
 from core.stt import transcribe_audio
 from core.endpoint import EndpointDetector
+from core.reminders import ReminderRegistry
+from core.briefing.settings import update_settings
 from core.config import LLM_KEEP_ALIVE, MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE, VOLUME
 
 # Live face rig (bmo_face/): morphs the artwork instead of flipping PNG frames.
@@ -207,6 +209,9 @@ class BotGUI:
         self.taking_photo = False
         self.current_image_url = None
         
+        # Pending timers/reminders (reminders.json); re-armed after the UI is up.
+        self.reminders = ReminderRegistry()
+
         # Memory
         self.brain = Brain()
         threading.Thread(target=self.brain.warm_up, daemon=True).start()
@@ -328,6 +333,7 @@ class BotGUI:
 
         # Start Main Thread
         threading.Thread(target=self.main_loop, daemon=True).start()
+        self._rearm_reminders()
 
         # Start Screensaver Audio Thread
         self.last_screensaver_audio_time = time.time()
@@ -698,9 +704,8 @@ class BotGUI:
     def _persist_volume(self):
         self._volume_save_job = None
         try:
-            import json as _j
-            with open("settings.json", "w") as _f:
-                _j.dump({"volume": self.volume}, _f)
+            # Merge, don't overwrite: settings.json also holds the briefing block.
+            update_settings({"volume": self.volume})
         except Exception:
             pass
 
@@ -1258,15 +1263,23 @@ class BotGUI:
         scipy.io.wavfile.write(filename, 16000, data_16k)
         return filename
     # --- TIMERS & REMINDERS ---
-    def start_timer_thread(self, minutes, message):
+    def start_timer_thread(self, minutes, message, reminder_id=None):
+        """Fire `message` in `minutes`.  The timer is saved in self.reminders
+        (so the morning briefing can list it and a reboot re-arms it) and
+        removed when it fires.  Pass `reminder_id` to re-arm a saved one."""
+        if reminder_id is None:
+            reminder_id = self.reminders.add(time.time() + minutes * 60, message)
+
         def timer_worker():
             print(f"[TIMER SET] for {minutes} minutes. Message: {message}")
             # Wait on stop_event so app shutdown drains the timer immediately.
+            # The saved entry stays, so the next start re-arms it.
             if self.stop_event.wait(timeout=minutes * 60):
                 print(f"[TIMER CANCELLED] (app shutting down): {message}")
                 return
             print(f"[TIMER DONE] {message}")
-            
+            self.reminders.remove(reminder_id)
+
             # Wait for BMO to finish speaking/listening to avoid ALSA conflicts
             self._wait_until_idle({BotStates.SPEAKING, BotStates.LISTENING}, poll_s=1.0, timeout_s=120)
                 
@@ -1286,6 +1299,14 @@ class BotGUI:
                 self.set_state(old_state if old_state != BotStates.HAPPY else BotStates.IDLE, "Ready")
                 
         threading.Thread(target=timer_worker, daemon=True).start()
+
+    def _rearm_reminders(self):
+        """Restart saved timers still in the future; drop ones missed while off."""
+        for r in self.reminders.prune_past():
+            print(f"[TIMER DROPPED] missed while BMO was off: {r['message']!r}")
+        now = time.time()
+        for r in self.reminders.pending():
+            self.start_timer_thread((r["due"] - now) / 60, r["message"], reminder_id=r["id"])
 
     # --- STT & TTS ---
     def transcribe(self, filename):

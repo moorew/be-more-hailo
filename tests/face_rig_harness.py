@@ -64,6 +64,9 @@ PIL.ImageTk = sys.modules["PIL.ImageTk"]
 for name in ("sounddevice", "scipy", "scipy.signal", "openwakeword", "core"):
     stub(name)
 stub("openwakeword.model", Model=_Any)
+# Pure-Python core modules (reminders, briefing) load for real from core/;
+# the hardware/LLM ones below stay stubbed because sys.modules wins.
+sys.modules["core"].__path__ = [os.path.join(REPO, "core")]
 stub("core.llm", Brain=_Any, extract_json_object=lambda s: (None, None),
      strip_prompt_leakage=lambda s: s, sanitize_messages=lambda m: m)
 stub("core.tts", play_audio_on_hardware=_Any(), clean_text_for_speech=lambda t: t)
@@ -251,6 +254,40 @@ assert gui.current_state == S.HAPPY, gui.current_state
 log.append("expressions: a late tag keeps BMO talking in that mood; an early one sets the face")
 del gui.speak
 gui.current_state = S.IDLE
+
+# Volume changes must merge into settings.json, not replace it: the old
+# writer dumped {"volume": ...} and wiped the hand-edited briefing block.
+import tempfile  # noqa: E402
+
+_cwd = os.getcwd()
+with tempfile.TemporaryDirectory() as tmp:
+    os.chdir(tmp)
+    try:
+        with open("settings.json", "w") as f:
+            json.dump({"volume": 0.5, "briefing": {"location": "Paris"}}, f)
+        gui.volume = 0.25
+        gui._persist_volume()
+        with open("settings.json") as f:
+            assert json.load(f) == {"volume": 0.25, "briefing": {"location": "Paris"}}
+
+        # Timers are saved when set; a reboot re-arms future ones and drops missed ones.
+        from core.reminders import ReminderRegistry  # noqa: E402
+        gui.reminders = ReminderRegistry("reminders.json", clock=lambda: clock["t"])
+        gui.stop_event = threading.Event()
+        gui.stop_event.set()                         # worker exits at once, entry kept
+        gui.start_timer_thread(10, "Stir the soup!")
+        [saved] = gui.reminders.pending()
+        assert saved["due"] == clock["t"] + 600 and saved["message"] == "Stir the soup!"
+        gui.reminders.add(clock["t"] - 5, "missed while off")
+        rearmed = []
+        gui.start_timer_thread = lambda m, msg, reminder_id=None: rearmed.append((round(m, 3), msg, reminder_id))
+        gui._rearm_reminders()
+        del gui.start_timer_thread
+        assert rearmed == [(10.0, "Stir the soup!", saved["id"])], rearmed
+        assert [r["message"] for r in gui.reminders.pending()] == ["Stir the soup!"]
+    finally:
+        os.chdir(_cwd)
+log.append("settings: a volume change keeps the briefing block; timers saved and re-armed")
 
 gui.face_view.rig.frame = lambda: 1 / 0
 gui.animations[S.IDLE] = [FakePhoto()]

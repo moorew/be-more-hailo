@@ -73,3 +73,9 @@ whisper.cpp/build/
 # BMO_faces.zip is a face-asset archive; the frames are tracked under faces/.
 hailo52_snapshot/
 sounds/BMO_faces.zip
+
+# --- Morning briefing runtime state ---
+# Pre-rendered briefings (script.json + WAVs) and the cached forecast.
+cache/
+# Pending timers/reminders, re-armed at startup.
+reminders.json

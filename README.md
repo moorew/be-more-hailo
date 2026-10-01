@@ -158,7 +158,9 @@ be-more-agent/
 │   ├── config.py           # All configuration (models, devices, paths, system prompt)
 │   ├── llm.py              # LLM inference, web search, conversation history
 │   ├── tts.py              # Text-to-speech via Piper
-│   └── stt.py              # Speech-to-text via whisper.cpp
+│   ├── stt.py              # Speech-to-text via whisper.cpp
+│   ├── reminders.py        # Pending timers/reminders (reminders.json), re-armed after a reboot
+│   └── briefing/           # Morning briefing: settings, sources, script (no Tk)
 ├── templates/              # Jinja2 HTML templates for the web UI
 ├── static/                 # CSS, JS, favicon
 ├── install.sh              # Automated installation script
@@ -304,6 +306,56 @@ Environment variables override any of these at runtime:
 ```bash
 export ALSA_DEVICE="plughw:2,0"
 ```
+
+### Morning briefing
+
+The morning briefing reads the weather, a few headlines and your day (reminders, countdowns, sunrise and sunset). It is configured by hand under a `briefing` key in `settings.json`, next to the `volume` BMO saves itself. Every key is optional; missing ones use these defaults (`core/briefing/settings.py`):
+
+```json
+{
+  "volume": 0.8,
+  "briefing": {
+    "enabled": true,
+    "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+    "window": ["07:00", "11:00"],
+    "prepare_minutes_before": 30,
+    "chime": true,
+    "location": "Brantford",
+    "news": {
+      "feeds": [],
+      "count": 4,
+      "region": "ca-en",
+      "query": "Canada"
+    },
+    "extras": {
+      "reminders": true,
+      "sun": true,
+      "countdowns": [],
+      "fun_fact": false
+    },
+    "talk_mood": "happy"
+  }
+}
+```
+
+| Key | What it does |
+| --- | --- |
+| `enabled` | Turns the whole feature on or off |
+| `days` | Days the briefing is offered |
+| `window` | When the sun icon shows; the chime plays at the start |
+| `prepare_minutes_before` | How early the weather, news and audio are fetched and rendered |
+| `chime` | Play the ready jingle |
+| `location` | Weather location for wttr.in (°C) |
+| `news.feeds` | RSS/Atom feeds, as URLs or `{"url": ..., "name": "CBC News"}` (the name is what BMO says). Read round-robin, newest first; items over 36 hours old are skipped |
+| `news.count` | Headlines read aloud (3–5) |
+| `news.region`, `news.query` | DuckDuckGo news search used when the feeds give fewer than three headlines |
+| `extras.reminders` | Read timers and reminders due later today |
+| `extras.sun` | Read sunrise and sunset |
+| `extras.countdowns` | e.g. `{"name": "Mum's birthday", "date": "11-14", "yearly": true}` or `{"name": "Trip", "date": "2026-11-20"}`; read when 14 days or fewer away |
+| `extras.fun_fact` | Let the LLM add a fun fact to the sign-off |
+| `talk_mood` | BMO's face while reading |
+
+Preview today's script from live data with `python -m core.briefing --dry-run` (add `--speech` to see the words handed to Piper, `--json` for the card data).
 
 ---
 
