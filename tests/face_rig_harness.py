@@ -355,6 +355,8 @@ from tests.unit.test_weather import J1  # noqa: E402
 
 gui.volume = 1.0
 gui.stop_event = threading.Event()
+gui._tts_aplay = gui.thinking_audio_process = None   # nothing else holding the speaker
+gui.active_sounds = []
 BRIEF_DIR = tempfile.mkdtemp(prefix="bmo-briefing-harness-")
 
 
@@ -398,14 +400,19 @@ class FakeScheduler:
 
 
 class FakeAplay:
-    """aplay that 'plays' for the WAV's length on the fake clock."""
+    """aplay that 'plays' for the WAV's length on the fake clock.  `busy`
+    makes the next N opens fail at once, like "Device or resource busy"."""
     started = []
+    busy = 0
 
     def __init__(self, cmd, **kw):
         path = cmd[-1]
         with wave.open(path) as w:
             self.end = clock["t"] + w.getnframes() / w.getframerate()
         self.returncode = None
+        if FakeAplay.busy:
+            FakeAplay.busy -= 1
+            self.returncode = 1
         FakeAplay.started.append((os.path.basename(path), gui.briefing_view.index, clock["t"]))
 
     def poll(self):
@@ -414,6 +421,8 @@ class FakeAplay:
         return self.returncode
 
     def wait(self, timeout=None):
+        if self.poll() is None and timeout is not None:
+            raise mod.subprocess.TimeoutExpired("aplay", timeout)
         return self.poll()
 
     def terminate(self):
@@ -507,6 +516,17 @@ drive(lambda: False, max_s=0.1)
 assert gui.background_label.image == str(gui.face_view.photo)
 log.append(f"briefing playback: cards 0,1,2 shown as each WAV started, "
            f"{sum(f[2] for f in bf)} talking frames, highlight 0->1")
+
+# The speaker still held by the voice turn (thinking sound stopping): the
+# first part must retry, not be skipped.  (This dropped the weather once.)
+FakeAplay.started, FakeAplay.busy = [], 2
+t = play_in_thread()
+drive(lambda: not t.is_alive())
+wait_thread(t)
+assert [f for f, _, _ in FakeAplay.started] == ["0.wav", "0.wav", "0.wav", "1.wav", "2.wav", "3.wav"], \
+    FakeAplay.started
+gui.current_state = S.IDLE
+log.append("briefing: a busy speaker is retried, so no part is skipped")
 
 # Skip (tap the card) and stop (tap the face).
 FakeAplay.started = []

@@ -1508,6 +1508,41 @@ class BotGUI:
             return None
         return self.generate_thought_internal(found)
 
+    def _wait_for_speaker(self, timeout_s=3.0):
+        """Wait for BMO's own sounds (reply TTS, thinking sound, effects) to let
+        go of the speaker: only one aplay can hold the ALSA device.  A voice
+        request ends its turn with the thinking sound still stopping."""
+        end = time.monotonic() + timeout_s
+        while time.monotonic() < end:
+            procs = [self._tts_aplay, self.thinking_audio_process] + list(self.active_sounds)
+            if all(p is None or p.poll() is not None for p in procs):
+                return True
+            time.sleep(0.05)
+        print("[BRIEFING] Speaker still busy after 3 s; trying anyway")
+        return False
+
+    def _start_part_audio(self, play_path, on_start=None, attempts=5):
+        """aplay one part, retrying while the device is busy ("audio open
+        error: Device or resource busy" exits within a moment).  Returns
+        (proc, started_at) or (None, None) on skip/stop or repeated failure."""
+        for attempt in range(attempts):
+            if self._briefing_skip.is_set() or self._briefing_stop.is_set():
+                return None, None
+            proc = subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', '--buffer-time=500000', play_path])
+            started = time.time()
+            if on_start:
+                on_start()                        # lip-sync from the moment aplay starts
+            try:
+                proc.wait(timeout=0.3)
+            except subprocess.TimeoutExpired:
+                return proc, started              # still running: it's playing
+            if proc.returncode == 0:
+                return proc, started              # a very short clip, already done
+            print(f"[BRIEFING] aplay failed ({proc.returncode}), retrying ({attempt + 1}/{attempts})")
+            self._wait_for_speaker(1.0)
+            time.sleep(0.2)
+        return None, None
+
     BRIEFING_STALE_S = 3 * 3600   # asked for later in the day: re-fetch past this age
 
     def _briefing_on_request(self):
@@ -1562,6 +1597,7 @@ class BotGUI:
             self.set_state(BotStates.BRIEFING, "Good morning!")
             print(f"[BRIEFING] Playing {len(briefing['parts'])} parts")
             self._briefing_stop.wait(ENTER_S)    # BMO moves aside before the first card
+            self._wait_for_speaker()
             for i, part in enumerate(briefing["parts"]):
                 if self._briefing_stop.is_set() or self.stop_event.is_set():
                     break
@@ -1579,10 +1615,19 @@ class BotGUI:
                     continue
                 play_path = scaled_wav(part["path"], self._software_gain())
                 view.show_part(i)
-                aplay = subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', '--buffer-time=500000', play_path])
-                if self.face_view is not None:
-                    self._schedule_wav_lipsync(part["path"])
-                started, marks = time.time(), part.get("marks") or []
+                lipsync = (lambda p=part["path"]: self._schedule_wav_lipsync(p)) \
+                    if self.face_view is not None else None
+                aplay, started = self._start_part_audio(play_path, lipsync)
+                if aplay is None:
+                    if play_path != part["path"]:
+                        try: os.remove(play_path)
+                        except OSError: pass
+                    if not (self._briefing_skip.is_set() or self._briefing_stop.is_set()):
+                        print(f"[BRIEFING] Couldn't play part {i}; showing it for 6 s instead")
+                        view.show_part(i, caption=part["text"])
+                        self._briefing_skip.wait(6.0)
+                    continue
+                marks = part.get("marks") or []
                 while aplay.poll() is None:
                     if self._briefing_skip.is_set() or self._briefing_stop.is_set() or self.stop_event.is_set():
                         aplay.terminate()
