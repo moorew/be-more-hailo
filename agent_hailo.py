@@ -41,6 +41,7 @@ from core.tts import play_audio_on_hardware
 from core.stt import transcribe_audio
 from core.endpoint import EndpointDetector
 from core.reminders import ReminderRegistry
+from core.volume import HardwareVolume, scaled_wav
 from core.briefing.settings import update_settings
 from core.config import LLM_KEEP_ALIVE, MIC_DEVICE_INDEX, MIC_SAMPLE_RATE, WAKE_WORD_MODEL, WAKE_WORD_THRESHOLD, ALSA_DEVICE, VOLUME
 
@@ -275,9 +276,26 @@ class BotGUI:
         try:
             import json as _j
             with open("settings.json") as _f:
-                self.volume = float(_j.load(_f).get("volume", VOLUME))
+                _saved = _j.load(_f)
+            self.volume = float(_saved.get("volume", VOLUME))
         except Exception:
-            self.volume = VOLUME
+            _saved, self.volume = {}, VOLUME
+        # One volume control: when the speaker has a hardware mixer, BMO's
+        # slider drives it (the same control as the desktop slider) instead
+        # of scaling audio in software on top of it.  See core/volume.py.
+        self.hw_volume = HardwareVolume.for_device(ALSA_DEVICE)
+        self._hw_vol_pending = None
+        self._hw_vol_lock = threading.Lock()
+        if self.hw_volume is not None:
+            if _saved.get("volume_control") != "hardware":
+                # First run with hardware volume: carry the old BMO level over
+                # once, so BMO isn't suddenly louder than it was.
+                self.hw_volume.set(self.volume)
+                update_settings({"volume_control": "hardware"})
+            else:
+                hw = self.hw_volume.get()
+                self.volume = hw if hw is not None else self.volume
+            print(f"[VOLUME] Using {self.hw_volume.card} '{self.hw_volume.control}' mixer, at {self.volume:.0%}")
         self._volume_overlay = None
         self._volume_hide_job = None
 
@@ -619,7 +637,41 @@ class BotGUI:
         ]
         return cv.create_polygon(pts, smooth=True, **kwargs)
 
+    def _software_gain(self) -> float:
+        """Gain BMO applies to its own audio: 1.0 when the hardware mixer
+        does the work, else the slider level (speakers without a mixer)."""
+        if getattr(self, "hw_volume", None) is not None:
+            return 1.0
+        return getattr(self, "volume", VOLUME)
+
+    def _apply_hw_volume(self):
+        """Push self.volume to the mixer off the Tk thread, coalescing a drag's
+        many events into whatever the latest level is."""
+        if getattr(self, "hw_volume", None) is None:
+            return
+        with self._hw_vol_lock:
+            start = self._hw_vol_pending is None
+            self._hw_vol_pending = self.volume
+        if not start:
+            return
+
+        def worker():
+            while True:
+                with self._hw_vol_lock:
+                    level = self._hw_vol_pending
+                self.hw_volume.set(level)
+                with self._hw_vol_lock:
+                    if self._hw_vol_pending == level:
+                        self._hw_vol_pending = None
+                        return
+        threading.Thread(target=worker, daemon=True).start()
+
     def _show_volume_overlay(self):
+        # The desktop slider moves the same mixer: show where it is now.
+        if getattr(self, "hw_volume", None) is not None and self._hw_vol_pending is None:
+            hw = self.hw_volume.get()
+            if hw is not None:
+                self.volume = hw
         if self._volume_overlay is None:
             self._create_volume_overlay()
         else:
@@ -654,6 +706,7 @@ class BotGUI:
         x0, x1 = self._vol_track_x0, self._vol_track_x1
         x = max(x0, min(x1, x))
         self.volume = (x - x0) / (x1 - x0)
+        self._apply_hw_volume()
         self._update_volume_visual()
 
     def _update_volume_visual(self):
@@ -664,8 +717,8 @@ class BotGUI:
         cy = ty + th // 2
         x  = x0 + self.volume * (x1 - x0)
 
-        # When the slider sits at 0 every audio path multiplies PCM by 0
-        # → silent output. That's a hard mute, so make it visually
+        # When the slider sits at 0 the speaker's mixer is switched off (or,
+        # without a mixer, every audio path multiplies PCM by 0) → silent. That's a hard mute, so make it visually
         # unmistakable: 🔇 icon, red knob, "MUTED" readout. Otherwise an
         # accidental drag-to-zero looks identical to a stuck app.
         muted = self.volume <= 0.001
@@ -787,7 +840,9 @@ class BotGUI:
                     time.sleep(0.08)
                 self.mouth_open = 0
 
-            proc = subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', '--buffer-time=500000', sound_file])
+            # Speakers without a hardware mixer: play a copy at the slider level.
+            play_path = scaled_wav(sound_file, self._software_gain())
+            proc = subprocess.Popen(['aplay', '-D', ALSA_DEVICE, '-q', '--buffer-time=500000', play_path])
             self.active_sounds.append(proc)
             
             # Start mouth animation for this sound
@@ -808,6 +863,9 @@ class BotGUI:
                     except Exception: pass
                 if proc in self.active_sounds:
                     self.active_sounds.remove(proc)
+                if play_path != sound_file:
+                    try: os.remove(play_path)
+                    except OSError: pass
                 if category == "music" and self.current_state == BotStates.JAMMING:
                     self.set_state(BotStates.IDLE, "Tap to speak")
             threading.Thread(target=cleanup, daemon=True).start()
@@ -1388,7 +1446,7 @@ class BotGUI:
                 if self.current_state == BotStates.SPEAKING:
                     self.mouth_open = min(60, vol / 25)
 
-                vol_scale = getattr(self, 'volume', VOLUME)
+                vol_scale = self._software_gain()
                 if vol_scale != 1.0:
                     scaled = np.clip(audio_chunk.astype(np.float32) * vol_scale, -32768, 32767).astype(np.int16)
                     write_chunk = scaled.tobytes()
@@ -1577,7 +1635,7 @@ class BotGUI:
                     self._lip_end = play_offset
             samples_written += len(audio_chunk)
 
-            vol_scale = getattr(self, 'volume', VOLUME)
+            vol_scale = self._software_gain()
             if vol_scale != 1.0:
                 scaled = np.clip(audio_chunk.astype(np.float32) * vol_scale, -32768, 32767).astype(np.int16)
                 write_chunk = scaled.tobytes()

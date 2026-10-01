@@ -54,7 +54,7 @@ class FakePhoto:
 
 
 # Stub everything that needs hardware, a display or the LLM stack.
-stub("tkinter", Tk=_Any, Label=_Any, Canvas=_Any, S="s")
+stub("tkinter", Tk=_Any, Label=_Any, Canvas=_Any, S="s", N="n", NE="ne")
 stub("tkinter.ttk")
 sys.modules["tkinter"].ttk = sys.modules["tkinter.ttk"]
 import PIL  # noqa: E402
@@ -288,6 +288,41 @@ with tempfile.TemporaryDirectory() as tmp:
     finally:
         os.chdir(_cwd)
 log.append("settings: a volume change keeps the briefing block; timers saved and re-armed")
+
+# One volume control: with a hardware mixer the slider sets it (off the Tk
+# thread) and BMO stops scaling audio itself; the overlay shows the level the
+# desktop slider left it at.
+class FakeMixer:
+    def __init__(self):
+        self.level, self.sets = 0.3, []
+
+    def get(self):
+        return self.level
+
+    def set(self, v):
+        self.sets.append(v)
+        self.level = v
+
+
+assert gui._software_gain() == 0.25            # no mixer: software gain, as before
+gui.hw_volume, gui._hw_vol_lock, gui._hw_vol_pending = FakeMixer(), threading.Lock(), None
+assert gui._software_gain() == 1.0
+gui.volume = 0.6
+gui._apply_hw_volume()
+for _ in range(100):
+    if gui.hw_volume.sets:
+        break
+    threading.Event().wait(0.01)
+assert gui.hw_volume.sets == [0.6], gui.hw_volume.sets
+gui.hw_volume.level = 0.35                       # someone used the desktop slider
+gui._volume_overlay = _Any()
+gui._update_volume_visual = lambda: None
+gui._reset_volume_hide = lambda: None
+gui._show_volume_overlay()
+assert gui.volume == 0.35
+del gui._update_volume_visual, gui._reset_volume_hide
+gui.hw_volume = None
+log.append("volume: the slider drives the speaker's mixer; no double scaling")
 
 gui.face_view.rig.frame = lambda: 1 / 0
 gui.animations[S.IDLE] = [FakePhoto()]
