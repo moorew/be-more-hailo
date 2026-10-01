@@ -26,7 +26,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. System packages
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[1/13] Installing system packages...${NC}"
+echo -e "${YELLOW}[1/14] Installing system packages...${NC}"
 sudo apt update
 sudo apt install -y \
     python3-tk python3-venv libasound2-dev libportaudio2 libopenblas-dev \
@@ -37,7 +37,7 @@ sudo apt install -y \
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Fix Hailo driver conflict
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[2/13] Checking Hailo NPU driver...${NC}"
+echo -e "${YELLOW}[2/14] Checking Hailo NPU driver...${NC}"
 # The old hailo_pci (Hailo-8) driver conflicts with hailo1x_pci (Hailo-10H).
 # Both create a 'hailo_chardev' sysfs class, so if hailo_pci loads first,
 # hailo1x_pci fails to create /dev/hailo0. Blacklist the old driver.
@@ -66,7 +66,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Clone repository (if run via curl outside the repo)
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[3/13] Checking repository...${NC}"
+echo -e "${YELLOW}[3/14] Checking repository...${NC}"
 if [ ! -f "requirements.txt" ] || [ ! -f "agent_hailo.py" ]; then
     if [ -d "be-more-agent" ]; then
         echo "Directory 'be-more-agent' already exists. Entering it..."
@@ -84,7 +84,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Create asset folders
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[4/13] Creating asset folders...${NC}"
+echo -e "${YELLOW}[4/14] Creating asset folders...${NC}"
 mkdir -p piper models
 mkdir -p sounds/greeting_sounds sounds/thinking_sounds sounds/ack_sounds sounds/error_sounds
 mkdir -p faces/idle faces/listening faces/thinking faces/speaking faces/error faces/warmup
@@ -92,7 +92,7 @@ mkdir -p faces/idle faces/listening faces/thinking faces/speaking faces/error fa
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Piper TTS engine
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[5/13] Setting up Piper TTS...${NC}"
+echo -e "${YELLOW}[5/14] Setting up Piper TTS...${NC}"
 ARCH=$(uname -m)
 if [ "$ARCH" == "aarch64" ]; then
     wget -q -O piper.tar.gz https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_aarch64.tar.gz
@@ -105,7 +105,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Piper voice model
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[6/13] Downloading voice models...${NC}"
+echo -e "${YELLOW}[6/14] Downloading voice models...${NC}"
 
 # 6.1 Base Voice (En-GB Semaine)
 BASE_VOICE="https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/semaine/medium"
@@ -120,7 +120,7 @@ wget -nc -q -O piper/bmo.onnx.json "$BMO_VOICE/bmo.onnx.json"
 # ─────────────────────────────────────────────────────────────────────────────
 # 7. STT: whisper.cpp on CPU (default) + Whisper-Small HEF (opt-in NPU path)
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[7/13] Setting up STT (CPU whisper.cpp by default + opt-in NPU)...${NC}"
+echo -e "${YELLOW}[7/14] Setting up STT (CPU whisper.cpp by default + opt-in NPU)...${NC}"
 
 # 7a. Whisper-Small HEF for the Hailo-10H NPU. This is now OPT-IN only
 # (enable with BMO_NPU_STT=1) because the Hailo-10H is single-tenant and the
@@ -179,7 +179,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 8. Build and install hailo-ollama (LLM server for Hailo NPU)
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[8/13] Setting up hailo-ollama...${NC}"
+echo -e "${YELLOW}[8/14] Setting up hailo-ollama...${NC}"
 if command -v hailo-ollama &>/dev/null; then
     echo -e "${GREEN}  hailo-ollama is already installed.${NC}"
 else
@@ -218,7 +218,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 9. Python environment and dependencies
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[9/13] Installing Python dependencies...${NC}"
+echo -e "${YELLOW}[9/14] Installing Python dependencies...${NC}"
 if [ ! -d "venv" ]; then
     python3 -m venv venv
 fi
@@ -237,7 +237,7 @@ pip install -r requirements.txt -q
 # ─────────────────────────────────────────────────────────────────────────────
 # 10. Pull LLM model via hailo-ollama
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[10/13] Pulling LLM model via hailo-ollama...${NC}"
+echo -e "${YELLOW}[10/14] Pulling LLM model via hailo-ollama...${NC}"
 OLLAMA_URL="http://localhost:8000/api"
 
 # Qwen3-1.7B is the current LLM (requires HailoRT >= 5.3).
@@ -255,7 +255,7 @@ curl -sf "$OLLAMA_URL/pull" \
 # ─────────────────────────────────────────────────────────────────────────────
 # Qwen3-VL-2B-Instruct is the current VLM (requires HailoRT >= 5.3).
 # Must match VLM_HEF_PATH in core/config.py.
-echo -e "${YELLOW}[11/13] Downloading VLM model (Qwen3-VL-2B — ~3.2 GB)...${NC}"
+echo -e "${YELLOW}[11/14] Downloading VLM model (Qwen3-VL-2B — ~3.2 GB)...${NC}"
 VLM_HEF="models/Qwen3-VL-2B-Instruct.hef"
 if [ -f "$VLM_HEF" ]; then
     echo -e "${GREEN}  VLM HEF already present.${NC}"
@@ -311,7 +311,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 12. Camera check, wake word model, and misc
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[12/13] Checking camera and wake word...${NC}"
+echo -e "${YELLOW}[12/14] Checking camera and wake word...${NC}"
 if command -v libcamera-still &>/dev/null || command -v rpicam-still &>/dev/null; then
     echo -e "${GREEN}  Camera tools found. Vision features are enabled.${NC}"
 else
@@ -327,9 +327,21 @@ if [ ! -f "wakeword.onnx" ]; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 13. Desktop shortcut
+# 13. Morning briefing: weather location and up to 3 news feeds
 # ─────────────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[13/13] Creating desktop shortcut...${NC}"
+echo -e "${YELLOW}[13/14] Morning briefing setup...${NC}"
+# Answers come from /dev/tty so this still asks when piped in via `curl ... | bash`.
+if [ -t 1 ] && { : < /dev/tty; } 2>/dev/null; then
+    python -m core.briefing --setup < /dev/tty || echo -e "${RED}  Briefing setup failed; run 'python -m core.briefing --setup' later.${NC}"
+else
+    echo -e "${YELLOW}  Not running interactively; keeping the defaults (Brantford, CBC, Brantford Expositor, Techmeme).${NC}"
+    echo -e "${YELLOW}  Change them later with: source venv/bin/activate && python -m core.briefing --setup${NC}"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 14. Desktop shortcut
+# ─────────────────────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[14/14] Creating desktop shortcut...${NC}"
 cat <<EOF > ~/Desktop/BMO.desktop
 [Desktop Entry]
 Name=BMO

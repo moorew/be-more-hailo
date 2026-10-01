@@ -107,18 +107,44 @@ _STOP = {"the", "a", "an", "of", "in", "on", "to", "for", "and", "or", "is", "at
          "with", "after", "as", "from", "says", "say", "be", "its", "it", "this", "that"}
 
 
+# Techmeme-style credits: "... (Josh Butler/The Guardian)", "... (The Information)".
+_CREDIT_RE = re.compile(r"\s*\((?:[^()]{0,40}/)?[^()/]{2,40}\)$")
+# Places a long headline can stop and still be a sentence, best first.
+_CLAUSE_TIERS = (("; ", " — "), (" after ", " amid ", " as ", " while ", " following ", " but "))
+
+
+def _clause_cut(head: str, min_pos: int):
+    for tier in _CLAUSE_TIERS:
+        cut = max(head.rfind(b) for b in tier)
+        if cut >= min_pos:
+            return cut
+    # A comma, but not one that leaves a dangling fragment (", a free").
+    commas = [i for i in range(len(head)) if head.startswith(", ", i)]
+    for n, cut in reversed(list(enumerate(commas))):
+        start = commas[n - 1] + 2 if n else 0
+        if cut >= min_pos and len(head[start:cut].split()) >= 3:
+            return cut
+    return -1
+
+
 def clean_headline(title: str, source: str = None):
-    """(title, truncated): unescaped, outlet suffix trimmed, capped at 110 chars."""
+    """(title, truncated): unescaped, outlet suffix/credit trimmed, capped at 110 chars.
+
+    Long titles are cut at the last clause break past half the cap ("...tax
+    laws after widespread calls..." -> "...tax laws"), else at a word."""
     title = re.sub(r"\s+", " ", html.unescape(title or "")).strip()
     m = _SUFFIX_RE.search(title)
     if m:
         tail = m.group(1).strip()
         if (source and tail.lower() == source.lower()) or re.search(rf"\b{_OUTLET_WORDS}\b", tail):
             title = title[:m.start()].rstrip()
+    title = _CREDIT_RE.sub("", title)
     truncated = False
     if len(title) > HEADLINE_MAX_CHARS:
-        cut = title[:HEADLINE_MAX_CHARS + 1].rsplit(" ", 1)[0]
-        title = cut.rstrip(" ,;:-–—")
+        head = title[:HEADLINE_MAX_CHARS + 1]
+        cut = _clause_cut(head, HEADLINE_MAX_CHARS // 2)
+        title = head[:cut] if cut >= 0 else head.rsplit(" ", 1)[0]
+        title = title.rstrip(" ,;:-–—")
         truncated = True
     return title, truncated
 

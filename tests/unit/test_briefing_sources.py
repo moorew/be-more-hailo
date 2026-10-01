@@ -183,3 +183,16 @@ def test_extras_respect_flags():
     extras = sources.get_extras({"extras": {"reminders": False, "sun": False}}, NOW, reg,
                                 {"sunrise": "07:19", "sunset": "19:02"})
     assert extras["reminders"] == [] and extras["sun"] is None
+
+
+def test_techmeme_credits_trimmed_and_long_titles_cut_at_a_clause():
+    title, truncated = sources.clean_headline(
+        "DoorDash pulls support for a GOP bill that would have limited DC's ability to write its own tax "
+        "laws after widespread calls for locals to boycott the service (Martin Austermuhle/The Washington Sun)")
+    assert title == "DoorDash pulls support for a GOP bill that would have limited DC's ability to write its own tax laws"
+    assert truncated
+    title, _ = sources.clean_headline(
+        "Strands Labs, AWS's experimental agent-development project, unveils Strands Decider 2B, a free, "
+        "open-source Jev competitor fine-tuned from an Alibaba Qwen base (Carl Franzen/VentureBeat)")
+    assert title == "Strands Labs, AWS's experimental agent-development project, unveils Strands Decider 2B"
+    assert sources.clean_headline("SoftBank invests (again) (The Information)")[0] == "SoftBank invests (again)"

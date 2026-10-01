@@ -309,7 +309,13 @@ export ALSA_DEVICE="plughw:2,0"
 
 ### Morning briefing
 
-The morning briefing reads the weather, a few headlines and your day (reminders, countdowns, sunrise and sunset). It is configured by hand under a `briefing` key in `settings.json`, next to the `volume` BMO saves itself. Every key is optional; missing ones use these defaults (`core/briefing/settings.py`):
+The morning briefing reads the weather, a few headlines and your day (reminders, countdowns, sunrise and sunset). `install.sh` asks for your weather location, up to three news feeds (pick from a list or paste any RSS URL; each is checked before it's saved) and the morning window. Change them any time with:
+
+```bash
+source venv/bin/activate && python -m core.briefing --setup
+```
+
+Everything lives under a `briefing` key in `settings.json`, next to the `volume` BMO saves itself, and can also be edited by hand. Every key is optional; missing ones use these defaults (`core/briefing/settings.py`):
 
 ```json
 {
@@ -322,7 +328,11 @@ The morning briefing reads the weather, a few headlines and your day (reminders,
     "chime": true,
     "location": "Brantford",
     "news": {
-      "feeds": [],
+      "feeds": [
+        {"url": "https://www.cbc.ca/webfeed/rss/rss-canada", "name": "CBC News"},
+        {"url": "https://www.brantfordexpositor.ca/feed", "name": "the Brantford Expositor"},
+        {"url": "https://www.techmeme.com/feed.xml", "name": "Techmeme"}
+      ],
       "count": 4,
       "region": "ca-en",
       "query": "Canada"
@@ -346,7 +356,7 @@ The morning briefing reads the weather, a few headlines and your day (reminders,
 | `prepare_minutes_before` | How early the weather, news and audio are fetched and rendered |
 | `chime` | Play the ready jingle |
 | `location` | Weather location for wttr.in (°C) |
-| `news.feeds` | RSS/Atom feeds, as URLs or `{"url": ..., "name": "CBC News"}` (the name is what BMO says). Read round-robin, newest first; items over 36 hours old are skipped |
+| `news.feeds` | Up to 3 RSS/Atom feeds, as URLs or `{"url": ..., "name": "CBC News"}` (the name is what BMO says: "From CBC News: ..."). Read round-robin, newest first; items over 36 hours old are skipped. Long headlines are cut at a clause, and credits like "(Name/Outlet)" are dropped |
 | `news.count` | Headlines read aloud (3–5) |
 | `news.region`, `news.query` | DuckDuckGo news search used when the feeds give fewer than three headlines |
 | `extras.reminders` | Read timers and reminders due later today |

@@ -151,7 +151,7 @@ def test_ordinals(n, words):
 
 @pytest.mark.parametrize("text,said", [
     ("7:12 a.m.", "seven twelve a.m."), ("7:05 p.m.", "seven oh five p.m."), ("11:00 a.m.", "eleven a.m."),
-    ("76%", "seventy six percent"), ("-5 degrees", "minus five degrees"), ("1,200 jobs", "one thousand two hundred jobs"),
+    ("76%", "seventy six percent"), ("$10B pledge", "ten billion dollars pledge"), ("$5.50", "five dollars fifty cents"), ("-5 degrees", "minus five degrees"), ("1,200 jobs", "one thousand two hundred jobs"),
     ("in 2026", "in 2026"),     # left for clean_text_for_speech's year reader
     ("Kitchener-Waterloo", "Kitchener Waterloo"), ("Leafs win — again", "Leafs win, again"),
 ])

@@ -23,7 +23,12 @@ DEFAULTS = {
     "location": "Brantford",
     "news": {
         # Read round-robin, newest first (see sources.get_headlines).
-        "feeds": [],
+        # `python -m core.briefing --setup` (run by install.sh) changes these.
+        "feeds": [
+            {"url": "https://www.cbc.ca/webfeed/rss/rss-canada", "name": "CBC News"},
+            {"url": "https://www.brantfordexpositor.ca/feed", "name": "the Brantford Expositor"},
+            {"url": "https://www.techmeme.com/feed.xml", "name": "Techmeme"},
+        ],
         "count": 4,
         "region": "ca-en",
         "query": "Canada",
@@ -88,6 +93,9 @@ def _merge(defaults: dict, override: dict) -> dict:
         else:
             out[k] = v
     return out
+
+
+MAX_FEEDS = 3
 
 
 def load_briefing_settings(path: str = SETTINGS_PATH) -> dict:

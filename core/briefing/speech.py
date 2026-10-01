@@ -76,7 +76,10 @@ _TIME_RE = re.compile(r"\b(\d{1,2}):(\d{2})\s*([ap]\.m\.)", re.IGNORECASE)
 _ORDINAL_RE = re.compile(r"\b(\d+)(?:st|nd|rd|th)\b")
 _PERCENT_RE = re.compile(r"(?<![\w.])(-?\d+)\s*%")
 _DEGREE_RE = re.compile(r"(-?\d+)\s*°C?")
-_MONEY_RE = re.compile(r"\$(\d[\d,]*)(?:\.(\d{2}))?")
+_MONEY_RE = re.compile(r"\$(\d[\d,]*)(?:\.(\d{2}))?(?!\.?\d)")
+_BIG_MONEY_RE = re.compile(r"\$(\d+(?:\.\d+)?)\s*(K|M|B|T|bn|thousand|million|billion|trillion)\b")
+_MAGNITUDES = {"k": "thousand", "thousand": "thousand", "m": "million", "million": "million",
+               "b": "billion", "bn": "billion", "billion": "billion", "t": "trillion", "trillion": "trillion"}
 _DECIMAL_RE = re.compile(r"(?<![\w.])(-?)(\d+)\.(\d+)\b")
 # A leading minus only counts at a word start ("-5", " -5"), not in "Crew-13".
 _INT_RE = re.compile(r"(?<![\w.,])(-?)(\d{1,3}(?:,\d{3})+|\d+)\b(?![.,]\d)")
@@ -104,6 +107,8 @@ def speakable(text: str) -> str:
     text = re.sub(r"\s*[–—]\s*", ", ", text)
     text = _TIME_RE.sub(lambda m: _time_words(int(m.group(1)), int(m.group(2)), m.group(3)), text)
     text = _ORDINAL_RE.sub(lambda m: ordinal_words(int(m.group(1))), text)
+    # "$10B" -> "10 billion dollars" (the number itself is read further down)
+    text = _BIG_MONEY_RE.sub(lambda m: f"{m.group(1)} {_MAGNITUDES[m.group(2).lower()]} dollars", text)
     text = _MONEY_RE.sub(lambda m: _int_words("", m.group(1)) + " dollars"
                          + (f" {number_to_words(int(m.group(2)))} cents" if m.group(2) and int(m.group(2)) else ""), text)
     text = _PERCENT_RE.sub(lambda m: number_to_words(int(m.group(1))) + " percent", text)
