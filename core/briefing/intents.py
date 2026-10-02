@@ -36,6 +36,12 @@ _BRIEFING_PATTERNS = [re.compile(p) for p in (
     r"how(?:'s| is| does) (?:my|the) day look(?:ing)?(?: like)?",
     r"tell me about (?:my|the) day",
 )]
+# Whisper mishears the verb ("share me my briefing", "sure me the briefing"),
+# so any short utterance about *the briefing* counts, unless it's asking what
+# a briefing is.  "briefing" is rare enough in chat that this is safe.
+_BRIEFING_WORD = re.compile(r"\b(?:morning |daily |my |the |today'?s )?briefing\b|\bbrief me\b")
+_ABOUT_THE_WORD = re.compile(r"\b(?:mean|means|meaning|definition|spell|what is a|what's a|picture|image|photo|draw)\b")
+MAX_LOOSE_WORDS = 7
 _GOOD_MORNING = re.compile(r"(?:good )?morning(?: to)?")  # "to you": "you" is an edge word
 
 
@@ -69,5 +75,8 @@ def match(text: str):
     if _GOOD_MORNING.fullmatch(t):
         return GOOD_MORNING
     if any(p.fullmatch(t) for p in _BRIEFING_PATTERNS):
+        return BRIEFING
+    if (_BRIEFING_WORD.search(t) and len(t.split()) <= MAX_LOOSE_WORDS
+            and not _ABOUT_THE_WORD.search(t)):
         return BRIEFING
     return None

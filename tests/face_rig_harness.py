@@ -603,13 +603,16 @@ def _fake_play(b, tag=None):
 
 gui._play_briefing = _fake_play
 gui._thinking_sound_start = gui._thinking_sound_stop = lambda: None
+said_req = []
+gui.speak = lambda text, msg=None, end_of_turn=True: said_req.append(text)
 gui.current_state = S.IDLE
 gui.briefing_scheduler = ReqScheduler(created=clock["t"] - 600)        # fresh: plays as is
 gui._briefing_on_request()
 assert played_req == [clock["t"] - 600] and prepared == [] and not gui.is_busy
 gui.briefing_scheduler = ReqScheduler(created=clock["t"] - 4 * 3600)   # stale: re-fetched first
 gui._briefing_on_request()
-assert prepared == [S.THINKING] and played_req[-1] == clock["t"], (prepared, played_req)
+assert len(prepared) == 1 and played_req[-1] == clock["t"], (prepared, played_req)
+assert said_req and said_req[-1].startswith("One moment"), said_req      # says so while it fetches
 gui.briefing_scheduler = ReqScheduler(created=None)                    # none yet today
 gui._briefing_on_request()
 assert len(prepared) == 2 and len(played_req) == 3
@@ -625,7 +628,7 @@ for _ in range(100):
         break
     threading.Event().wait(0.01)
 assert played_req[-1] == "action"
-del gui._play_briefing, gui._thinking_sound_start, gui._thinking_sound_stop
+del gui._play_briefing, gui._thinking_sound_start, gui._thinking_sound_stop, gui.speak
 log.append("briefing by voice: plays a fresh one, re-fetches a stale one, gives up when busy")
 
 # "Remind me tomorrow at 9 ..." -> set_reminder: saved as a reminder, no 12 h clamp.

@@ -1560,12 +1560,21 @@ class BotGUI:
         briefing = self.briefing_scheduler.briefing_for_today()
         if briefing is None or time.time() - briefing.get("created", 0) > self.BRIEFING_STALE_S:
             print("[BRIEFING] Preparing a fresh briefing on request")
+            # Fetching + rendering takes ~20-30 s: say so, so it doesn't look stuck.
+            result = {}
+            worker = threading.Thread(
+                target=lambda: result.update(b=self.briefing_scheduler.prepare_now()), daemon=True)
+            worker.start()
+            self.speak("One moment, friend! BMO is getting the latest weather and news.", msg="Getting your briefing...")
             self.set_state(BotStates.THINKING, "Getting your briefing...")
             self._thinking_sound_start()
             try:
-                briefing = self.briefing_scheduler.prepare_now()
+                while worker.is_alive():
+                    self.last_user_interaction = time.time()   # keep the busy watchdog away
+                    worker.join(timeout=1.0)
             finally:
                 self._thinking_sound_stop()
+            briefing = result.get("b")
             if briefing is not None:
                 briefing = self.briefing_scheduler.briefing_for_today()   # with WAV paths
         if briefing is None:

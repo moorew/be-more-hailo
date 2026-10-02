@@ -21,6 +21,9 @@ def test_good_morning(text):
     "Show me the briefing", "Play my morning briefing again", "Give me the rundown", "Brief me.",
     "What's my day look like?", "What does my day look like today?", "How's my day looking?",
     "Catch me up", "Tell me about my day", "Could you read me today's briefing", "I want my briefing",
+    # whisper mishearing the verb (seen on the Pi: "Share me my briefing.")
+    "Share me my briefing.", "Sure me the briefing", "So my briefing", "Can I get the morning briefing?",
+    "What's in my briefing today?",
 ])
 def test_briefing_requests(text):
     assert match(text) == BRIEFING
@@ -30,6 +33,8 @@ def test_briefing_requests(text):
     "Good morning, what's the weather?", "good morning bmo can you tell me a joke",
     "Show me a picture of a briefing", "What's the news?", "Tell me about the morning",
     "What's the weather like this morning?", "Thank you BMO", "", "Set a timer for 5 minutes",
+    "What does briefing mean?", "What is a briefing?",
+    "I had a really long briefing at work today with my whole team",   # long: just chat
 ])
 def test_everything_else_is_left_alone(text):
     assert match(text) is None
