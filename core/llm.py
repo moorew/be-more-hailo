@@ -1,5 +1,7 @@
 import base64
 import os
+import threading
+import time
 import requests
 import logging
 import re
@@ -88,6 +90,39 @@ def _get_vlm():
     dtype = _vlm_instance.input_frame_format_type()
     logger.info(f"VLM ready — frame shape {shape}, dtype {dtype}")
     return _vlm_instance, shape, dtype
+
+
+VLM_NPU_WAIT_S = 25
+
+
+def _free_npu_for_vlm():
+    """Ask hailo-ollama to unload its model so the VLM can open the NPU.
+
+    hailo-ollama holds the NPU exclusively while a model is loaded, and BMO
+    pins the LLM there (keep_alive -1), so the VLM could never start ("eyes
+    aren't working").  A request with keep_alive 0 unloads it; the device is
+    free ~5 s later.  The LLM is reloaded in the background afterwards."""
+    payload = {"model": FAST_LLM_MODEL, "messages": [{"role": "user", "content": "hi"}],
+               "stream": False, "keep_alive": 0, "options": {"num_predict": 1}}
+    try:
+        requests.post(LLM_URL, json=payload, timeout=60)
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Couldn't ask hailo-ollama to unload: {e}")
+
+
+def _get_vlm_when_free(wait_s: float = VLM_NPU_WAIT_S):
+    """_get_vlm(), retrying while hailo-ollama is still letting go of the NPU."""
+    end = time.monotonic() + wait_s
+    while True:
+        try:
+            return _get_vlm()
+        except FileNotFoundError:
+            raise
+        except Exception as e:
+            if time.monotonic() >= end:
+                raise
+            logger.info(f"NPU not free yet ({e}); retrying")
+            time.sleep(2.0)
 
 
 def _decode_image_to_frame(image_b64: str, target_shape, target_dtype=np.uint8):
@@ -1161,8 +1196,12 @@ class Brain:
         self.history.append({"role": "user", "content": user_text})
         assistant_appended = False
 
+        freed = False
         try:
-            vlm, frame_shape, frame_dtype = _get_vlm()
+            if _vlm_instance is None:
+                _free_npu_for_vlm()
+                freed = True
+            vlm, frame_shape, frame_dtype = _get_vlm_when_free()
 
             # Decode the base64 image into a numpy frame the VLM expects
             frame = _decode_image_to_frame(image_base64, frame_shape, frame_dtype)
@@ -1183,7 +1222,6 @@ class Brain:
 
             # Run generate_all with a hard timeout so a hung/throttled NPU
             # doesn't freeze the agent indefinitely.
-            import threading
             result = {"content": None, "exc": None}
 
             def _run():
@@ -1236,6 +1274,9 @@ class Brain:
                              "Restart BMO to recover the NPU for the LLM.")
             else:
                 _release_vlm()
+                if freed:
+                    # Put the LLM back (~35 s) without making the user wait for it.
+                    threading.Thread(target=self.warm_up, daemon=True).start()
 
             # Preserve user/assistant alternation if any error path bailed.
             if not assistant_appended:
