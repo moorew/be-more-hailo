@@ -12,7 +12,8 @@ import re
 import time
 
 from core.briefing import sources
-from core.briefing.settings import MAX_FEEDS, SETTINGS_PATH, load_briefing_settings, read_settings, update_settings
+from core.briefing.settings import (MAX_CALENDARS, MAX_FEEDS, SETTINGS_PATH, calendar_urls, load_briefing_settings,
+                                    read_settings, update_settings)
 from core.search import fetch_j1
 
 # Offered by number so nobody has to hunt for RSS URLs.  Feeds that answer
@@ -205,26 +206,41 @@ def _ask_recurring(current, ask, say, today):
     return items
 
 
-def _ask_calendar(current, ask, say, fetch_feed):
-    """A calendar's secret iCal address (no sign-in), checked before saving."""
+def _check_calendar(url, say, fetch_feed) -> bool:
+    try:
+        body = fetch_feed(url)
+        if b"BEGIN:VCALENDAR" not in body[:2000]:
+            raise ValueError("that address didn't return a calendar")
+        say(f"  ok: calendar found ({body.count(b'BEGIN:VEVENT')} events).")
+        return True
+    except Exception as e:
+        say(f"  Couldn't read it ({str(e)[:80]}).")
+        return False
+
+
+def _ask_calendars(current, ask, say, fetch_feed):
+    """Up to MAX_CALENDARS secret iCal addresses (no sign-in), each checked."""
     if current:
-        say("Calendar: set.")
-        if _yes(ask("Keep it? [Y/n]: ")):
+        say(f"Calendars: {len(current)} set.")
+        if _yes(ask("Keep them? [Y/n]: ")):
             return current
-    say("Calendar (optional): paste its secret iCal address. In Google Calendar: Settings ->")
+    say("Calendars (optional): paste a secret iCal address. In Google Calendar: Settings ->")
     say("your calendar -> Integrate calendar -> 'Secret address in iCal format'.")
-    while True:
-        url = ask("Calendar address (Enter to skip): ").strip()
+    urls = []
+    while len(urls) < MAX_CALENDARS:
+        n = len(urls) + 1
+        url = ask(f"Calendar {n} address (Enter to {'skip' if n == 1 else 'finish'}): ").strip()
         if not url:
-            return ""
-        try:
-            body = fetch_feed(url)
-            if b"BEGIN:VCALENDAR" not in body[:2000]:
-                raise ValueError("that address didn't return a calendar")
-            say(f"  ok: calendar found ({body.count(b'BEGIN:VEVENT')} events).")
-            return url
-        except Exception as e:
-            say(f"  Couldn't read it ({str(e)[:80]}).")
+            break
+        if url in urls:
+            say("  Already added.")
+            continue
+        if not _check_calendar(url, say, fetch_feed):
+            continue
+        urls.append(url)
+        if len(urls) < MAX_CALENDARS and not _yes(ask("Add another calendar? [y/N]: "), default=False):
+            break
+    return urls
 
 
 def _ask_home_assistant(current, ask, say, ha_factory):
@@ -293,9 +309,9 @@ def run_setup(path: str = SETTINGS_PATH, ask=input, say=print, fetch=fetch_j1,
     if _yes(ask("Set up the optional extras: calendar, smart home, camera? [y/N]: "), default=False):
         say("")
         extras = block.get("extras") if isinstance(block.get("extras"), dict) else {}
-        url = _ask_calendar(extras.get("calendar_url") or current["extras"].get("calendar_url", ""),
-                            ask, say, fetch_feed)
-        block["extras"] = {**extras, "calendar_url": url}
+        urls = _ask_calendars(calendar_urls(extras) or calendar_urls(current["extras"]), ask, say, fetch_feed)
+        # calendar_url keeps the first one too, for a BMO still running older code.
+        block["extras"] = {**extras, "calendars": urls, "calendar_url": urls[0] if urls else ""}
         say("")
         saved = read_settings(path)
         updates["home_assistant"] = _ask_home_assistant(saved.get("home_assistant") or {}, ask, say,

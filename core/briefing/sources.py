@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 
 from core.briefing import holidays as holiday_calendar
+from core.briefing.settings import calendar_urls
 from core.search import _day_stats, fetch_j1
 
 logger = logging.getLogger(__name__)
@@ -425,9 +426,17 @@ def get_extras(settings: dict, now: datetime.datetime, registry=None, forecast=N
     uv = day.get("uv") if extras.get("uv", True) else None
     full_moon = extras.get("moon", True) and (day.get("moon") or "").lower() == "full moon"
     events = []
-    if extras.get("calendar_url"):
+    urls = calendar_urls(extras)
+    if urls:
         from core.briefing import ical
-        events = ical.get_events(extras["calendar_url"], today)
+        seen = set()
+        for url in urls:
+            for e in ical.get_events(url, today):
+                key = (e.get("time"), e.get("title", "").lower())   # shared to both calendars
+                if key not in seen:
+                    seen.add(key)
+                    events.append(e)
+        events.sort(key=lambda e: (e.get("time") is not None, e.get("time") or ""))
     return {"reminders": reminders,
             "events": events,
             "recurring": get_recurring(extras.get("recurring"), today),

@@ -157,3 +157,30 @@ def test_calendar_events_and_weather_warnings(monkeypatch, tmp_path):
     warn = "Heads up! Environment Canada has a freezing rain warning for Brantford."
     assert warn in text and text.index(warn) < text.index("Right now")     # before the weather
     assert parts[0]["card"]["warnings"] == ["Freezing rain warning"]
+
+
+def test_several_calendars_are_merged(monkeypatch):
+    from core.briefing import ical
+    from core.briefing.settings import calendar_urls
+    feeds = {
+        "https://cal.example/me.ics": [{"time": "10:00", "end": None, "title": "Dentist"},
+                                       {"time": None, "end": None, "title": "Mum's birthday"}],
+        "https://cal.example/family.ics": [{"time": "08:15", "end": None, "title": "School run"},
+                                           {"time": "10:00", "end": None, "title": "dentist"}],  # shared
+    }
+    monkeypatch.setattr(ical, "get_events", lambda url, day: feeds[url])
+    extras = {"calendars": ["https://cal.example/me.ics", {"url": "https://cal.example/family.ics"}]}
+    got = sources.get_extras({"extras": extras}, NOW)["events"]
+    assert [(e["time"], e["title"]) for e in got] == [
+        (None, "Mum's birthday"), ("08:15", "School run"), ("10:00", "Dentist")]
+    # The older single setting still counts, without doubling up.
+    assert calendar_urls({"calendar_url": "https://cal.example/me.ics",
+                          "calendars": ["https://cal.example/me.ics"]}) == ["https://cal.example/me.ics"]
+    assert len(calendar_urls({"calendars": [f"https://c{i}.example" for i in range(5)]})) == 3
+
+
+def test_each_calendar_has_its_own_offline_copy(tmp_path):
+    from core.briefing import ical
+    a = ical.cache_path_for("https://cal.example/me.ics", str(tmp_path))
+    b = ical.cache_path_for("https://cal.example/family.ics", str(tmp_path))
+    assert a != b and "secret" not in a and a.endswith(".ics")

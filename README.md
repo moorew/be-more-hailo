@@ -388,7 +388,7 @@ Everything for the briefing lives under a `briefing` key in `settings.json`, nex
 | `news.count` | Headlines read aloud (3–5) |
 | `news.region`, `news.query` | DuckDuckGo news search used when the feeds give fewer than three headlines |
 | `alerts` | Lead the weather with active Environment Canada warnings (and announce new ones) |
-| `extras.calendar_url` | A calendar's *secret iCal address* (e.g. Google Calendar → Settings → your calendar → Integrate calendar). Today's events are read in "Your day". No sign-in; keep the address private |
+| `extras.calendars` | Up to 3 calendars' *secret iCal addresses* (e.g. Google Calendar → Settings → your calendar → Integrate calendar). Today's events from all of them are merged into "Your day", with an event shared to two calendars read once. No sign-in; keep the addresses private. (The older single `extras.calendar_url` still works) |
 | `extras.reminders` | Read timers and reminders due later today |
 | `extras.recurring` | Repeating items, read on the day: `{"name": "Garbage day", "days": ["tue"], "every_weeks": 2, "start": "2026-10-06", "heads_up": true}` (every other Tuesday, also mentioned the day before), `{"name": "Piano", "days": ["wed", "sat"], "time": "16:00"}`, `{"name": "Rent", "day_of_month": 1}` |
 | `extras.holidays`, `extras.province` | Canadian holidays and a few favourites (Halloween, Mother's Day...), worked out offline; mentioned on the day and up to 3 days before. The province names the February and August long weekends |

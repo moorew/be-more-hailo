@@ -40,8 +40,10 @@ DEFAULTS = {
         # e.g. {"name": "Garbage day", "days": ["tue"], "every_weeks": 2,
         #       "start": "2026-10-06", "heads_up": true}  or  {"name": "Rent", "day_of_month": 1}
         "recurring": [],
-        # A calendar's secret iCal address (e.g. Google Calendar: Settings ->
+        # Calendars' secret iCal addresses (e.g. Google Calendar: Settings ->
         # your calendar -> "Secret address in iCal format").  No sign-in.
+        # Up to MAX_CALENDARS; the older single "calendar_url" still works.
+        "calendars": [],
         "calendar_url": "",
         "countdowns": [],
         "holidays": True,
@@ -109,6 +111,19 @@ def _merge(defaults: dict, override: dict) -> dict:
 
 
 MAX_FEEDS = 3
+MAX_CALENDARS = 3
+
+
+def calendar_urls(extras: dict) -> list:
+    """Calendar addresses from extras.calendars (strings or {"url": ...}) plus
+    the older single extras.calendar_url, de-duplicated, at most MAX_CALENDARS."""
+    out = []
+    for c in list(extras.get("calendars") or []) + [extras.get("calendar_url")]:
+        url = (c.get("url") if isinstance(c, dict) else c) or ""
+        url = url.strip()
+        if url and url not in out:
+            out.append(url)
+    return out[:MAX_CALENDARS]
 
 
 def load_briefing_settings(path: str = SETTINGS_PATH) -> dict:

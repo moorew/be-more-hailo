@@ -139,17 +139,21 @@ def test_optional_extras_calendar_home_assistant_and_camera(tmp_path):
     answers = iter(["", "", "", "", "", "",                 # enabled .. no repeating items
                     "y",                                    # optional extras
                     "https://broken.example/cal.ics", "https://notacal.example/x",
-                    "https://cal.example/secret.ics",
+                    "https://cal.example/secret.ics", "y",                # another one
+                    "https://cal.example/secret.ics",                     # same again
+                    "https://cal.example/family.ics", "n",                # done
                     "http://homeassistant.local:8123/", "bad", "y", "good",
                     "n"])                                   # no camera presence
     run_setup(str(path), ask=lambda p: next(answers), say=said.append, fetch=j1_for,
               fetch_feed=lambda url: fetch(url) if "cal" in url or "notacal" in url else RSS,
               clock=lambda: NOW_TS, ha_factory=FakeHA)
     saved = json.loads(path.read_text())
+    assert saved["briefing"]["extras"]["calendars"] == ["https://cal.example/secret.ics",
+                                                         "https://cal.example/family.ics"]
     assert saved["briefing"]["extras"]["calendar_url"] == "https://cal.example/secret.ics"
     assert saved["home_assistant"] == {"url": "http://homeassistant.local:8123", "token": "good"}
     assert saved["presence"] == {"enabled": False}
     text = "\n".join(said)
-    assert "Couldn't read it" in text and "calendar found (1 events)" in text
+    assert "Couldn't read it" in text and "calendar found (1 events)" in text and "Already added." in text
     assert "Couldn't connect (Home Assistant didn't accept BMO's token.)" in text
     assert "BMO can see 2 lights" in text

@@ -290,12 +290,12 @@ def boom(url):
 def test_get_events_success_writes_cache(tmp_path):
     got = ical.get_events(URL, FRI, fetch=lambda u: GOOD, cache_dir=str(tmp_path), tz=TZ)
     assert got == [{"time": "10:00", "end": None, "title": "Standup"}]
-    assert (tmp_path / "calendar.ics").read_bytes().replace(b"\r\n", b"\n") == GOOD.replace(b"\r\n", b"\n")
+    assert open(ical.cache_path_for(URL, str(tmp_path)), 'rb').read().replace(b"\r\n", b"\n") == GOOD.replace(b"\r\n", b"\n")
 
 
 def test_get_events_falls_back_to_fresh_cache(tmp_path):
     ical.get_events(URL, FRI, fetch=lambda u: GOOD, cache_dir=str(tmp_path), tz=TZ)
-    mtime = os.path.getmtime(tmp_path / "calendar.ics")
+    mtime = os.path.getmtime(ical.cache_path_for(URL, str(tmp_path)))
     got = ical.get_events(URL, FRI, fetch=boom, cache_dir=str(tmp_path), tz=TZ, clock=lambda: mtime + 23 * 3600)
     assert [e["title"] for e in got] == ["Standup"]
 
@@ -304,12 +304,12 @@ def test_non_calendar_response_does_not_replace_cache(tmp_path):
     ical.get_events(URL, FRI, fetch=lambda u: GOOD, cache_dir=str(tmp_path), tz=TZ)
     got = ical.get_events(URL, FRI, fetch=lambda u: b"<html>Sign in</html>", cache_dir=str(tmp_path), tz=TZ)
     assert [e["title"] for e in got] == ["Standup"]
-    assert b"VCALENDAR" in (tmp_path / "calendar.ics").read_bytes()
+    assert b"VCALENDAR" in open(ical.cache_path_for(URL, str(tmp_path)), 'rb').read()
 
 
 def test_get_events_stale_cache_gives_nothing(tmp_path):
     ical.get_events(URL, FRI, fetch=lambda u: GOOD, cache_dir=str(tmp_path), tz=TZ)
-    mtime = os.path.getmtime(tmp_path / "calendar.ics")
+    mtime = os.path.getmtime(ical.cache_path_for(URL, str(tmp_path)))
     assert ical.get_events(URL, FRI, fetch=boom, cache_dir=str(tmp_path), tz=TZ,
                            clock=lambda: mtime + 25 * 3600) == []
 

@@ -635,17 +635,25 @@ def _read_cache(path: str, clock):
     return None
 
 
+def cache_path_for(url: str, cache_dir: str = CACHE_DIR) -> str:
+    """cache_dir/calendar-<12 hex>.ics: per calendar, without the secret URL in the name."""
+    import hashlib
+    digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
+    return os.path.join(cache_dir, CACHE_NAME.replace(".ics", f"-{digest}.ics"))
+
+
 def get_events(url: str, day: datetime.date, fetch=None, cache_dir: str = CACHE_DIR,
                clock=time.time, tz=None) -> list:
     """Events on `day` from the iCal feed at `url`; never raises.
 
-    A good download is cached to cache_dir/calendar.ics; when the feed is
+    A good download is cached to cache_dir/calendar-<hash of url>.ics (one per
+    calendar, so several don't overwrite each other's copy); when the feed is
     unreachable (or returns something that isn't a calendar), a cached copy
     under 24 h old is used instead, else [].
     """
     if not url:
         return []
-    cache_path = os.path.join(cache_dir, CACHE_NAME)
+    cache_path = cache_path_for(url, cache_dir)
     text = None
     try:
         text = _decode((fetch or _fetch)(url))
