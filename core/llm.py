@@ -14,6 +14,7 @@ from .search import get_weather, search_web, search_images
 from .timers import (describe_duration, describe_when, match_reminders, parse_reminder_query,
                      parse_reminder_request, parse_timer_request)
 from .briefing import intents as briefing_intents
+from . import quick_answers
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,11 @@ def _label(r) -> str:
         return "the timer"
     what = r.get("message", "").rstrip("!.")
     return f"your reminder to {what[:1].lower()}{what[1:]}" if what and what != "Reminder" else "your reminder"
+
+
+def _end(text: str) -> str:
+    """Finish a sentence without doubling the stop of a trailing 'a.m.'."""
+    return text if text.endswith((".", "!", "?")) else text + "."
 
 
 def _or_list(labels):
@@ -562,6 +568,8 @@ class Brain:
         # Set by the agent: the shared core.reminders.ReminderRegistry, so
         # "what reminders do I have?" / "cancel the pasta timer" work.
         self.reminders = None
+        # Set by the agent when settings.json has a home_assistant block.
+        self.home = None
         self.history = []
         if persist:
             self.load_history()
@@ -702,7 +710,7 @@ class Brain:
             said = [_describe_item(r) for r in items[:4]]
             more = f", and {len(items) - 4} more" if len(items) > 4 else ""
             n = len(items)
-            return f"You have {n} {'thing' if n == 1 else 'things'} set: " + "; ".join(said) + more + "."
+            return _end(f"You have {n} {'thing' if n == 1 else 'things'} set: " + "; ".join(said) + more)
         hits = match_reminders(items, q["target"])
         if q["action"] == "cancel":
             if q.get("all"):
@@ -722,8 +730,27 @@ class Brain:
             timers = [r for r in hits if r.get("kind", "timer") == "timer"]
             hits = timers if len(timers) == 1 else hits
         if len(hits) > 1:
-            return "; ".join(_describe_item(r) for r in hits[:4]) + "."
-        return _describe_item(hits[0], lead=True) + "."
+            return _end("; ".join(_describe_item(r) for r in hits[:4]))
+        return _end(_describe_item(hits[0], lead=True))
+
+    def _instant_reply(self, user_text: str):
+        """Answers that don't need the LLM: timer/reminder questions, time,
+        date, days-until, maths, units, then Home Assistant commands (last:
+        its "open/turn on X" verbs must not catch the photo or music routes)."""
+        answer = self._reminder_query_reply(user_text)
+        if answer is None:
+            answer = quick_answers.answer(user_text)
+            if answer is not None:
+                print(f"[LLM] Quick answer: {answer!r}")
+        if answer is None and self.home is not None:
+            try:
+                answer = self.home.handle(user_text)
+            except Exception as e:
+                logger.warning(f"Home Assistant error: {e}")
+                answer = None
+            if answer is not None:
+                print(f"[LLM] Home Assistant: {answer!r}")
+        return answer
 
     def think(self, user_text: str) -> str:
         """
@@ -805,8 +832,8 @@ class Brain:
             self.history.append({"role": "assistant", "content": combined})
             return combined
 
-        # Questions about timers/reminders ("what's set?", "cancel the pasta timer").
-        answer = self._reminder_query_reply(user_text)
+        # Instant answers: timers/reminders, time, maths, units, smart home.
+        answer = self._instant_reply(user_text)
         if answer is not None:
             self.history.append({"role": "assistant", "content": answer})
             return answer
@@ -1064,8 +1091,8 @@ class Brain:
             yield reminder[1]
             return
 
-        # Questions about timers/reminders ("what's set?", "cancel the pasta timer").
-        answer = self._reminder_query_reply(user_text)
+        # Instant answers: timers/reminders, time, maths, units, smart home.
+        answer = self._instant_reply(user_text)
         if answer is not None:
             self.history.append({"role": "assistant", "content": answer})
             yield answer
