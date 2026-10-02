@@ -373,6 +373,7 @@ class BotGUI:
             on_icon=self._on_briefing_icon)
         # "Good morning" only plays a briefing that's waiting; Brain asks here.
         self.brain.briefing_ready = self.briefing_scheduler.is_ready_unplayed
+        self.brain.reminders = self.reminders
 
         self.load_animations()
         self.load_sounds()
@@ -1396,12 +1397,12 @@ class BotGUI:
         scipy.io.wavfile.write(filename, 16000, data_16k)
         return filename
     # --- TIMERS & REMINDERS ---
-    def start_timer_thread(self, minutes, message, reminder_id=None, kind="timer"):
+    def start_timer_thread(self, minutes, message, reminder_id=None, kind="timer", name=None):
         """Fire `message` in `minutes`.  The timer is saved in self.reminders
         (so the morning briefing can list it and a reboot re-arms it) and
         removed when it fires.  Pass `reminder_id` to re-arm a saved one."""
         if reminder_id is None:
-            reminder_id = self.reminders.add(time.time() + minutes * 60, message, kind=kind)
+            reminder_id = self.reminders.add(time.time() + minutes * 60, message, kind=kind, name=name)
 
         def timer_worker():
             print(f"[TIMER SET] for {minutes} minutes. Message: {message}")
@@ -1410,8 +1411,10 @@ class BotGUI:
             if self.stop_event.wait(timeout=minutes * 60):
                 print(f"[TIMER CANCELLED] (app shutting down): {message}")
                 return
+            if not self.reminders.remove(reminder_id):
+                print(f"[TIMER CANCELLED] (by voice): {message}")   # "cancel the pasta timer"
+                return
             print(f"[TIMER DONE] {message}")
-            self.reminders.remove(reminder_id)
 
             # Wait for BMO to finish speaking/listening (and any morning
             # briefing) so the reminder doesn't fight it for the speaker.
@@ -2292,7 +2295,7 @@ class BotGUI:
                     # Models like to echo the prompt's placeholder verbatim.
                     if msg_text in ("", "...", "…"):
                         msg_text = "Timer is up!"
-                    self.start_timer_thread(minutes, str(msg_text))
+                    self.start_timer_thread(minutes, str(msg_text), name=action_data.get("name"))
                     print(f"[TIMER] Scheduled: {minutes} min — {msg_text!r}")
                 except (TypeError, ValueError) as e:
                     print(f"[TIMER] Bad set_timer payload {action_data!r}: {e}")

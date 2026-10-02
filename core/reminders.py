@@ -53,12 +53,14 @@ class ReminderRegistry:
             logger.warning(f"Could not write {self.path}: {e}")
 
     # --- API ---
-    def add(self, due: float, message: str, kind: str = "timer") -> str:
+    def add(self, due: float, message: str, kind: str = "timer", name: str = None) -> str:
         """Register a reminder due at epoch seconds `due`; returns its id."""
         rid = uuid.uuid4().hex[:12]
         with self._lock:
             self._items[rid] = {"id": rid, "due": float(due), "message": str(message),
                                 "kind": kind, "created": self.clock()}
+            if name:
+                self._items[rid]["name"] = str(name)
             self._save()
         return rid
 

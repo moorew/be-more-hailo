@@ -87,7 +87,30 @@ def parse_timer_request(text: str):
             if subject and subject not in {"...", "…"} and not _DURATION_RE.fullmatch(subject):
                 message = subject[0].upper() + subject[1:] + "!"
 
-    return {"minutes": round(minutes, 4), "message": message}
+    name = timer_name(text)
+    if name and message == "Timer is up!":
+        message = f"The {name} timer is done!"
+    out = {"minutes": round(minutes, 4), "message": message}
+    if name:
+        out["name"] = name
+    return out
+
+
+# "set a pasta timer", "an egg timer for 6 minutes", "the laundry timer"
+_NAME_RE = re.compile(r"\b(?:a|an|the|my)\s+(?P<name>[a-z][a-z'-]*(?:\s+[a-z][a-z'-]*)?)\s+timers?\b", re.I)
+_NOT_NAMES = set(_WORD_NUMBERS) | set(_UNIT_TO_MINUTES) | {
+    "new", "quick", "short", "long", "another", "kitchen timer", "countdown", "little", "few", "couple"}
+
+
+def timer_name(text: str):
+    """'set a pasta timer for 10 minutes' -> 'pasta'; None for plain timers."""
+    m = _NAME_RE.search(text or "")
+    if not m:
+        return None
+    name = m.group("name").lower()
+    if any(w in _NOT_NAMES for w in name.split()) or name in _NOT_NAMES:
+        return None
+    return name
 
 
 def describe_duration(minutes: float) -> str:
@@ -265,3 +288,66 @@ def describe_when(due: float, now: _dt.datetime = None, message: str = None) -> 
     else:
         when = f"on {t:%A}, {t:%B} {t.day} {at}"
     return when
+
+
+# --- Asking about timers and reminders --------------------------------------------
+# "what reminders do I have?", "cancel the pasta timer", "how long left?"
+
+_KIND_WORDS = r"(?:timers?|reminders?|alarms?)"
+_LIST_RE = re.compile(
+    rf"^(?:what|which)\s+(?:{_KIND_WORDS}|(?:{_KIND_WORDS}\s+and\s+{_KIND_WORDS}))\s+(?:do i have|are (?:set|running|on|there))"
+    rf"|^(?:do i have|have i got|are there)\s+any\s+{_KIND_WORDS}"
+    rf"|^(?:list|show|tell me)\s+(?:all\s+)?(?:my|the)\s+{_KIND_WORDS}"
+    rf"|^what(?:'s| is| are)\s+(?:my|the)\s+{_KIND_WORDS}(?:\s+(?:set|for today))?$", re.I)
+_CANCEL_RE = re.compile(
+    r"^(?:please\s+)?(?:cancel|delete|remove|stop|clear|turn off|never mind|forget)\s+(?P<rest>.+)$", re.I)
+_LEFT_RE = re.compile(
+    r"^how (?:long|much time)(?: is)?(?: (?:is )?left)?(?: on| for)?(?P<rest>.*?)(?: left)?$"
+    r"|^when (?:is|does|will)(?P<rest2>.+?)(?: go off| due| finish| done| ring)?$", re.I)
+
+
+def _clean(text):
+    t = re.sub(r"[^\w\s']", " ", (text or "").lower())
+    t = re.sub(r"\b(?:hey|bmo|beemo|please|okay|ok|friend)\b", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def parse_reminder_query(text: str):
+    """{"action": "list"} | {"action": "cancel", "target": str|None, "all": bool}
+    | {"action": "left", "target": str|None} | None."""
+    t = _clean(text)
+    if not t or not re.search(_KIND_WORDS, t):
+        return None
+    if _LIST_RE.search(t):
+        return {"action": "list"}
+    m = _CANCEL_RE.match(t)
+    if m:
+        rest = m.group("rest")
+        if not re.search(_KIND_WORDS, rest):
+            return None
+        every = bool(re.search(r"\b(?:all|every|everything)\b", rest))
+        return {"action": "cancel", "target": _target(rest), "all": every}
+    m = _LEFT_RE.match(t)
+    if m:
+        rest = m.group("rest") if m.group("rest") is not None else m.group("rest2")
+        return {"action": "left", "target": _target(rest or "")}
+    return None
+
+
+def _target(rest):
+    """The words that pick a timer/reminder: 'the pasta timer' -> 'pasta',
+    'my reminder about the bins' -> 'bins'; None when it's just 'the timer'."""
+    words = re.sub(rf"\b(?:the|my|a|an|all|every|that|this|of|about|to|for|on|{_KIND_WORDS})\b", " ", rest)
+    words = re.sub(r"\s+", " ", words).strip()
+    return words or None
+
+
+def match_reminders(items: list, target):
+    """Registry entries matching `target` words (name first, then message)."""
+    if not target:
+        return list(items)
+    want = set(target.lower().split())
+    by_name = [r for r in items if r.get("name") and want <= set(r["name"].lower().split())]
+    if by_name:
+        return by_name
+    return [r for r in items if want <= set(re.findall(r"[\w']+", r.get("message", "").lower()))]

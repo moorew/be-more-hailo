@@ -11,7 +11,8 @@ import numpy as np
 from .config import LLM_URL, LLM_KEEP_ALIVE, LLM_MODEL, FAST_LLM_MODEL, VISION_MODEL, VLM_HEF_PATH, get_system_prompt, get_current_context
 from .tts import add_pronunciation
 from .search import get_weather, search_web, search_images
-from .timers import describe_duration, describe_when, parse_reminder_request, parse_timer_request
+from .timers import (describe_duration, describe_when, match_reminders, parse_reminder_query,
+                     parse_reminder_request, parse_timer_request)
 from .briefing import intents as briefing_intents
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,37 @@ def _get_vlm():
     dtype = _vlm_instance.input_frame_format_type()
     logger.info(f"VLM ready — frame shape {shape}, dtype {dtype}")
     return _vlm_instance, shape, dtype
+
+
+def _label(r) -> str:
+    """'the pasta timer', 'the timer', 'your reminder to put the bins out'."""
+    if r.get("name"):
+        return f"the {r['name']} timer"
+    if r.get("kind", "timer") == "timer" and r.get("message") == "Timer is up!":
+        return "the timer"
+    what = r.get("message", "").rstrip("!.")
+    return f"your reminder to {what[:1].lower()}{what[1:]}" if what and what != "Reminder" else "your reminder"
+
+
+def _or_list(labels):
+    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " or " + labels[-1]
+
+
+def _describe_item(r, lead=False) -> str:
+    """'the pasta timer has 4 minutes left' / 'your reminder to call mum is tomorrow at 9 a.m.'"""
+    left = r["due"] - time.time()
+    label = _label(r)
+    if lead:
+        label = label[:1].upper() + label[1:]
+    if r.get("kind", "timer") == "timer" and left < 12 * 3600:
+        if left < 60:
+            return f"{label} has {max(1, int(left))} seconds left"
+        m, sec = divmod(int(left), 60)
+        h, m = divmod(m, 60)
+        parts = ([f"{h} hour{'s' if h != 1 else ''}"] if h else []) + \
+                ([f"{m} minute{'s' if m != 1 else ''}"] if m else [])
+        return f"{label} has {' '.join(parts)} left"
+    return f"{label} is {describe_when(r['due'])}"
 
 
 VLM_NPU_WAIT_S = 25
@@ -527,6 +559,9 @@ class Brain:
         # Set by the agent: () -> True while a morning briefing is ready and
         # unplayed.  None (web_app, cli) skips briefing routing entirely.
         self.briefing_ready = None
+        # Set by the agent: the shared core.reminders.ReminderRegistry, so
+        # "what reminders do I have?" / "cancel the pasta timer" work.
+        self.reminders = None
         self.history = []
         if persist:
             self.load_history()
@@ -651,6 +686,45 @@ class Brain:
             spoken += "."
         return spoken, json.dumps({"action": "set_reminder", **r})
 
+    def _reminder_query_reply(self, user_text: str):
+        """Spoken answer to "what reminders do I have?", "cancel the pasta
+        timer", "how long left?"; None if it isn't one (or no registry)."""
+        if self.reminders is None:
+            return None
+        q = parse_reminder_query(user_text)
+        if q is None:
+            return None
+        print(f"[LLM] Reminder query MATCHED: {q}")
+        items = self.reminders.pending()
+        if q["action"] == "list":
+            if not items:
+                return "You don't have any timers or reminders right now."
+            said = [_describe_item(r) for r in items[:4]]
+            more = f", and {len(items) - 4} more" if len(items) > 4 else ""
+            n = len(items)
+            return f"You have {n} {'thing' if n == 1 else 'things'} set: " + "; ".join(said) + more + "."
+        hits = match_reminders(items, q["target"])
+        if q["action"] == "cancel":
+            if q.get("all"):
+                for r in hits:
+                    self.reminders.remove(r["id"])
+                return "Okay! Everything's cancelled." if hits else "There's nothing to cancel, friend."
+            if not hits:
+                return "Hmm, BMO couldn't find that one." if items else "There's nothing to cancel, friend."
+            if len(hits) > 1:
+                return "Which one? You have " + _or_list([_label(r) for r in hits]) + "."
+            self.reminders.remove(hits[0]["id"])
+            return f"Okay, I cancelled {_label(hits[0])}."
+        # time left
+        if not hits:
+            return "Hmm, BMO couldn't find that one." if items else "You don't have any timers running."
+        if len(hits) > 1 and q["target"] is None:
+            timers = [r for r in hits if r.get("kind", "timer") == "timer"]
+            hits = timers if len(timers) == 1 else hits
+        if len(hits) > 1:
+            return "; ".join(_describe_item(r) for r in hits[:4]) + "."
+        return _describe_item(hits[0], lead=True) + "."
+
     def think(self, user_text: str) -> str:
         """
         Send text to local LLM (Hailo/Ollama) and get response.
@@ -715,7 +789,9 @@ class Brain:
         timer = parse_timer_request(user_text)
         if timer is not None:
             action = json.dumps({"action": "set_timer", **timer})
-            spoken = f"Okay friend! I set a timer for {describe_duration(timer['minutes'])}."
+            spoken = (f"Okay friend! I set a {timer['name']} timer for {describe_duration(timer['minutes'])}."
+                      if timer.get("name") else
+                      f"Okay friend! I set a timer for {describe_duration(timer['minutes'])}.")
             print(f"[LLM] Timer MATCHED: {timer}")
             combined = (spoken + " " + action).strip()
             self.history.append({"role": "assistant", "content": combined})
@@ -728,6 +804,12 @@ class Brain:
             combined = " ".join(reminder)
             self.history.append({"role": "assistant", "content": combined})
             return combined
+
+        # Questions about timers/reminders ("what's set?", "cancel the pasta timer").
+        answer = self._reminder_query_reply(user_text)
+        if answer is not None:
+            self.history.append({"role": "assistant", "content": answer})
+            return answer
 
         print(f"[LLM] No pre-LLM action matched for: '{lower_text[:60]}'")
 
@@ -964,7 +1046,9 @@ class Brain:
         timer = parse_timer_request(user_text)
         if timer is not None:
             action = json.dumps({"action": "set_timer", **timer})
-            spoken = f"Okay friend! I set a timer for {describe_duration(timer['minutes'])}."
+            spoken = (f"Okay friend! I set a {timer['name']} timer for {describe_duration(timer['minutes'])}."
+                      if timer.get("name") else
+                      f"Okay friend! I set a timer for {describe_duration(timer['minutes'])}.")
             print(f"[LLM-STREAM] Timer MATCHED: {timer}")
             yield spoken
             self.history.append({"role": "assistant", "content": (spoken + " " + action).strip()})
@@ -978,6 +1062,13 @@ class Brain:
             yield reminder[0]
             self.history.append({"role": "assistant", "content": " ".join(reminder)})
             yield reminder[1]
+            return
+
+        # Questions about timers/reminders ("what's set?", "cancel the pasta timer").
+        answer = self._reminder_query_reply(user_text)
+        if answer is not None:
+            self.history.append({"role": "assistant", "content": answer})
+            yield answer
             return
 
         print(f"[LLM-STREAM] No pre-LLM action matched for: '{lower_text[:60]}'")
