@@ -369,10 +369,13 @@ def weather_card(card, keys, index, size):
     y = 292
     for title in card.get("warnings") or []:
         size = 15
-        label = "⚠ " + title
-        tw = Pen.width(label, "bold", size) + 24
-        pen.rect(24, y, 24 + min(tw, w - 48), y + size + 14, r=(size + 14) / 2, fill=C["red"])
-        pen.text(24 + 12, y + (size + 14) / 2, label, "bold", size, C["white"], anchor="lm")
+        h_ = size + 14
+        tw = Pen.width(title, "bold", size) + 24 + 22
+        pen.rect(24, y, 24 + min(tw, w - 48), y + h_, r=h_ / 2, fill=C["red"])
+        tx, ty = 24 + 12, y + h_ / 2                    # a white warning triangle (fonts lack ⚠)
+        pen.polygon([(tx, ty + 7), (tx + 16, ty + 7), (tx + 8, ty - 8)], fill=C["white"])
+        pen.line([(tx + 8, ty - 3), (tx + 8, ty + 2)], C["red"], 2)
+        pen.text(tx + 22, ty, title, "bold", size, C["white"], anchor="lm")
         y += size + 22
     if card.get("sunrise") and card.get("sunset"):
         pen.text(24, y, f"Sunrise {card['sunrise']} · Sunset {card['sunset']}", "body", 16, C["muted"])
@@ -482,7 +485,7 @@ def your_day_card(card, keys, index, size):
     row_h = max(39, min(50, (bottom - y) / max(1, len(rows))))
     fs = 20 if row_h >= 46 else 17
     ic = 30 if row_h >= 46 else 26
-    max_rows = int((bottom - y) // row_h)
+    max_rows = int((bottom - y) / row_h + 1e-6)      # 7 rows of 45.71 px is 7, not 6.99
     if len(rows) > max_rows:
         rows = rows[:max_rows - 1] + [("reminder", f"…and {len(rows) - max_rows + 1} more")]
     for i, (kind, text) in enumerate(rows):

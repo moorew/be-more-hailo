@@ -172,3 +172,13 @@ def test_a_late_background_draw_never_lands_in_the_next_briefing():
     v.start({"parts": briefing_parts()[1:]}, now=1)       # different parts, same indexes
     v._card(0, None, old_job)                             # the old briefing's draw finishing late
     assert (0, None) not in v._cache or v._cache[(0, None)] is not old_job[2].get((0, None))
+
+
+def test_seven_rows_fit_without_and_more():
+    """7 rows were cut to 6 + "…and 2 more" by float rounding (7 x 45.71 px)."""
+    rows = [{"kind": "reminder", "time": f"{h}:00 a.m.", "text": f"Thing {h}"} for h in range(1, 8)]
+    part = {"card": {"type": "your_day", "date": "Friday, 9 October", "rows": rows}}
+    img = cards.draw_card(part, ["your_day"], 0, (498, 440))
+    import numpy as np
+    dark_rows = np.where((np.array(img.convert("L"))[60:390, 70:200] < 80).any(axis=1))[0]
+    assert dark_rows.max() > 300            # the 7th row's text is drawn near the bottom
