@@ -1,0 +1,329 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "id": "133141280898885853202610020501_fea1-2456",
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -118.64642446,
+       61.71150236
+      ],
+      [
+       -118.67862144,
+       61.71994813
+      ],
+      [
+       -122.20571805,
+       62.5730028
+      ],
+      [
+       -123.19121436,
+       62.22989225
+      ],
+      [
+       -123.25340644,
+       62.20781883
+      ],
+      [
+       -123.26950745,
+       62.20198406
+      ],
+      [
+       -123.69442044,
+       62.04926824
+      ],
+      [
+       -122.49912857,
+       61.73390619
+      ],
+      [
+       -121.95885044,
+       61.57899013
+      ],
+      [
+       -121.5606169,
+       61.46237865
+      ],
+      [
+       -121.54740974,
+       61.45847562
+      ],
+      [
+       -121.36794309,
+       61.4052101
+      ],
+      [
+       -121.1098089,
+       61.3279216
+      ],
+      [
+       -120.84417464,
+       61.24745345
+      ],
+      [
+       -120.82378957,
+       61.24148243
+      ],
+      [
+       -119.5784064,
+       60.86929311
+      ],
+      [
+       -119.21257164,
+       61.20615832
+      ],
+      [
+       -119.20813387,
+       61.21155197
+      ],
+      [
+       -119.1913246,
+       61.22731892
+      ],
+      [
+       -119.17150126,
+       61.2434619
+      ],
+      [
+       -119.16594448,
+       61.24850126
+      ],
+      [
+       -119.16521229,
+       61.24916512
+      ],
+      [
+       -118.64642446,
+       61.71150236
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "alert_code": "FGA",
+    "alert_type": "advisory",
+    "alert_name_en": "fog advisory",
+    "alert_name_fr": "avis de brouillard",
+    "alert_short_name_en": "Fog (advisory)",
+    "alert_short_name_fr": "Brouillard (avis)",
+    "publication_datetime": "2026-10-02T14:08:55.530Z",
+    "expiration_datetime": "2026-10-02T19:45:55.530Z",
+    "validity_datetime": "2026-10-02T14:07:00.000Z",
+    "event_end_datetime": "2026-10-02T17:45:00.000Z",
+    "alert_text_en": "Near-zero visibility in fog continues.\n\nFog will dissipate later this morning.\n\nTravel will likely be hazardous in some locations. Visibility will likely be suddenly reduced at times.\n\nPlease continue to monitor alerts and forecasts issued by Environment Canada. To report severe weather, send an email to NTstorm@ec.gc.ca, call 1-800-239-0484 or post reports on social media using #NTStorm.",
+    "alert_text_fr": "La visibilité demeure presque nulle dans le brouillard. \n\nLe brouillard se dissipera plus tard ce matin.\n\nLes déplacements seront probablement dangereux dans certains endroits. Une visibilité soudainement réduite par moments est à prévoir.\n\nVeuillez continuer à surveiller les alertes et les prévisions émises par Environnement Canada. Pour signaler du temps violent, envoyez un courriel à meteoNT@ec.gc.ca, appelez au 1-800-239-0484 ou publiez un message sur les réseaux sociaux en utilisant #NTMeteo.",
+    "risk_colour_en": "yellow",
+    "risk_colour_fr": "jaune",
+    "confidence_en": "High",
+    "confidence_fr": "élevée",
+    "impact_en": "Moderate",
+    "impact_fr": "modéré",
+    "feature_name_en": "Ft. Simpson Region including Jean Marie River",
+    "feature_name_fr": "région de Ft. Simpson incluant Jean Marie River",
+    "province": "NT",
+    "status_en": "continued",
+    "status_fr": "maintenu",
+    "feature_id": "fea1-2456"
+   }
+  },
+  {
+   "id": "133141280898885853202610020501_fea1-2457",
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -122.20571805,
+       62.5730028
+      ],
+      [
+       -123.98696593,
+       64.61942547
+      ],
+      [
+       -124.6743172,
+       64.38119929
+      ],
+      [
+       -124.70316542,
+       64.37084141
+      ],
+      [
+       -124.7448954,
+       64.35631862
+      ],
+      [
+       -124.76312303,
+       64.34988011
+      ],
+      [
+       -125.26225245,
+       64.17150524
+      ],
+      [
+       -125.42566271,
+       64.11223012
+      ],
+      [
+       -123.69454385,
+       62.04942695
+      ],
+      [
+       -123.69442044,
+       62.04926824
+      ],
+      [
+       -123.26950745,
+       62.20198406
+      ],
+      [
+       -123.25340644,
+       62.20781883
+      ],
+      [
+       -123.19121436,
+       62.22989225
+      ],
+      [
+       -122.20571805,
+       62.5730028
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "alert_code": "FGA",
+    "alert_type": "advisory",
+    "alert_name_en": "fog advisory",
+    "alert_name_fr": "avis de brouillard",
+    "alert_short_name_en": "Fog (advisory)",
+    "alert_short_name_fr": "Brouillard (avis)",
+    "publication_datetime": "2026-10-02T14:08:55.530Z",
+    "expiration_datetime": "2026-10-02T19:45:55.530Z",
+    "validity_datetime": "2026-10-02T14:07:00.000Z",
+    "event_end_datetime": "2026-10-02T17:45:00.000Z",
+    "alert_text_en": "Near-zero visibility in fog continues.\n\nFog will dissipate later this morning.\n\nTravel will likely be hazardous in some locations. Visibility will likely be suddenly reduced at times.\n\nPlease continue to monitor alerts and forecasts issued by Environment Canada. To report severe weather, send an email to NTstorm@ec.gc.ca, call 1-800-239-0484 or post reports on social media using #NTStorm.",
+    "alert_text_fr": "La visibilité demeure presque nulle dans le brouillard. \n\nLe brouillard se dissipera plus tard ce matin.\n\nLes déplacements seront probablement dangereux dans certains endroits. Une visibilité soudainement réduite par moments est à prévoir.\n\nVeuillez continuer à surveiller les alertes et les prévisions émises par Environnement Canada. Pour signaler du temps violent, envoyez un courriel à meteoNT@ec.gc.ca, appelez au 1-800-239-0484 ou publiez un message sur les réseaux sociaux en utilisant #NTMeteo.",
+    "risk_colour_en": "yellow",
+    "risk_colour_fr": "jaune",
+    "confidence_en": "High",
+    "confidence_fr": "élevée",
+    "impact_en": "Moderate",
+    "impact_fr": "modéré",
+    "feature_name_en": "Wrigley Region",
+    "feature_name_fr": "région de Wrigley",
+    "province": "NT",
+    "status_en": "issued",
+    "status_fr": "émis",
+    "feature_id": "fea1-2457"
+   }
+  },
+  {
+   "id": "142242077553918459202610010517_fea1-3598",
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -138.96101882,
+       69.50581211
+      ],
+      [
+       -138.71380142,
+       69.54364971
+      ],
+      [
+       -138.74243344,
+       69.61447445
+      ],
+      [
+       -138.90650447,
+       69.66344352
+      ],
+      [
+       -139.17793303,
+       69.69368338
+      ],
+      [
+       -139.41568842,
+       69.60134185
+      ],
+      [
+       -139.41706411,
+       69.60152147
+      ],
+      [
+       -139.12178559,
+       69.51166928
+      ],
+      [
+       -138.96101882,
+       69.50581211
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "alert_code": "CFW",
+    "alert_type": "warning",
+    "alert_name_en": "storm surge warning",
+    "alert_name_fr": "avertissement de submersion côtière",
+    "alert_short_name_en": "Storm surge",
+    "alert_short_name_fr": "Submersion côtière",
+    "publication_datetime": "2026-10-02T10:42:31.222Z",
+    "expiration_datetime": "2026-10-02T19:47:31.222Z",
+    "validity_datetime": "2026-10-02T10:39:00.000Z",
+    "event_end_datetime": "2026-10-02T17:45:00.000Z",
+    "alert_text_en": "This warning is in effect for parts of the coast due to the following hazard(s): \n- Moderate storm surge\n- Higher than normal water levels\n- Sea Ice\n\nStorm surge is expected on Friday October 2, 2026 at Herschel Island, starting early in the morning and ending by noon.\n\nThe highest water levels are expected to reach 15 to 20 cm above highest astronomical tide. \n\nMinor to moderate flooding is expected.  These conditions will cause damage to infrastructure near the coast, including boats beached or anchored along the shoreline.\n\nThis warning is issued when high water levels pose a threat to coastal regions due to tides, storm surge and/or waves.\n\nPlease continue to monitor alerts and forecasts issued by Environment Canada. To report severe weather, send an email to YTstorm@ec.gc.ca or post reports on social media using #YTStorm.",
+    "alert_text_fr": "Cet avertissement est en vigueur pour certaines parties de la côte en raison des dangers suivants :\n- Onde de tempête modérée\n- Niveaux d'eau plus élevé que la normale\n- Glace de mer\n\nOn prévoit une onde de tempête le vendredi 2 octobre 2026 sur l'île Herschel, qui devrait commencer tôt en matinée et prendre fin d'ici midi.\n\nLes niveaux d'eau les plus élevés devraient atteindre de 15 à 20 cm au-dessus de la marée astronomique la plus haute.\n\nOn prévoit des inondations mineures à modérées. Ces conditions causeront des dommages aux infrastructures près de la côte, notamment aux bateaux échoués ou ancrés le long du littoral.\n\nCet avertissement est émis lorsque des niveaux d’eau élevés constituent une menace pour les régions côtières en raison des marées, des ondes de tempête ou des vagues.\n\nVeuillez continuer à surveiller les alertes et les prévisions émises par Environnement Canada. Pour signaler du temps violent, envoyez un courriel à meteoYT@ec.gc.ca ou publiez un message sur les réseaux sociaux en utilisant #YTMeteo.",
+    "risk_colour_en": "yellow",
+    "risk_colour_fr": "jaune",
+    "confidence_en": "High",
+    "confidence_fr": "élevée",
+    "impact_en": "Moderate",
+    "impact_fr": "modéré",
+    "feature_name_en": "Coastline of Yukon incl. Herschel Island",
+    "feature_name_fr": "littoral du Yukon incl. l'île Herschel",
+    "province": "YT",
+    "status_en": "continued",
+    "status_fr": "maintenu",
+    "feature_id": "fea1-3598"
+   }
+  }
+ ],
+ "numberMatched": 3,
+ "numberReturned": 3,
+ "links": [
+  {
+   "type": "application/geo+json",
+   "rel": "self",
+   "title": "This document as GeoJSON",
+   "href": "https://api.weather.gc.ca/collections/weather-alerts/items?f=json&lang=en&limit=500"
+  },
+  {
+   "rel": "alternate",
+   "type": "application/ld+json",
+   "title": "This document as RDF (JSON-LD)",
+   "href": "https://api.weather.gc.ca/collections/weather-alerts/items?f=jsonld&lang=en&limit=500"
+  },
+  {
+   "type": "text/html",
+   "rel": "alternate",
+   "title": "This document as HTML",
+   "href": "https://api.weather.gc.ca/collections/weather-alerts/items?f=html&lang=en&limit=500"
+  },
+  {
+   "type": "application/json",
+   "title": "Weather Alerts",
+   "rel": "collection",
+   "href": "https://api.weather.gc.ca/collections/weather-alerts"
+  }
+ ],
+ "timeStamp": "2026-10-02T15:32:45.417538Z"
+}
