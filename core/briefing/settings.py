@@ -21,6 +21,8 @@ DEFAULTS = {
     "prepare_minutes_before": 30,
     "chime": True,
     "location": "Brantford",
+    # Environment Canada warnings for the location, read with the weather.
+    "alerts": True,
     "news": {
         # Read round-robin, newest first (see sources.get_headlines).
         # `python -m core.briefing --setup` (run by install.sh) changes these.
@@ -38,6 +40,9 @@ DEFAULTS = {
         # e.g. {"name": "Garbage day", "days": ["tue"], "every_weeks": 2,
         #       "start": "2026-10-06", "heads_up": true}  or  {"name": "Rent", "day_of_month": 1}
         "recurring": [],
+        # A calendar's secret iCal address (e.g. Google Calendar: Settings ->
+        # your calendar -> "Secret address in iCal format").  No sign-in.
+        "calendar_url": "",
         "countdowns": [],
         "holidays": True,
         "province": "ON",

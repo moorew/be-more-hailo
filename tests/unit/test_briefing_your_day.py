@@ -122,3 +122,38 @@ def test_sun_has_set_in_the_evening():
 def test_afternoon_sign_off_does_not_say_morning():
     p = script.build_script({"headlines": [{"title": "x", "source": "y"}]}, NOW.replace(hour=15))
     assert p[-1]["text"].startswith("That's your briefing!")
+
+
+def test_calendar_events_and_weather_warnings(monkeypatch, tmp_path):
+    from core.briefing import ical
+    seen = {}
+
+    def fake_events(url, day):
+        seen["url"] = url
+        return [{"time": None, "end": None, "title": "Mum's birthday"},
+                {"time": "10:00", "end": "11:00", "title": "Dentist"}]
+    monkeypatch.setattr(ical, "get_events", fake_events)
+    extras = sources.get_extras({"extras": {"calendar_url": "https://cal.example/secret.ics"}}, NOW)
+    assert seen["url"] == "https://cal.example/secret.ics" and len(extras["events"]) == 2
+    assert sources.get_extras({"extras": {}}, NOW)["events"] == []          # no URL: no fetch
+
+    p = your_day(events=extras["events"])
+    assert p["text"] == "Your day: Today: Mum's birthday. At 10:00 a.m.: Dentist."
+    assert [r["kind"] for r in p["card"]["rows"]] == ["event", "event"]
+
+    with open(FIXTURE) as f:
+        j1 = json.load(f)
+    fc = sources.get_forecast("Brantford", today=datetime.date(2026, 10, 1), clock=lambda: NOW.timestamp(),
+                              cache_dir=str(tmp_path), fetch=lambda loc: j1)
+    assert fc["lat"] == pytest.approx(43.133)
+    warning = {"id": "x", "kind": "warning", "title": "Freezing rain warning", "area": "Brant"}
+    assert sources.get_warnings({}, fc, get=lambda lat, lon: [warning]) == [warning]
+    assert sources.get_warnings({"alerts": False}, fc, get=lambda lat, lon: [warning]) == []
+    assert sources.get_warnings({}, fc, get=lambda lat, lon: None) == []        # offline
+    parts = script.build_script({"weather": sources._select_days(sources._parse_j1(j1, "Brantford", 0),
+                                                                 datetime.date(2026, 10, 1)),
+                                 "warnings": [warning]}, NOW)
+    text = parts[0]["text"]
+    warn = "Heads up! Environment Canada has a freezing rain warning for Brantford."
+    assert warn in text and text.index(warn) < text.index("Right now")     # before the weather
+    assert parts[0]["card"]["warnings"] == ["Freezing rain warning"]

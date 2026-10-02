@@ -49,8 +49,14 @@ def _parse_j1(data: dict, location: str, fetched_at: float) -> dict:
         except (TypeError, ValueError):
             stats["uv"] = None
         days.append(stats)
+    area = (data.get("nearest_area") or [{}])[0]
+    try:
+        lat, lon = float(area["latitude"]), float(area["longitude"])
+    except (KeyError, TypeError, ValueError):
+        lat = lon = None
     return {
         "location": location,
+        "lat": lat, "lon": lon,
         "fetched_at": fetched_at,
         "now": {"desc": now["weatherDesc"][0]["value"].strip(), "code": now.get("weatherCode"),
                 "temp": int(now["temp_C"]), "feels": int(now["FeelsLikeC"])},
@@ -418,12 +424,27 @@ def get_extras(settings: dict, now: datetime.datetime, registry=None, forecast=N
     daylight = forecast.get("daylight") if forecast and extras.get("daylight", True) else None
     uv = day.get("uv") if extras.get("uv", True) else None
     full_moon = extras.get("moon", True) and (day.get("moon") or "").lower() == "full moon"
+    events = []
+    if extras.get("calendar_url"):
+        from core.briefing import ical
+        events = ical.get_events(extras["calendar_url"], today)
     return {"reminders": reminders,
+            "events": events,
             "recurring": get_recurring(extras.get("recurring"), today),
             "countdowns": get_countdowns(extras.get("countdowns"), today),
             "holidays": holiday_calendar.upcoming(today, extras.get("province", "ON"))
             if extras.get("holidays", True) else [],
             "sun": sun, "daylight": daylight, "uv": uv, "full_moon": bool(full_moon)}
+
+
+def get_warnings(settings: dict, forecast, get=None) -> list:
+    """Active Environment Canada alerts for the forecast's location ([] if none,
+    off, outside Canada or offline)."""
+    if not settings.get("alerts", True) or not forecast or forecast.get("lat") is None:
+        return []
+    if get is None:
+        from core.weather_alerts import get_alerts as get
+    return get(forecast["lat"], forecast["lon"]) or []
 
 
 def gather(settings: dict, now: datetime.datetime, registry=None, **fetchers) -> dict:
@@ -433,6 +454,7 @@ def gather(settings: dict, now: datetime.datetime, registry=None, **fetchers) ->
     headlines = get_headlines(settings["news"],
                               **{k: v for k, v in fetchers.items() if k in ("fetch_feed", "ddgs_news", "clock")})
     return {"date": now.date().isoformat(), "weather": forecast, "headlines": headlines,
+            "warnings": get_warnings(settings, forecast, fetchers.get("get_alerts")),
             "extras": get_extras(settings, now, registry, forecast)}
 
 

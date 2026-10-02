@@ -262,7 +262,7 @@ def row_icon(pen, kind, x, y, s=30):
         pen.line([(x + s * .5, y + s * .29), (x + s * .5, y + s * .84)], C["ink"], lw)
         pen.ellipse(x + s * .30, y + s * .12, x + s * .50, y + s * .30, outline=C["ink"], width=lw)
         pen.ellipse(x + s * .50, y + s * .12, x + s * .70, y + s * .30, outline=C["ink"], width=lw)
-    elif kind == "recurring":                               # calendar page
+    elif kind in ("recurring", "event"):                    # calendar page
         pen.rect(x + s * .12, y + s * .2, x + s * .88, y + s * .88, r=3, fill=C["white"], outline=C["ink"], width=lw)
         pen.rect(x + s * .12, y + s * .2, x + s * .88, y + s * .4, r=3, fill=C["blue"], outline=C["ink"], width=lw)
         for cx in (.32, .68):
@@ -366,8 +366,16 @@ def weather_card(card, keys, index, size):
         cols.append(("Tomorrow", card["tomorrow"], "tomorrow" in wet))
     for i, (label, day, umb) in enumerate(cols):
         _day_column(pen, 24 + i * (col_w + gap), 100, col_w, label, day, umb)
+    y = 292
+    for title in card.get("warnings") or []:
+        size = 15
+        label = "⚠ " + title
+        tw = Pen.width(label, "bold", size) + 24
+        pen.rect(24, y, 24 + min(tw, w - 48), y + size + 14, r=(size + 14) / 2, fill=C["red"])
+        pen.text(24 + 12, y + (size + 14) / 2, label, "bold", size, C["white"], anchor="lm")
+        y += size + 22
     if card.get("sunrise") and card.get("sunset"):
-        pen.text(24, 292, f"Sunrise {card['sunrise']} · Sunset {card['sunset']}", "body", 16, C["muted"])
+        pen.text(24, y, f"Sunrise {card['sunrise']} · Sunset {card['sunset']}", "body", 16, C["muted"])
     _footer(pen, w, h, keys, index)
     return _down(img)
 
@@ -434,6 +442,9 @@ def _day_row_text(row):
         if row["when"] == "tomorrow":
             when = "Tomorrow" + (f" {row['time']}" if row.get("time") else "")
         return "recurring", f"**{when}** {row['text']}"
+    if kind == "event":
+        return "event", (f"**{row['time']}** {row['text']}" if row.get("time")
+                             else f"**All day** {row['text']}")
     if kind == "holiday":
         d = row["days"]
         when = "today!" if d == 0 else "tomorrow" if d == 1 else row.get("weekday", f"in {d} days")
@@ -463,7 +474,7 @@ def your_day_card(card, keys, index, size):
     img, pen = _frame(w, h)
     _title(pen, w, "Your day", card.get("date"))
     # Reminders first, then countdowns, then the sun (the mockup's order).
-    order = {"reminder": 0, "timer": 0, "recurring": 1, "countdown": 2, "holiday": 3,
+    order = {"event": 0, "reminder": 0, "timer": 0, "recurring": 1, "countdown": 2, "holiday": 3,
              "sun": 4, "daylight": 5, "uv": 6, "moon": 7}
     rows = sorted((_day_row_text(r) for r in card["rows"]), key=lambda kr: order[kr[0]])
     y, bottom = 64, h - 18 - 30 - 8

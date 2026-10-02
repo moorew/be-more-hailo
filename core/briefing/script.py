@@ -63,10 +63,16 @@ def _is_nouny(desc: str) -> bool:
     return any(w in desc.lower() for w in _NOUNY)
 
 
-def _weather_part(w: dict, umbrella_min: int = UMBRELLA_RAIN):
+def _warning_line(a: dict, place: str) -> str:
+    title = a["title"][:1].lower() + a["title"][1:]
+    article = "an" if title[:1] in "aeiou" else "a"
+    return f"Heads up! Environment Canada has {article} {title} for {place}."
+
+
+def _weather_part(w: dict, umbrella_min: int = UMBRELLA_RAIN, warnings=()):
     now, today, tomorrow = w["now"], w["today"], w.get("tomorrow")
     desc = now["desc"].lower()
-    lines = [f"Right now there's {desc} and it's {now['temp']} degrees." if _is_nouny(desc)
+    lines = [_warning_line(a, w["location"].title()) for a in warnings[:2]] + [f"Right now there's {desc} and it's {now['temp']} degrees." if _is_nouny(desc)
              else f"Right now it's {desc} and {now['temp']} degrees.",
              f"Today: high of {today['high']}, low of {today['low']}, {today['rain']} percent chance of rain."]
     if tomorrow:
@@ -87,6 +93,7 @@ def _weather_part(w: dict, umbrella_min: int = UMBRELLA_RAIN):
                     "icon": condition_icon(now.get("code"))},
             "today": day_card(today), "tomorrow": day_card(tomorrow),
             "umbrella": " and ".join(wet) or None,
+            "warnings": [a["title"] for a in warnings[:2]],
             "sunrise": w.get("sunrise") and _hhmm_to_display(w["sunrise"]),
             "sunset": w.get("sunset") and _hhmm_to_display(w["sunset"])}
     return {"key": "weather", "card": card, "text": " ".join(lines)}
@@ -140,6 +147,14 @@ def _your_day_part(extras: dict, now: datetime.datetime):
                      f"about {n} minute{'s' if n != 1 else ''} {'more' if dl['change'] > 0 else 'less'} "
                      f"daylight each day.")
         rows.append({"kind": "daylight", "minutes": dl["minutes"], "change": dl["change"]})
+    for e in extras.get("events", []):
+        if e.get("time"):
+            t = _hhmm_to_display(e["time"])
+            lines.append(f"At {t}: {_sentence(e['title'])}")
+            rows.append({"kind": "event", "time": t, "text": e["title"]})
+        else:
+            lines.append(f"Today: {_sentence(e['title'])}")
+            rows.append({"kind": "event", "time": None, "text": e["title"]})
     for r in extras.get("reminders", []):
         t = _hhmm_to_display(r["time"])
         lines.append(f"You have a reminder at {t}: {_sentence(r['message'])}")
@@ -221,7 +236,7 @@ def build_script(data: dict, now: datetime.datetime) -> list:
     line in the intro so BMO doesn't just skip it silently."""
     parts, missing = [], []
     if data.get("weather"):
-        parts.append(_weather_part(data["weather"]))
+        parts.append(_weather_part(data["weather"], warnings=data.get("warnings") or []))
     else:
         missing.append("BMO couldn't get the weather today.")
     if data.get("headlines"):

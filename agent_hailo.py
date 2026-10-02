@@ -42,6 +42,9 @@ from core.stt import transcribe_audio
 from core.endpoint import EndpointDetector
 from core.reminders import ReminderRegistry
 from core.volume import HardwareVolume, scaled_wav
+from core.camera import Camera, CameraError
+from core.presence import Presence
+from core.timer_chips import TimerChips
 from core.briefing.settings import load_briefing_settings, update_settings
 from core.briefing.scheduler import BriefingScheduler, prepare_briefing
 from core.briefing import ui as briefing_ui
@@ -219,6 +222,10 @@ class BotGUI:
         
         # Pending timers/reminders (reminders.json); re-armed after the UI is up.
         self.reminders = ReminderRegistry()
+        self.timer_chips = TimerChips(self.reminders)
+        # One owner for the camera: photos and (if enabled) presence detection.
+        self.camera = Camera()
+        self._arrival_nudged_on = None
 
         # Memory
         self.brain = Brain()
@@ -374,6 +381,14 @@ class BotGUI:
         # "Good morning" only plays a briefing that's waiting; Brain asks here.
         self.brain.briefing_ready = self.briefing_scheduler.is_ready_unplayed
         self.brain.reminders = self.reminders
+        try:
+            from core.home_assistant import from_settings as _ha_from_settings
+            from core.briefing.settings import read_settings as _read_settings
+            self.brain.home = _ha_from_settings(_read_settings().get("home_assistant") or {})
+            if self.brain.home is not None:
+                print("[HOME] Home Assistant control enabled")
+        except Exception as e:
+            print(f"[HOME] Home Assistant disabled: {e}")
 
         self.load_animations()
         self.load_sounds()
@@ -383,6 +398,8 @@ class BotGUI:
         threading.Thread(target=self.main_loop, daemon=True).start()
         self._rearm_reminders()
         threading.Thread(target=self._briefing_loop, daemon=True).start()
+        threading.Thread(target=self._presence_loop, daemon=True).start()
+        threading.Thread(target=self._alerts_loop, daemon=True).start()
 
         # Start Screensaver Audio Thread
         self.last_screensaver_audio_time = time.time()
@@ -1458,7 +1475,11 @@ class BotGUI:
             self.icon_overlay.hide(fade=True)
 
     def _draw_overlays(self, img, now):
-        """FaceView hook: the sun icon over BMO's face (and over the screensaver)."""
+        """FaceView hook: running timers and the sun icon over BMO's face (and
+        over the screensaver)."""
+        chips = getattr(self, "timer_chips", None)
+        if chips is not None:
+            chips.apply(img, now)
         return self.icon_overlay.apply(img, now)
 
     def _sync_icon_label(self):
@@ -1683,6 +1704,105 @@ class BotGUI:
                 if self.current_state == BotStates.HAPPY:
                     self.set_state(BotStates.IDLE, "Tap to speak")
             self.master.after(2000, _back_to_idle)
+
+    # --- PRESENCE (camera motion) ---
+    PRESENCE_FPS = 4
+
+    def _presence_settings(self):
+        from core.briefing.settings import read_settings
+        s = {"enabled": True, "greet": True, "away_minutes": 10}
+        s.update(read_settings().get("presence") or {})
+        return s
+
+    def _presence_loop(self):
+        """Watch for someone walking up (a few tiny frames a second, CPU only):
+        wake from the screensaver, and offer a waiting morning briefing."""
+        s = self._presence_settings()
+        if not s.get("enabled", True):
+            print("[PRESENCE] Off (settings.json presence.enabled)")
+            return
+        presence = Presence(away_s=float(s.get("away_minutes", 10)) * 60)
+        warned = False
+        while not self.stop_event.is_set():
+            if not self.camera.running and not self.camera.start():
+                if not warned:
+                    print("[PRESENCE] No camera; retrying every 10 minutes "
+                          "(python -m core.camera --check explains why)")
+                    warned = True
+                if self.stop_event.wait(600):
+                    return
+                continue
+            if warned:
+                print("[PRESENCE] Camera found; watching for arrivals")
+                warned = False
+            frame = self.camera.motion_frame()
+            if frame is not None and presence.feed(frame, time.time()):
+                self.master.after(0, self._on_arrival)
+            self.stop_event.wait(1.0 / self.PRESENCE_FPS)
+
+    def _on_arrival(self):
+        """Someone walked up after the room was still for a while (Tk thread)."""
+        print("[PRESENCE] Arrival")
+        if self.current_state == BotStates.SCREENSAVER and not self.is_busy:
+            self.set_state(BotStates.IDLE, "Hi friend!")
+        today = datetime.date.today()
+        if (self.briefing_scheduler.is_ready_unplayed() and self._arrival_nudged_on != today
+                and self._presence_settings().get("greet", True)):
+            self._arrival_nudged_on = today
+            self.icon_overlay.wiggle()
+            threading.Thread(target=self._say_when_idle, daemon=True,
+                             args=("Good morning! Your briefing is ready. Tap the sun, or say brief me!",
+                                   "Good morning!")).start()
+
+    def _say_when_idle(self, text, msg):
+        """Speak something unprompted, but only into a quiet room: never over
+        a conversation, the briefing or a game."""
+        if not self._try_claim_busy():
+            return
+        try:
+            if self.current_state in (BotStates.IDLE, BotStates.SCREENSAVER):
+                self.speak(text, msg=msg)
+                self.set_state(BotStates.IDLE, "Tap to speak")
+        finally:
+            self._release_busy()
+
+    # --- WEATHER WARNINGS ---
+    ALERT_POLL_S = 15 * 60
+
+    def _alerts_loop(self):
+        """Announce new Environment Canada warnings for BMO's town (not at night;
+        those are read in the morning briefing instead)."""
+        from core.weather_alerts import AlertWatcher, spoken
+        watcher = None
+        while not self.stop_event.wait(60 if watcher is None else self.ALERT_POLL_S):
+            s = self._briefing_settings()
+            if not s.get("alerts", True):
+                continue
+            if watcher is None:
+                fc = self._briefing_forecast_location(s["location"])
+                if fc is None:
+                    continue
+                watcher = AlertWatcher(fc["lat"], fc["lon"], s["location"].title())
+                watcher.poll()         # what's active at start-up isn't news
+                continue
+            hour = datetime.datetime.now().hour
+            if hour >= 22 or hour < 7:
+                continue
+            for alert in watcher.poll()[:2]:
+                print(f"[ALERTS] New: {alert['title']} ({alert.get('area')})")
+                if self.current_state == BotStates.DISPLAY_IMAGE:
+                    continue
+                self._wait_until_idle({BotStates.SPEAKING, BotStates.LISTENING, BotStates.THINKING,
+                                       BotStates.BRIEFING}, poll_s=2.0, timeout_s=600)
+                self._say_when_idle(spoken(alert, s["location"].title()), "Weather warning!")
+
+    def _briefing_forecast_location(self, location):
+        """lat/lon for the briefing's location, from the cached forecast or wttr.in."""
+        from core.briefing import sources
+        fc = sources.get_forecast(location)
+        if fc and fc.get("lat") is not None:
+            return fc
+        return None
 
     def _rearm_reminders(self):
         """Restart saved timers still in the future; drop ones missed while off."""
@@ -2411,21 +2531,13 @@ class BotGUI:
                     if taking_photo:
                         self.set_state(BotStates.CAPTURING, "Taking Photo...")
                         try:
-                            # Try libcamera-still (older) or rpicam-still (newer Pi OS)
-                            cam_cmd = None
-                            for candidate in ['libcamera-still', 'rpicam-still']:
-                                r = subprocess.run(['which', candidate], capture_output=True)
-                                if r.returncode == 0:
-                                    cam_cmd = candidate
-                                    break
-                            if cam_cmd is None:
-                                raise FileNotFoundError("No camera command found (libcamera-still / rpicam-still)")
-                            # Cap at 15 s — camera firmware can hang on USB glitches
-                            subprocess.run(
-                                [cam_cmd, '-o', 'temp.jpg', '--width', '640', '--height', '480',
-                                 '--nopreview', '-t', '2000', '--autofocus-mode', 'continuous'],
-                                check=True, timeout=15,
-                            )
+                            # The shared camera if presence detection holds it,
+                            # else rpicam-still; CameraError carries what to say.
+                            self.camera.photo('temp.jpg')
+                            # Looking takes ~1 minute: the LLM has to make room on
+                            # the NPU for the vision model (core/llm.py).
+                            self.speak("Ooh, let me take a good look! This takes me about a minute.",
+                                       msg="Looking...")
                             import base64
                             with open('temp.jpg', 'rb') as img_file:
                                 b64_string = base64.b64encode(img_file.read()).decode('utf-8')
@@ -2440,13 +2552,9 @@ class BotGUI:
                             except Exception:
                                 pass
                             self.speak(response)
-                        except FileNotFoundError as e:
+                        except CameraError as e:
                             print(f"Camera Error: {e}")
-                            self.speak("Hmm, BMO doesn't seem to have a camera connected right now. I can't take a photo!")
-
-                        except subprocess.TimeoutExpired:
-                            print("Camera Error: capture timed out after 15 s")
-                            self.speak("My camera took too long to respond. Let's try that again later!")
+                            self.speak(str(e))
 
                         except Exception as e:
                             print(f"Camera Error: {e}")
