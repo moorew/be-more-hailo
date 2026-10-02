@@ -332,10 +332,10 @@ fi
 echo -e "${YELLOW}[13/14] Morning briefing setup...${NC}"
 # Answers come from /dev/tty so this still asks when piped in via `curl ... | bash`.
 if [ -t 1 ] && { : < /dev/tty; } 2>/dev/null; then
-    python -m core.briefing --setup < /dev/tty || echo -e "${RED}  Briefing setup failed; run 'python -m core.briefing --setup' later.${NC}"
+    python -m core.briefing --setup < /dev/tty || echo -e "${RED}  Briefing setup failed; run './setup_briefing.sh' later.${NC}"
 else
     echo -e "${YELLOW}  Not running interactively; keeping the defaults (Brantford, CBC, Brantford Expositor, Techmeme).${NC}"
-    echo -e "${YELLOW}  Change them later with: source venv/bin/activate && python -m core.briefing --setup${NC}"
+    echo -e "${YELLOW}  Change them later with: ./setup_briefing.sh${NC}"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────

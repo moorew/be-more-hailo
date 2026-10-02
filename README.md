@@ -325,7 +325,7 @@ export ALSA_DEVICE="plughw:2,0"
 The morning briefing reads the weather, a few headlines and your day: reminders, repeating things like bin day, countdowns, holidays, sunrise and sunset, how fast the days are changing, a high UV warning and the full moon. No calendar account is needed. `install.sh` asks for your weather location, up to three news feeds (pick from a list or paste any RSS URL; each is checked before it's saved), the morning window and any repeating items. Change them any time with:
 
 ```bash
-source venv/bin/activate && python -m core.briefing --setup
+~/be-more-agent/setup_briefing.sh
 ```
 
 The setup can also add the optional extras: a calendar, Home Assistant and the camera. Those are stored in `settings.json` too:

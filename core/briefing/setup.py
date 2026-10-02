@@ -1,6 +1,6 @@
 """Interactive morning-briefing setup: weather location, news feeds, window.
 
-    python -m core.briefing --setup        # install.sh runs this too
+    ./setup_briefing.sh                    # or: venv/bin/python -m core.briefing --setup
 
 Every answer is checked live (the location against wttr.in, each feed by
 fetching and parsing it) before it's saved, and only the keys asked about
@@ -305,5 +305,5 @@ def run_setup(path: str = SETTINGS_PATH, ask=input, say=print, fetch=fetch_j1,
         presence["enabled"] = _yes(ask("Let BMO use the camera to notice when someone walks in? [Y/n]: "))
         updates["presence"] = presence
     update_settings(updates, path=path)
-    say(f"\nSaved to {path}. Change it any time with: python -m core.briefing --setup")
+    say(f"\nSaved to {path}. Change it any time with: ~/be-more-agent/setup_briefing.sh")
     return block
