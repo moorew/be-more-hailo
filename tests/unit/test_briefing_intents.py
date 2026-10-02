@@ -76,3 +76,26 @@ def test_alarm_and_bare_reminder_confirmations():
     assert b._reminder_reply("Set an alarm for 6am")[0].startswith("Okay friend! I set an alarm for ")
     assert b._reminder_reply("Set an alarm for 6am")[0].endswith("at 6 a.m.")
     assert b._reminder_reply("Set a reminder for Monday at 10am")[0].endswith(" at 10 a.m.")
+
+
+def test_vlm_waits_for_the_npu(monkeypatch):
+    """hailo-ollama takes ~5 s to let go of the NPU after keep_alive 0."""
+    from core import llm
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise RuntimeError("HAILO_OUT_OF_PHYSICAL_DEVICES")
+        return "vlm", (1, 1, 3), "uint8"
+    monkeypatch.setattr(llm, "_get_vlm", flaky)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    assert llm._get_vlm_when_free(wait_s=30)[0] == "vlm" and len(calls) == 3
+
+    def never():
+        raise RuntimeError("HAILO_OUT_OF_PHYSICAL_DEVICES")
+    monkeypatch.setattr(llm, "_get_vlm", never)
+    clock = iter(range(0, 1000, 5))
+    monkeypatch.setattr(llm.time, "monotonic", lambda: next(clock))
+    with pytest.raises(RuntimeError):
+        llm._get_vlm_when_free(wait_s=20)

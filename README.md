@@ -66,9 +66,13 @@ The web interface includes:
 
 BMO includes several dynamic, interactive capabilities beyond basic conversation:
 
-- **Timers & Alarms:** Ask BMO to *"Set a timer for 10 minutes"* or *"Remind me to check the oven"*. BMO will happily interrupt you later when the time is up!
-- **Minigames:** BMO is a living game console. Say *"Let's play Trivia"* or *"Let's play a guessing game"* — BMO will act as the host, wait for your answers, and keep score.
-- **Vision Analysis:** Hold an object up to the camera and say *"What am I holding?"* or *"Does this look good?"*. BMO will snap a photo, analyze it using the local VLM, and give you its opinion.
+- **Instant answers:** time, date, *"how many days until Christmas?"*, maths (*"what's 15% of 80?"*) and unit conversions (*"how many ml in a cup?"*) are answered straight away, without the LLM, so they're instant and always right.
+- **Timers & Alarms:** *"Set a pasta timer for 10 minutes"*, *"Remind me tomorrow at 9 to put the bins out"*, *"Set an alarm for 6:30am"*. Running timers show as countdown chips on BMO's screen. Ask *"What reminders do I have?"*, *"How long left on the pasta timer?"* or *"Cancel the pasta timer"*. Timers and reminders survive a restart.
+- **Touch games:** *"Let's play a game"*, *"Play BMO says"* (Simon, on BMO's own buttons) or *"Play memory"* (Memory Match). Tap the ✕ to leave. Talking games like *"Let's play trivia"* or *"a guessing game"* are still hosted by the LLM.
+- **Notices you:** with a camera, BMO wakes from the screensaver when someone walks up after the room has been still for 10 minutes, and offers the morning briefing if it's waiting. It looks for movement only: a few tiny frames a second, on the CPU, nothing saved.
+- **Weather warnings:** new Environment Canada warnings for BMO's town are announced (07:00–22:00) and read at the start of the morning briefing.
+- **Smart home (optional):** with Home Assistant on your network, *"Turn off the kitchen lights"*, *"Set the lamp to 40%"*, *"Is the front door locked?"*. Locks and garage doors are only touched on an exact name.
+- **Vision Analysis:** Hold an object up to the camera and say *"What am I holding?"* or *"Does this look good?"*. BMO will snap a photo, analyze it using the local VLM, and give you its opinion. It takes about a minute: the LLM steps off the NPU so the vision model can run, then comes back in the background.
 - **Musical Talent:** Ask BMO to *"Play some music"* or *"Sing a song"*, and BMO will cycle into a dancing `Jamming` face while playing chiptunes (add your own `.wav` files to `sounds/music/`).
 - **Idle Pet Animations:** When left alone in Screensaver mode, BMO will periodically (and silently) show affection by flashing pixelated hearts, getting dizzy, or falling asleep to keep your desk feeling alive.
 
@@ -161,6 +165,13 @@ be-more-agent/
 │   ├── stt.py              # Speech-to-text via whisper.cpp
 │   ├── reminders.py        # Pending timers/reminders (reminders.json), re-armed after a reboot
 │   ├── volume.py           # One volume control: the slider drives the speaker's mixer
+│   ├── quick_answers.py    # Time, date, maths and units without the LLM
+│   ├── camera.py           # One camera owner (photos + motion); `python -m core.camera --check`
+│   ├── presence.py         # Motion detection: notice someone walking up
+│   ├── timer_chips.py      # Running timers drawn as countdown chips
+│   ├── weather_alerts.py   # Environment Canada warnings (MSC GeoMet API)
+│   ├── home_assistant.py   # Optional local smart-home control
+│   ├── games/              # Touch games: BMO Says, Memory Match
 │   └── briefing/           # Morning briefing: settings, sources, script, audio, schedule, cards
 ├── fonts/                  # Card fonts (Baloo 2, Atkinson Hyperlegible; OFL)
 ├── templates/              # Jinja2 HTML templates for the web UI
@@ -317,7 +328,16 @@ The morning briefing reads the weather, a few headlines and your day: reminders,
 source venv/bin/activate && python -m core.briefing --setup
 ```
 
-Everything lives under a `briefing` key in `settings.json`, next to the `volume` BMO saves itself, and can also be edited by hand. Every key is optional; missing ones use these defaults (`core/briefing/settings.py`):
+The setup can also add the optional extras: a calendar, Home Assistant and the camera. Those are stored in `settings.json` too:
+
+```json
+{
+  "home_assistant": {"url": "http://homeassistant.local:8123", "token": "<long-lived access token>"},
+  "presence": {"enabled": true, "greet": true, "away_minutes": 10}
+}
+```
+
+Everything for the briefing lives under a `briefing` key in `settings.json`, next to the `volume` BMO saves itself, and can also be edited by hand. Every key is optional; missing ones use these defaults (`core/briefing/settings.py`):
 
 ```json
 {
@@ -367,6 +387,8 @@ Everything lives under a `briefing` key in `settings.json`, next to the `volume`
 | `news.feeds` | Up to 3 RSS/Atom feeds, as URLs or `{"url": ..., "name": "CBC News"}` (the name is what BMO says: "From CBC News: ..."). Read round-robin, newest first; items over 36 hours old are skipped. Long headlines are cut at a clause, and credits like "(Name/Outlet)" are dropped |
 | `news.count` | Headlines read aloud (3–5) |
 | `news.region`, `news.query` | DuckDuckGo news search used when the feeds give fewer than three headlines |
+| `alerts` | Lead the weather with active Environment Canada warnings (and announce new ones) |
+| `extras.calendar_url` | A calendar's *secret iCal address* (e.g. Google Calendar → Settings → your calendar → Integrate calendar). Today's events are read in "Your day". No sign-in; keep the address private |
 | `extras.reminders` | Read timers and reminders due later today |
 | `extras.recurring` | Repeating items, read on the day: `{"name": "Garbage day", "days": ["tue"], "every_weeks": 2, "start": "2026-10-06", "heads_up": true}` (every other Tuesday, also mentioned the day before), `{"name": "Piano", "days": ["wed", "sat"], "time": "16:00"}`, `{"name": "Rent", "day_of_month": 1}` |
 | `extras.holidays`, `extras.province` | Canadian holidays and a few favourites (Halloween, Mother's Day...), worked out offline; mentioned on the day and up to 3 days before. The province names the February and August long weekends |
@@ -383,6 +405,8 @@ Each morning a sun icon appears in the top-right corner (with a short chime) onc
 Ask for it any time of day: "morning briefing", "show me my briefing", "brief me", "what's my day look like?". If the cached one is more than 3 hours old (or there isn't one yet) BMO fetches a fresh one first, which takes about 20 seconds. "Good morning" on its own only plays a briefing that's waiting; otherwise BMO just says good morning back.
 
 Reminders for a time or a day go straight into "Your day": "remind me tomorrow at 9 to put the bins out", "remind me on Friday to call the dentist", "set an alarm for 6:30am". They're kept in `reminders.json`, so they survive a restart.
+
+The web UI has a ☀️ **Briefing** button that plays the same briefing in the browser, cards and all.
 
 To try the screen without waiting for the morning, start BMO with `python3 agent_hailo.py --briefing-now`: it renders a fresh briefing straight away and shows the icon about 20 seconds later.
 
@@ -495,6 +519,13 @@ This all runs locally — search results go through DuckDuckGo and the LLM proce
 ---
 
 ## Troubleshooting
+
+**The camera doesn't work ("BMO can't find my camera")**
+
+```bash
+source venv/bin/activate && python -m core.camera --check
+```
+This says what's wrong in plain words. For example, if the driver loaded but the sensor didn't answer (`failed to read chip id ... error -5` in `dmesg`), the camera isn't electrically connected. Power the Pi off and reseat the ribbon cable, the right way round at both ends. A Pi 5 needs the smaller 22-pin cable at the Pi end. An Arducam 16MP (IMX519) also needs `dtoverlay=imx519,cam0` in `/boot/firmware/config.txt`; official Raspberry Pi cameras are auto-detected.
 
 **LLM shows as offline / can't connect to port 8000**
 

@@ -63,6 +63,10 @@ async def startup_cleanup():
     _cleanup_old_audio()
 
 # Mount static files (for CSS, JS, images, and audio)
+# Morning briefing: today's cached script, audio and cards (core/briefing/web.py)
+from core.briefing.web import mounted as _mount_briefing
+_mount_briefing(app)
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/faces", StaticFiles(directory="faces"), name="faces")
 app.mount("/sounds", StaticFiles(directory="sounds"), name="sounds")

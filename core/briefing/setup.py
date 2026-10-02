@@ -205,8 +205,59 @@ def _ask_recurring(current, ask, say, today):
     return items
 
 
+def _ask_calendar(current, ask, say, fetch_feed):
+    """A calendar's secret iCal address (no sign-in), checked before saving."""
+    if current:
+        say("Calendar: set.")
+        if _yes(ask("Keep it? [Y/n]: ")):
+            return current
+    say("Calendar (optional): paste its secret iCal address. In Google Calendar: Settings ->")
+    say("your calendar -> Integrate calendar -> 'Secret address in iCal format'.")
+    while True:
+        url = ask("Calendar address (Enter to skip): ").strip()
+        if not url:
+            return ""
+        try:
+            body = fetch_feed(url)
+            if b"BEGIN:VCALENDAR" not in body[:2000]:
+                raise ValueError("that address didn't return a calendar")
+            say(f"  ok: calendar found ({body.count(b'BEGIN:VEVENT')} events).")
+            return url
+        except Exception as e:
+            say(f"  Couldn't read it ({str(e)[:80]}).")
+
+
+def _ask_home_assistant(current, ask, say, ha_factory):
+    """Home Assistant on the local network: address + long-lived token."""
+    if current.get("url") and current.get("token"):
+        say(f"Home Assistant: {current['url']}")
+        if _yes(ask("Keep it? [Y/n]: ")):
+            return current
+    url = ask("Home Assistant address, e.g. http://homeassistant.local:8123 (Enter to skip): ").strip().rstrip("/")
+    if not url:
+        return {}
+    say("  Make a token in Home Assistant: your profile -> Security -> Long-lived access tokens.")
+    while True:
+        token = ask("  Long-lived access token (Enter to skip): ").strip()
+        if not token:
+            return {}
+        try:
+            n = len(ha_factory(url, token).entities(refresh=True))
+            say(f"  ok: BMO can see {n} lights, switches and other devices.")
+            return {"url": url, "token": token}
+        except Exception as e:
+            say(f"  Couldn't connect ({str(e)[:80]}).")
+            if not _yes(ask("  Try another token? [Y/n]: ")):
+                return {}
+
+
+def _default_ha(url, token):
+    from core.home_assistant import HomeAssistant
+    return HomeAssistant(url, token)      # entities() raises with BMO's reason on 401 / no answer
+
+
 def run_setup(path: str = SETTINGS_PATH, ask=input, say=print, fetch=fetch_j1,
-              fetch_feed=sources._fetch_feed, clock=time.time) -> dict:
+              fetch_feed=sources._fetch_feed, clock=time.time, ha_factory=None) -> dict:
     """Ask, check, and save.  Returns the briefing block as written."""
     current = load_briefing_settings(path)
     say("\nBMO's morning briefing: weather, headlines and your day, each morning.")
@@ -236,6 +287,23 @@ def run_setup(path: str = SETTINGS_PATH, ask=input, say=print, fetch=fetch_j1,
         block["news"] = {**(block.get("news") if isinstance(block.get("news"), dict) else {}), "feeds": feeds}
         block["extras"] = {**(block.get("extras") if isinstance(block.get("extras"), dict) else {}),
                            "recurring": recurring}
-    update_settings({"briefing": block}, path=path)
+    updates = {"briefing": block}
+
+    say("")
+    if _yes(ask("Set up the optional extras: calendar, smart home, camera? [y/N]: "), default=False):
+        say("")
+        extras = block.get("extras") if isinstance(block.get("extras"), dict) else {}
+        url = _ask_calendar(extras.get("calendar_url") or current["extras"].get("calendar_url", ""),
+                            ask, say, fetch_feed)
+        block["extras"] = {**extras, "calendar_url": url}
+        say("")
+        saved = read_settings(path)
+        updates["home_assistant"] = _ask_home_assistant(saved.get("home_assistant") or {}, ask, say,
+                                                        ha_factory or _default_ha)
+        say("")
+        presence = dict(saved.get("presence") or {})
+        presence["enabled"] = _yes(ask("Let BMO use the camera to notice when someone walks in? [Y/n]: "))
+        updates["presence"] = presence
+    update_settings(updates, path=path)
     say(f"\nSaved to {path}. Change it any time with: python -m core.briefing --setup")
     return block

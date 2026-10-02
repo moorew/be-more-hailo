@@ -15,6 +15,7 @@ from .timers import (describe_duration, describe_when, match_reminders, parse_re
                      parse_reminder_request, parse_timer_request)
 from .briefing import intents as briefing_intents
 from . import quick_answers
+from .games import voice as game_voice
 
 logger = logging.getLogger(__name__)
 
@@ -677,6 +678,16 @@ class Brain:
         return None
 
     @staticmethod
+    def _game_action(user_text: str):
+        """(lead-in, action) for "let's play a game" / "play BMO says", else None."""
+        key = game_voice.match(user_text)
+        if key is None:
+            return None
+        from .games import GAMES
+        print(f"[LLM] Game MATCHED: {key}")
+        return f"Yay! Let's play {GAMES[key].name}!", json.dumps({"action": "play_game", "game": key})
+
+    @staticmethod
     def _reminder_reply(user_text: str):
         """(spoken, action) for "remind me tomorrow at 9 to ..." or None."""
         r = parse_reminder_request(user_text)
@@ -769,6 +780,12 @@ class Brain:
         if briefing:
             self.history.append({"role": "assistant", "content": briefing})
             return briefing
+
+        game = self._game_action(user_text)
+        if game:
+            combined = " ".join(game)
+            self.history.append({"role": "assistant", "content": combined})
+            return combined
 
         # Pre-LLM camera check — same logic as stream_think
         camera_keywords = [
@@ -1020,6 +1037,13 @@ class Brain:
         if briefing:
             self.history.append({"role": "assistant", "content": briefing})
             yield briefing
+            return
+
+        game = self._game_action(user_text)
+        if game:
+            yield game[0]
+            self.history.append({"role": "assistant", "content": " ".join(game)})
+            yield game[1]
             return
 
         # Pre-LLM camera check: if user asks to take a photo / look at something,

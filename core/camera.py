@@ -129,7 +129,7 @@ def _rpicam_still(path: str) -> str:
                             "--nopreview", "-t", "2000", "--autofocus-mode", "continuous"],
                            capture_output=True, text=True, timeout=15)
     except subprocess.TimeoutExpired:
-        raise CameraError("My camera took too long to respond. Let's try that again later!")
+        raise CameraError("My camera took too long to respond. Let's try that again later!") from None
     if r.returncode != 0 or not os.path.exists(path):
         logger.warning(f"Camera: {os.path.basename(cmd)} failed: {(r.stderr or '').strip()[-300:]}")
         if "No cameras available" in (r.stderr or "") or not cameras():

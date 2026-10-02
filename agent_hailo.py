@@ -116,6 +116,7 @@ class BotStates:
     LADYBUG = "ladybug"
     WORM = "worm"
     BRIEFING = "briefing"  # morning briefing playing: small face + cards
+    GAME = "game"          # a touch game has the whole screen (core/games)
 
 # --briefing-now: (start, end) "HH:MM" window opened at start-up for testing.
 BRIEFING_NOW_WINDOW = None
@@ -226,6 +227,9 @@ class BotGUI:
         # One owner for the camera: photos and (if enabled) presence detection.
         self.camera = Camera()
         self._arrival_nudged_on = None
+        self.game = None
+        self._game_sound = None
+        self._game_last_tap = 0.0
 
         # Memory
         self.brain = Brain()
@@ -520,6 +524,17 @@ class BotGUI:
     def handle_click(self, event):
         """Map screen clicks to hot corners, mouth-tap mute, or tap-to-speak."""
         now = time.time()
+
+        # A game owns every tap (fast taps would otherwise trip the triple-tap
+        # exit); it has its own X button to leave.
+        game = getattr(self, "game", None)
+        if self.current_state == BotStates.GAME and game is not None:
+            w = self.master.winfo_width() or self.BG_WIDTH
+            h = self.master.winfo_height() or self.BG_HEIGHT
+            game.tap(int(event.x * self.BG_WIDTH / w), int(event.y * self.BG_HEIGHT / h), now)
+            self.last_user_interaction = now
+            self._game_last_tap = now
+            return
 
         # Triple-tap anywhere within 0.8 s → clean exit (useful without keyboard)
         self._triple_tap_times.append(now)
@@ -1103,12 +1118,35 @@ class BotGUI:
                 self.screensaver_expr_until = now + self.screensaver_expr_dur
             display_state = self.screensaver_expr
 
-        # Hide text status label during screensaver and the briefing (cards say it all)
-        if self.current_state in (BotStates.SCREENSAVER, BotStates.BRIEFING):
+        # Hide text status label during screensaver, the briefing and games
+        if self.current_state in (BotStates.SCREENSAVER, BotStates.BRIEFING, BotStates.GAME):
             if self.status_label.winfo_ismapped(): self.status_label.place_forget()
         else:
             if not self.status_label.winfo_ismapped():
                 self.status_label.place(relx=0.5, rely=STATUS_RELY, anchor=tk.S)
+
+        # A game draws the whole screen itself.
+        game = getattr(self, "game", None)
+        if display_state == BotStates.GAME and game is not None:
+            frame = game.frame(now)
+            for name in game.sounds():
+                if self._game_sound is not None:
+                    self._game_sound.play(name)
+            if self.face_view is not None:
+                self.face_view.photo.paste(frame)
+                photo = self.face_view.photo
+            else:
+                if self._briefing_photo is None:
+                    self._briefing_photo = ImageTk.PhotoImage(frame)
+                else:
+                    self._briefing_photo.paste(frame)
+                photo = self._briefing_photo
+            if self.background_label.cget("image") != str(photo):
+                self.background_label.config(image=photo)
+            self._rig_state = None            # re-set the face when the game ends
+            self._last_render_key = None
+            self.master.after(33, self.update_animation)
+            return
 
         # Live face rig for the states it covers; everything else stays on PNGs.
         if self.face_view is not None and display_state in RIG_EXPRESSIONS:
@@ -1698,6 +1736,50 @@ class BotGUI:
             if ms:
                 print(f"[BRIEFING] {len(ms)} frames: median {ms[len(ms) // 2]:.1f} ms, "
                       f"p95 {ms[int(len(ms) * 0.95)]:.1f} ms, max {ms[-1]:.1f} ms")
+            self._release_busy()
+
+            def _back_to_idle():
+                if self.current_state == BotStates.HAPPY:
+                    self.set_state(BotStates.IDLE, "Tap to speak")
+            self.master.after(2000, _back_to_idle)
+
+    # --- GAMES ---
+    GAME_IDLE_S = 180      # nobody tapped for 3 minutes: back to BMO
+
+    def _play_game(self, key):
+        """Like play_music: wait for the turn to end, take the busy lock, then
+        hand the screen to the game until its X / Done (or 3 idle minutes)."""
+        from core.games import GAMES
+        from core.games.sound import GameSound
+        if key not in GAMES:
+            return
+        if not self._wait_until_idle({BotStates.SPEAKING, BotStates.THINKING}):
+            return
+        if not self._busy_lock.acquire(timeout=5.0):
+            print("[GAME] Busy; not starting")
+            return
+        self.is_busy = True
+        sound = None
+        try:
+            sound = None if self.is_muted else GameSound(ALSA_DEVICE, self._software_gain()).start()
+            self._game_sound = sound
+            self._game_last_tap = time.time()
+            self.game = GAMES[key](now=time.time())
+            print(f"[GAME] {self.game.name}")
+            self.set_state(BotStates.GAME, self.game.name)
+            while not self.game.finished and not self.stop_event.is_set():
+                now = time.time()
+                self.last_user_interaction = now          # the busy watchdog: a game is busy
+                if now - self._game_last_tap > self.GAME_IDLE_S:
+                    print("[GAME] No taps for 3 minutes; leaving")
+                    break
+                self.stop_event.wait(0.1)
+        finally:
+            self.game = None
+            self._game_sound = None
+            if sound is not None:
+                sound.stop()
+            self.set_state(BotStates.HAPPY, "That was fun!")
             self._release_busy()
 
             def _back_to_idle():
@@ -2388,6 +2470,9 @@ class BotGUI:
                         if self.current_state == BotStates.JAMMING:
                             self.set_state(BotStates.IDLE, "Tap to speak")
                 threading.Thread(target=music_worker, daemon=True).start()
+                chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
+            elif action_data.get("action") == "play_game":
+                threading.Thread(target=self._play_game, args=(action_data.get("game"),), daemon=True).start()
                 chunk = (chunk[:span[0]] + chunk[span[1]:]).strip()
             elif action_data.get("action") == "play_briefing":
                 threading.Thread(target=self._briefing_on_request, daemon=True).start()

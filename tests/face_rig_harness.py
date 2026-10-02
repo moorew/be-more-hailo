@@ -216,7 +216,7 @@ log.append(f"Piper stream: {n} chunks scheduled, talked {len(talk)} frames in mo
 gui.set_state(S.IDLE, "Tap to speak")
 assert run(0.5)[-1][0] == "idle"
 # Every state is drawn by the rig; the PNG frames aren't preloaded.
-all_states = {v for k, v in vars(S).items() if not k.startswith("_")} - {S.DISPLAY_IMAGE, S.SCREENSAVER}
+all_states = {v for k, v in vars(S).items() if not k.startswith("_")} - {S.DISPLAY_IMAGE, S.SCREENSAVER, S.GAME}
 missing = all_states - set(mod.RIG_EXPRESSIONS)
 assert not missing, f"states without a rig face: {missing}"
 for state, expr in mod.RIG_EXPRESSIONS.items():
@@ -648,6 +648,98 @@ _s = gui._briefing_settings()
 assert _s["window"] == ["12:00", "13:00"] and _s["prepare_minutes_before"] == 0 and len(_s["days"]) == 7
 mod.BRIEFING_NOW_WINDOW = None
 log.append("briefing --now: settings open a window from start-up")
+
+# --- Games: the screen, every tap, and sounds belong to the game ---------------
+
+
+class FakeSound:
+    played = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    def start(self):
+        return self
+
+    def play(self, name):
+        FakeSound.played.append(name)
+
+    def stop(self):
+        FakeSound.played.append("stopped")
+
+
+import core.games.sound as game_sound_mod  # noqa: E402
+_real_gs = game_sound_mod.GameSound
+game_sound_mod.GameSound = FakeSound
+gui.current_state = S.IDLE
+gui.is_muted = False
+gui.game, gui._game_sound, gui._game_last_tap = None, None, clock["t"]
+gui.stop_event = threading.Event()       # an earlier check left it set (shutdown)
+t = threading.Thread(target=gui._play_game, args=("memory",), daemon=True)
+t.start()
+drive(lambda: gui.current_state == S.GAME, max_s=2)
+assert gui.current_state == S.GAME and gui.is_busy and gui.game.name == "Memory Match"
+pastes = gui.face_view.photo.pastes
+for _ in range(4):                       # four quick taps on a card: no triple-tap exit
+    tap(120, 200)
+drive(lambda: False, max_s=0.5)
+assert gui.face_view.photo.pastes > pastes and gui.current_state == S.GAME
+assert "flip" in FakeSound.played, FakeSound.played
+tap(760, 40)                              # the X
+drive(lambda: not t.is_alive(), max_s=3)
+wait_thread(t)
+assert gui.current_state == S.HAPPY and not gui.is_busy and gui.game is None
+assert FakeSound.played[-1] == "stopped"
+game_sound_mod.GameSound = _real_gs
+gui.current_state = S.IDLE
+log.append("games: taps go to the game (no triple-tap exit), sounds play, X leaves and frees BMO")
+
+# --- Presence: an arrival wakes BMO and offers a waiting briefing once a day ----
+said_arrival = []
+gui._say_when_idle = lambda text, msg: said_arrival.append(text)
+gui._arrival_nudged_on = None
+gui._presence_settings = lambda: {"greet": True}
+
+
+class ReadyScheduler(FakeScheduler):
+    def is_ready_unplayed(self):
+        return True
+
+
+gui.briefing_scheduler = ReadyScheduler()
+gui.current_state = S.SCREENSAVER
+_thread_cls = mod.threading.Thread
+
+
+class InlineThread:
+    def __init__(self, target, args=(), daemon=None):
+        self.target, self.args = target, args
+
+    def start(self):
+        self.target(*self.args)
+
+
+mod.threading.Thread = InlineThread
+try:
+    gui._on_arrival()
+    gui._on_arrival()                     # same day: no second nudge
+finally:
+    mod.threading.Thread = _thread_cls
+assert gui.current_state == S.IDLE
+assert len(said_arrival) == 1 and said_arrival[0].startswith("Good morning! Your briefing is ready")
+del gui._say_when_idle, gui._presence_settings
+log.append("presence: an arrival wakes BMO from the screensaver and offers the briefing once")
+
+# --- Timer chips are drawn over the face ---------------------------------------
+from core.timer_chips import TimerChips  # noqa: E402
+gui.reminders = ReminderRegistry(os.path.join(BRIEF_DIR, "chips.json"), clock=lambda: clock["t"])
+gui.timer_chips = TimerChips(gui.reminders, clock=lambda: clock["t"])
+gui.reminders.add(clock["t"] + 300, "The pasta timer is done!", name="pasta")
+from PIL import Image as _Image  # noqa: E402
+blank = _Image.new("RGB", (800, 480), "#C9E4C3")
+drawn = gui._draw_overlays(blank.copy(), clock["t"])
+assert drawn.getpixel((40, 30)) != blank.getpixel((40, 30)), "no timer chip drawn"
+log.append("timers: running timers show as chips over the face")
 
 mod.subprocess.Popen = real_popen
 del gui.briefing_scheduler

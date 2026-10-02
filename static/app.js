@@ -302,4 +302,54 @@ function init() {
     resetScreensaverTimer();
 }
 
+// Morning briefing: the same WAVs and cards BMO uses (/api/briefing). Cards
+// show over the face; the face lip-syncs to each part; tap the card to skip.
+let briefingRun = 0;
+async function playBriefing() {
+    const run = ++briefingRun;
+    let data;
+    try {
+        const r = await fetch('/api/briefing');
+        data = await r.json();
+        if (!r.ok) { addMessage(data.detail || "BMO doesn't have a briefing yet.", 'system'); return; }
+    } catch (err) {
+        addMessage("Couldn't reach BMO for the briefing.", 'system');
+        return;
+    }
+    if (currentAudio) currentAudio.pause();
+    for (const part of data.parts) {
+        if (run !== briefingRun) return;
+        if (part.card) {
+            bmoDisplayImage.src = part.card;
+            bmoDisplayImage.style.display = 'block';
+        }
+        addMessage(part.text, 'bmo');
+        await new Promise((resolve) => {
+            const audio = new Audio(part.audio);
+            currentAudio = audio;
+            setupVisualizer(audio);
+            setFaceState('speaking');
+            let shown = null;
+            audio.ontimeupdate = () => {
+                const due = part.marks.filter((m) => m.at <= audio.currentTime);
+                const mark = due.length ? due[due.length - 1].mark : null;
+                if (mark !== null && mark !== shown && part.card) {
+                    shown = mark;
+                    bmoDisplayImage.src = part.card + '&highlight=' + mark;
+                }
+            };
+            const done = () => { bmoDisplayImage.onclick = null; resolve(); };
+            audio.onended = done;
+            audio.onerror = done;
+            bmoDisplayImage.onclick = () => { audio.pause(); done(); };   // tap the card: skip
+            audio.play().catch(done);
+        });
+    }
+    if (run === briefingRun) {
+        bmoDisplayImage.style.display = 'none';
+        setFaceState('happy');
+        setTimeout(() => setFaceState('idle'), 2000);
+    }
+}
+
 window.addEventListener('DOMContentLoaded', init);

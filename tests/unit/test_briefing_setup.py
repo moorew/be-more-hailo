@@ -44,6 +44,7 @@ def test_choose_location_and_three_feeds(tmp_path):
         "7",                                   # third feed: Techmeme preset
         "06:30", "",                           # window start, keep end
         "",                                    # no repeating items
+        "",                                    # no optional extras
     ], existing={"volume": 0.4, "briefing": {"chime": False, "news": {"count": 5}}})
     assert saved["volume"] == 0.4                                   # other settings kept
     assert saved["briefing"]["chime"] is False and saved["briefing"]["news"]["count"] == 5
@@ -59,7 +60,7 @@ def test_choose_location_and_three_feeds(tmp_path):
 
 
 def test_enter_everywhere_keeps_the_defaults(tmp_path):
-    _, saved, _ = run(tmp_path, ["", "", "", "", "", ""])
+    _, saved, _ = run(tmp_path, ["", "", "", "", "", "", ""])
     assert saved["briefing"]["location"] == "Brantford"
     assert [f["name"] for f in saved["briefing"]["news"]["feeds"]] == [
         "CBC News", "the Brantford Expositor", "Techmeme"]
@@ -77,6 +78,7 @@ def test_bad_answers_are_asked_again(tmp_path):
         "",                                     # finish with one feed
         "7am", "07:00", "06:00", "12:00",       # bad time; end before start
         "",                                     # no repeating items
+        "",                                     # no optional extras
     ])
     assert saved["briefing"]["location"] == "Paris"
     assert [f["url"] for f in saved["briefing"]["news"]["feeds"]] == [PRESETS[1][1]]
@@ -86,7 +88,7 @@ def test_bad_answers_are_asked_again(tmp_path):
 
 
 def test_turning_it_off_only_saves_enabled(tmp_path):
-    _, saved, _ = run(tmp_path, ["n"], existing={"volume": 0.4})
+    _, saved, _ = run(tmp_path, ["n", ""], existing={"volume": 0.4})
     assert saved == {"volume": 0.4, "briefing": {"enabled": False}}
 
 
@@ -98,6 +100,7 @@ def test_repeating_items(tmp_path):
         "Rent", "1", "",  "",                  # day of month, no time, no heads-up
         "Piano", "wed,sat", "1", "4pm", "16:00", "",
         "",                                    # finish
+        "",                                    # no optional extras
     ], existing={"briefing": {"extras": {"sun": False}}})
     extras = saved["briefing"]["extras"]
     assert extras["sun"] is False                                        # other extras kept
@@ -108,6 +111,45 @@ def test_repeating_items(tmp_path):
     assert "ok: Garbage day (every other Tue)" in said and "ok: Rent (the 1st of each month)" in said
     assert "Please use 24-hour HH:MM" in said
     # Running it again offers to keep them.
-    _, saved2, said2 = run(tmp_path, ["", "", "", "", "", ""], existing=saved)
+    _, saved2, said2 = run(tmp_path, ["", "", "", "", "", "", ""], existing=saved)
     assert saved2["briefing"]["extras"]["recurring"] == extras["recurring"]
     assert "Repeating items: Garbage day (every other Tue)" in said2
+
+
+def test_optional_extras_calendar_home_assistant_and_camera(tmp_path):
+    path = tmp_path / "settings.json"
+    said = []
+
+    def fetch(url):
+        if "broken" in url:
+            raise ConnectionError("offline")
+        if "notacal" in url:
+            return b"<html>sign in</html>"
+        return b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nEND:VEVENT\nEND:VCALENDAR"
+
+    class FakeHA:
+        def __init__(self, url, token):
+            self.token = token
+
+        def entities(self, refresh=False):
+            if self.token != "good":
+                raise RuntimeError("Home Assistant didn't accept BMO's token.")
+            return [{"entity_id": "light.kitchen"}, {"entity_id": "switch.fan"}]
+
+    answers = iter(["", "", "", "", "", "",                 # enabled .. no repeating items
+                    "y",                                    # optional extras
+                    "https://broken.example/cal.ics", "https://notacal.example/x",
+                    "https://cal.example/secret.ics",
+                    "http://homeassistant.local:8123/", "bad", "y", "good",
+                    "n"])                                   # no camera presence
+    run_setup(str(path), ask=lambda p: next(answers), say=said.append, fetch=j1_for,
+              fetch_feed=lambda url: fetch(url) if "cal" in url or "notacal" in url else RSS,
+              clock=lambda: NOW_TS, ha_factory=FakeHA)
+    saved = json.loads(path.read_text())
+    assert saved["briefing"]["extras"]["calendar_url"] == "https://cal.example/secret.ics"
+    assert saved["home_assistant"] == {"url": "http://homeassistant.local:8123", "token": "good"}
+    assert saved["presence"] == {"enabled": False}
+    text = "\n".join(said)
+    assert "Couldn't read it" in text and "calendar found (1 events)" in text
+    assert "Couldn't connect (Home Assistant didn't accept BMO's token.)" in text
+    assert "BMO can see 2 lights" in text
