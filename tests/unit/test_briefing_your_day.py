@@ -184,3 +184,10 @@ def test_each_calendar_has_its_own_offline_copy(tmp_path):
     a = ical.cache_path_for("https://cal.example/me.ics", str(tmp_path))
     b = ical.cache_path_for("https://cal.example/family.ics", str(tmp_path))
     assert a != b and "secret" not in a and a.endswith(".ics")
+
+
+def test_a_packed_calendar_reads_four_then_counts_the_rest():
+    events = [{"time": f"{9 + i:02d}:00", "end": None, "title": f"Meeting {i}"} for i in range(11)]
+    p = your_day(events=events)
+    assert p["text"].count("At ") == 4 and p["text"].endswith("And 7 more things on your calendar.")
+    assert len([r for r in p["card"]["rows"] if r["kind"] == "event"]) == 11      # the card still lists them

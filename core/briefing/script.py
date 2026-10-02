@@ -114,6 +114,7 @@ def _headlines_part(items: list):
 
 _SOLEMN = ("Remembrance Day", "Good Friday", "the National Day for Truth and Reconciliation")
 UV_HIGH = 6
+MAX_SPOKEN_EVENTS = 4
 
 
 def _cap(s: str) -> str:
@@ -147,14 +148,15 @@ def _your_day_part(extras: dict, now: datetime.datetime):
                      f"about {n} minute{'s' if n != 1 else ''} {'more' if dl['change'] > 0 else 'less'} "
                      f"daylight each day.")
         rows.append({"kind": "daylight", "minutes": dl["minutes"], "change": dl["change"]})
-    for e in extras.get("events", []):
-        if e.get("time"):
-            t = _hhmm_to_display(e["time"])
-            lines.append(f"At {t}: {_sentence(e['title'])}")
-            rows.append({"kind": "event", "time": t, "text": e["title"]})
-        else:
-            lines.append(f"Today: {_sentence(e['title'])}")
-            rows.append({"kind": "event", "time": None, "text": e["title"]})
+    events = extras.get("events", [])
+    for i, e in enumerate(events):
+        t = e.get("time") and _hhmm_to_display(e["time"])
+        rows.append({"kind": "event", "time": t, "text": e["title"]})
+        if i < MAX_SPOKEN_EVENTS:            # a packed work day would take minutes to read
+            lines.append(f"At {t}: {_sentence(e['title'])}" if t else f"Today: {_sentence(e['title'])}")
+    if len(events) > MAX_SPOKEN_EVENTS:
+        n = len(events) - MAX_SPOKEN_EVENTS
+        lines.append(f"And {n} more {'thing' if n == 1 else 'things'} on your calendar.")
     for r in extras.get("reminders", []):
         t = _hhmm_to_display(r["time"])
         lines.append(f"You have a reminder at {t}: {_sentence(r['message'])}")
