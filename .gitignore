@@ -42,6 +42,8 @@ settings.json
 *.png
 !favicon.png
 !faces/**/*.png
+# Screenshots used in the README and release notes
+!docs/screenshots/*.png
 !sounds/music/*.wav
 # Keep the generated BMO voice greetings and thinking sounds
 !sounds/greeting_sounds/*.wav
