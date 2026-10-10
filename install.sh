@@ -9,7 +9,9 @@ echo -e "${GREEN}BMO Agent Setup${NC}"
 
 # Detect the installed HailoRT version — used for hailo-ollama build tag
 # and for downloading a VLM HEF compiled against the same runtime.
-HAILORT_VER=$(dpkg-query -W -f='${Version}' h10-hailort 2>/dev/null || echo "5.1.1")
+HAILORT_VER=$(dpkg-query -W -f='${Version}' h10-hailort 2>/dev/null | grep . \
+              || dpkg-query -W -f='${Version}' hailort 2>/dev/null | grep . \
+              || echo "5.1.1")
 echo -e "${YELLOW}Detected HailoRT version: ${HAILORT_VER}${NC}"
 
 # The current model stack (qwen3:1.7b LLM, Qwen3-VL VLM, Whisper-Small STT)
